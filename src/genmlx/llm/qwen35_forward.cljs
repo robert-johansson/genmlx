@@ -306,7 +306,19 @@
         ;; --- shared expert: dense SwiGLU for every token, sigmoid-gated ---
         shared (mx/reshape (mlp w (str prefix "shared_expert.") x) [BT hidden])
         sgate  (mx/sigmoid (linear x (g "shared_expert_gate.weight")))  ; [BT 1]
-        out    (mx/add moe-o (mx/multiply shared sgate))]
+        out    (mx/add moe-o (mx/multiply shared sgate))
+        ;; cfg :moe-tap-inner — (fn [prefix label lazy-array]) over the expert
+        ;; branch's intermediates (genmlx-mdet Phase-1.5: the L00.mlp-out
+        ;; divergence with bit-identical routing pins the jitter INSIDE this
+        ;; block; these taps name the op). Same caller-owned-state contract as
+        ;; :moe-tap / :layer-tap; nil in production.
+        _      (when-let [tap (:moe-tap-inner cfg)]
+                 (tap prefix :gate-o gate-o)
+                 (tap prefix :up-o up-o)
+                 (tap prefix :expert-down expert)
+                 (tap prefix :moe-sum moe-o)
+                 (tap prefix :shared shared)
+                 (tap prefix :sgate sgate))]
     (mx/reshape out [b T hidden])))
 
 ;; ----------------------------------------------------------------------------
@@ -565,23 +577,34 @@
         dtype (mx/dtype embed)
         b     (first (mx/shape h0))
         mask  (when (> T 1) (causal-mask T (or prior 0) dtype))
+        ;; cfg :layer-tap — (fn [layer-idx kind label lazy-array]) called with
+        ;; each sublayer's lazy output (:attn-out = attention/GDN branch,
+        ;; :mlp-out = dense/MoE MLP branch, :final-norm). The sibling of
+        ;; :moe-tap (genmlx-4wsn): caller-owned collection state, nil in
+        ;; production, zero cost. Added for the genmlx-mdet determinism
+        ;; bisect (bench/moe_determinism_bisect.cljs).
+        tap   (:layer-tap config)
         [h new-cache]
         (reduce
          (fn [[h nc] i]
            (let [p  (str wp "layers." i ".")
+                 kind (nth layer-types i)
                  hn (mx/rms-norm h (get weights (str p "input_layernorm.weight")) eps)
-                 [a ce'] (if (= "linear_attention" (nth layer-types i))
+                 [a ce'] (if (= "linear_attention" kind)
                            (gdn-layer config weights (str p "linear_attn.") hn b T (nth cache i))
                            (full-attn-layer config weights (str p "self_attn.") hn b T
                                             (nth cache i) offset mask mrope))
+                 _  (when tap (tap i kind :attn-out a))
                  h1 (mx/add h a)
                  mn (mx/rms-norm h1 (get weights (str p "post_attention_layernorm.weight")) eps)
                  m  (if (moe-layer? config i)
                       (moe-mlp config weights (str p "mlp.") mn b T)
-                      (mlp weights (str p "mlp.") mn))]
+                      (mlp weights (str p "mlp.") mn))
+                 _  (when tap (tap i kind :mlp-out m))]
              [(mx/add h1 m) (conj nc ce')]))
          [h0 []] (range n-layers))
         hf (mx/rms-norm h (get weights (str wp "norm.weight")) eps)
+        _  (when tap (tap -1 nil :final-norm hf))
         ;; tied: logits = h @ embed^T; untied (Ornith): a real lm_head tensor,
         ;; dequantized at load, OUTSIDE the `language_model.model.` prefix.
         lmw (if (:tie? config)

@@ -1,0 +1,1453 @@
+{
+  "bean": "genmlx-mdet",
+  "model": "/home/robert/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-8bit/snapshots/28d10f45a04981989f5a2e53e38f6473e81e815a",
+  "T": 512,
+  "n-runs": 10,
+  "modes": [
+    "inner"
+  ],
+  "results": {
+    "inner": {
+      "ms": [
+        3050.102966999999,
+        2642.8017910000017,
+        2640.491478,
+        2624.8531650000004,
+        2608.1459350000005,
+        2577.645184000001,
+        2618.8539230000024,
+        2687.9369270000025,
+        2675.5067599999966,
+        2613.9322440000033
+      ],
+      "divergent": [
+        "L04.inner.expert-down",
+        "L04.inner.moe-sum",
+        "L05.inner.gate-o",
+        "L05.inner.up-o",
+        "L05.inner.expert-down",
+        "L05.inner.moe-sum",
+        "L05.inner.shared",
+        "L05.inner.sgate",
+        "L06.inner.gate-o",
+        "L06.inner.up-o",
+        "L06.inner.expert-down",
+        "L06.inner.moe-sum",
+        "L06.inner.shared",
+        "L06.inner.sgate",
+        "L07.inner.gate-o",
+        "L07.inner.up-o",
+        "L07.inner.expert-down",
+        "L07.inner.moe-sum",
+        "L07.inner.shared",
+        "L07.inner.sgate",
+        "L08.inner.gate-o",
+        "L08.inner.up-o",
+        "L08.inner.expert-down",
+        "L08.inner.moe-sum",
+        "L08.inner.shared",
+        "L08.inner.sgate",
+        "L09.inner.gate-o",
+        "L09.inner.up-o",
+        "L09.inner.expert-down",
+        "L09.inner.moe-sum",
+        "L09.inner.shared",
+        "L09.inner.sgate",
+        "L10.inner.gate-o",
+        "L10.inner.up-o",
+        "L10.inner.expert-down",
+        "L10.inner.moe-sum",
+        "L10.inner.shared",
+        "L10.inner.sgate",
+        "L11.inner.gate-o",
+        "L11.inner.up-o",
+        "L11.inner.expert-down",
+        "L11.inner.moe-sum",
+        "L11.inner.shared",
+        "L11.inner.sgate",
+        "L12.inner.gate-o",
+        "L12.inner.up-o",
+        "L12.inner.expert-down",
+        "L12.inner.moe-sum",
+        "L12.inner.shared",
+        "L12.inner.sgate",
+        "L13.inner.gate-o",
+        "L13.inner.up-o",
+        "L13.inner.expert-down",
+        "L13.inner.moe-sum",
+        "L13.inner.shared",
+        "L13.inner.sgate",
+        "L14.inner.gate-o",
+        "L14.inner.up-o",
+        "L14.inner.expert-down",
+        "L14.inner.moe-sum",
+        "L14.inner.shared",
+        "L14.inner.sgate",
+        "L15.inner.gate-o",
+        "L15.inner.up-o",
+        "L15.inner.expert-down",
+        "L15.inner.moe-sum",
+        "L15.inner.shared",
+        "L15.inner.sgate",
+        "L16.inner.gate-o",
+        "L16.inner.up-o",
+        "L16.inner.expert-down",
+        "L16.inner.moe-sum",
+        "L16.inner.shared",
+        "L16.inner.sgate",
+        "L17.inner.gate-o",
+        "L17.inner.up-o",
+        "L17.inner.expert-down",
+        "L17.inner.moe-sum",
+        "L17.inner.shared",
+        "L17.inner.sgate",
+        "L18.inner.gate-o",
+        "L18.inner.up-o",
+        "L18.inner.expert-down",
+        "L18.inner.moe-sum",
+        "L18.inner.shared",
+        "L18.inner.sgate",
+        "L19.inner.gate-o",
+        "L19.inner.up-o",
+        "L19.inner.expert-down",
+        "L19.inner.moe-sum",
+        "L19.inner.shared",
+        "L19.inner.sgate",
+        "L20.inner.gate-o",
+        "L20.inner.up-o",
+        "L20.inner.expert-down",
+        "L20.inner.moe-sum",
+        "L20.inner.shared",
+        "L20.inner.sgate",
+        "L21.inner.gate-o",
+        "L21.inner.up-o",
+        "L21.inner.expert-down",
+        "L21.inner.moe-sum",
+        "L21.inner.shared",
+        "L21.inner.sgate",
+        "L22.inner.gate-o",
+        "L22.inner.up-o",
+        "L22.inner.expert-down",
+        "L22.inner.moe-sum",
+        "L22.inner.shared",
+        "L22.inner.sgate",
+        "L23.inner.gate-o",
+        "L23.inner.up-o",
+        "L23.inner.expert-down",
+        "L23.inner.moe-sum",
+        "L23.inner.shared",
+        "L23.inner.sgate",
+        "L24.inner.gate-o",
+        "L24.inner.up-o",
+        "L24.inner.expert-down",
+        "L24.inner.moe-sum",
+        "L24.inner.shared",
+        "L24.inner.sgate",
+        "L25.inner.gate-o",
+        "L25.inner.up-o",
+        "L25.inner.expert-down",
+        "L25.inner.moe-sum",
+        "L25.inner.shared",
+        "L25.inner.sgate",
+        "L26.inner.gate-o",
+        "L26.inner.up-o",
+        "L26.inner.expert-down",
+        "L26.inner.moe-sum",
+        "L26.inner.shared",
+        "L26.inner.sgate",
+        "L27.inner.gate-o",
+        "L27.inner.up-o",
+        "L27.inner.expert-down",
+        "L27.inner.moe-sum",
+        "L27.inner.shared",
+        "L27.inner.sgate",
+        "L28.inner.gate-o",
+        "L28.inner.up-o",
+        "L28.inner.expert-down",
+        "L28.inner.moe-sum",
+        "L28.inner.shared",
+        "L28.inner.sgate",
+        "L29.inner.gate-o",
+        "L29.inner.up-o",
+        "L29.inner.expert-down",
+        "L29.inner.moe-sum",
+        "L29.inner.shared",
+        "L29.inner.sgate",
+        "L30.inner.gate-o",
+        "L30.inner.up-o",
+        "L30.inner.expert-down",
+        "L30.inner.moe-sum",
+        "L30.inner.shared",
+        "L30.inner.sgate",
+        "L31.inner.gate-o",
+        "L31.inner.up-o",
+        "L31.inner.expert-down",
+        "L31.inner.moe-sum",
+        "L31.inner.shared",
+        "L31.inner.sgate",
+        "L32.inner.gate-o",
+        "L32.inner.up-o",
+        "L32.inner.expert-down",
+        "L32.inner.moe-sum",
+        "L32.inner.shared",
+        "L32.inner.sgate",
+        "L33.inner.gate-o",
+        "L33.inner.up-o",
+        "L33.inner.expert-down",
+        "L33.inner.moe-sum",
+        "L33.inner.shared",
+        "L33.inner.sgate",
+        "L34.inner.gate-o",
+        "L34.inner.up-o",
+        "L34.inner.expert-down",
+        "L34.inner.moe-sum",
+        "L34.inner.shared",
+        "L34.inner.sgate",
+        "L35.inner.gate-o",
+        "L35.inner.up-o",
+        "L35.inner.expert-down",
+        "L35.inner.moe-sum",
+        "L35.inner.shared",
+        "L35.inner.sgate",
+        "L36.inner.gate-o",
+        "L36.inner.up-o",
+        "L36.inner.expert-down",
+        "L36.inner.moe-sum",
+        "L36.inner.shared",
+        "L36.inner.sgate",
+        "L37.inner.gate-o",
+        "L37.inner.up-o",
+        "L37.inner.expert-down",
+        "L37.inner.moe-sum",
+        "L37.inner.shared",
+        "L37.inner.sgate",
+        "L38.inner.gate-o",
+        "L38.inner.up-o",
+        "L38.inner.expert-down",
+        "L38.inner.moe-sum",
+        "L38.inner.shared",
+        "L38.inner.sgate",
+        "L39.inner.gate-o",
+        "L39.inner.up-o",
+        "L39.inner.expert-down",
+        "L39.inner.moe-sum",
+        "L39.inner.shared",
+        "L39.inner.sgate",
+        "logits",
+        "logits-last"
+      ],
+      "analysis": [
+        {
+          "label": "L00.inner.gate-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.inner.up-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.inner.expert-down",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.inner.moe-sum",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.inner.shared",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.inner.sgate",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L01.inner.gate-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L01.inner.up-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L01.inner.expert-down",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L01.inner.moe-sum",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L01.inner.shared",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L01.inner.sgate",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L02.inner.gate-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L02.inner.up-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L02.inner.expert-down",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L02.inner.moe-sum",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L02.inner.shared",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L02.inner.sgate",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L03.inner.gate-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L03.inner.up-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L03.inner.expert-down",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L03.inner.moe-sum",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L03.inner.shared",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L03.inner.sgate",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L04.inner.gate-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L04.inner.up-o",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L04.inner.expert-down",
+          "distinct": 2,
+          "spread": 0.1443939208984375
+        },
+        {
+          "label": "L04.inner.moe-sum",
+          "distinct": 2,
+          "spread": 0.012409210205078125
+        },
+        {
+          "label": "L04.inner.shared",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L04.inner.sgate",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L05.inner.gate-o",
+          "distinct": 2,
+          "spread": 32.484375
+        },
+        {
+          "label": "L05.inner.up-o",
+          "distinct": 2,
+          "spread": 25.273757934570312
+        },
+        {
+          "label": "L05.inner.expert-down",
+          "distinct": 3,
+          "spread": 0.8639984130859375
+        },
+        {
+          "label": "L05.inner.moe-sum",
+          "distinct": 3,
+          "spread": 0.0425567626953125
+        },
+        {
+          "label": "L05.inner.shared",
+          "distinct": 2,
+          "spread": 0.02801513671875
+        },
+        {
+          "label": "L05.inner.sgate",
+          "distinct": 2,
+          "spread": 0.0008087158203125
+        },
+        {
+          "label": "L06.inner.gate-o",
+          "distinct": 3,
+          "spread": 22.609375
+        },
+        {
+          "label": "L06.inner.up-o",
+          "distinct": 3,
+          "spread": 32.51123046875
+        },
+        {
+          "label": "L06.inner.expert-down",
+          "distinct": 3,
+          "spread": 2.9234848022460938
+        },
+        {
+          "label": "L06.inner.moe-sum",
+          "distinct": 3,
+          "spread": 0.1201629638671875
+        },
+        {
+          "label": "L06.inner.shared",
+          "distinct": 3,
+          "spread": 0.208587646484375
+        },
+        {
+          "label": "L06.inner.sgate",
+          "distinct": 3,
+          "spread": 0.0037078857421875
+        },
+        {
+          "label": "L07.inner.gate-o",
+          "distinct": 3,
+          "spread": 151.5
+        },
+        {
+          "label": "L07.inner.up-o",
+          "distinct": 3,
+          "spread": 76.6251220703125
+        },
+        {
+          "label": "L07.inner.expert-down",
+          "distinct": 3,
+          "spread": 6.550069808959961
+        },
+        {
+          "label": "L07.inner.moe-sum",
+          "distinct": 3,
+          "spread": 0.7337319850921631
+        },
+        {
+          "label": "L07.inner.shared",
+          "distinct": 3,
+          "spread": 0.7988128662109375
+        },
+        {
+          "label": "L07.inner.sgate",
+          "distinct": 3,
+          "spread": 0.01731109619140625
+        },
+        {
+          "label": "L08.inner.gate-o",
+          "distinct": 3,
+          "spread": 256.09375
+        },
+        {
+          "label": "L08.inner.up-o",
+          "distinct": 3,
+          "spread": 28.33056640625
+        },
+        {
+          "label": "L08.inner.expert-down",
+          "distinct": 3,
+          "spread": 12.82379150390625
+        },
+        {
+          "label": "L08.inner.moe-sum",
+          "distinct": 3,
+          "spread": 1.4853324890136719
+        },
+        {
+          "label": "L08.inner.shared",
+          "distinct": 3,
+          "spread": 1.80572509765625
+        },
+        {
+          "label": "L08.inner.sgate",
+          "distinct": 3,
+          "spread": 0.034027099609375
+        },
+        {
+          "label": "L09.inner.gate-o",
+          "distinct": 3,
+          "spread": 130.875
+        },
+        {
+          "label": "L09.inner.up-o",
+          "distinct": 4,
+          "spread": 98.07781982421875
+        },
+        {
+          "label": "L09.inner.expert-down",
+          "distinct": 5,
+          "spread": 4.2312164306640625
+        },
+        {
+          "label": "L09.inner.moe-sum",
+          "distinct": 5,
+          "spread": 0.192352294921875
+        },
+        {
+          "label": "L09.inner.shared",
+          "distinct": 3,
+          "spread": 3.7574996948242188
+        },
+        {
+          "label": "L09.inner.sgate",
+          "distinct": 3,
+          "spread": 0.01456451416015625
+        },
+        {
+          "label": "L10.inner.gate-o",
+          "distinct": 5,
+          "spread": 255.09375
+        },
+        {
+          "label": "L10.inner.up-o",
+          "distinct": 5,
+          "spread": 72.4027099609375
+        },
+        {
+          "label": "L10.inner.expert-down",
+          "distinct": 5,
+          "spread": 14.779922485351562
+        },
+        {
+          "label": "L10.inner.moe-sum",
+          "distinct": 5,
+          "spread": 1.1043205261230469
+        },
+        {
+          "label": "L10.inner.shared",
+          "distinct": 5,
+          "spread": 1.3819580078125
+        },
+        {
+          "label": "L10.inner.sgate",
+          "distinct": 5,
+          "spread": 0.06801223754882812
+        },
+        {
+          "label": "L11.inner.gate-o",
+          "distinct": 5,
+          "spread": 103.578125
+        },
+        {
+          "label": "L11.inner.up-o",
+          "distinct": 5,
+          "spread": 95.59967041015625
+        },
+        {
+          "label": "L11.inner.expert-down",
+          "distinct": 6,
+          "spread": 19.634674072265625
+        },
+        {
+          "label": "L11.inner.moe-sum",
+          "distinct": 6,
+          "spread": 1.1125230193138123
+        },
+        {
+          "label": "L11.inner.shared",
+          "distinct": 5,
+          "spread": 3.6025848388671875
+        },
+        {
+          "label": "L11.inner.sgate",
+          "distinct": 4,
+          "spread": 0.0871734619140625
+        },
+        {
+          "label": "L12.inner.gate-o",
+          "distinct": 6,
+          "spread": 714.296875
+        },
+        {
+          "label": "L12.inner.up-o",
+          "distinct": 6,
+          "spread": 226.0947265625
+        },
+        {
+          "label": "L12.inner.expert-down",
+          "distinct": 6,
+          "spread": 15.348541259765625
+        },
+        {
+          "label": "L12.inner.moe-sum",
+          "distinct": 6,
+          "spread": 1.0841436386108398
+        },
+        {
+          "label": "L12.inner.shared",
+          "distinct": 6,
+          "spread": 1.418060302734375
+        },
+        {
+          "label": "L12.inner.sgate",
+          "distinct": 6,
+          "spread": 0.08539581298828125
+        },
+        {
+          "label": "L13.inner.gate-o",
+          "distinct": 6,
+          "spread": 538.90625
+        },
+        {
+          "label": "L13.inner.up-o",
+          "distinct": 6,
+          "spread": 280.069580078125
+        },
+        {
+          "label": "L13.inner.expert-down",
+          "distinct": 6,
+          "spread": 6.485137939453125
+        },
+        {
+          "label": "L13.inner.moe-sum",
+          "distinct": 6,
+          "spread": 1.696258544921875
+        },
+        {
+          "label": "L13.inner.shared",
+          "distinct": 6,
+          "spread": 3.26611328125
+        },
+        {
+          "label": "L13.inner.sgate",
+          "distinct": 5,
+          "spread": 0.03417205810546875
+        },
+        {
+          "label": "L14.inner.gate-o",
+          "distinct": 6,
+          "spread": 530.4375
+        },
+        {
+          "label": "L14.inner.up-o",
+          "distinct": 6,
+          "spread": 187.9970703125
+        },
+        {
+          "label": "L14.inner.expert-down",
+          "distinct": 6,
+          "spread": 28.146514892578125
+        },
+        {
+          "label": "L14.inner.moe-sum",
+          "distinct": 6,
+          "spread": 1.3919639587402344
+        },
+        {
+          "label": "L14.inner.shared",
+          "distinct": 6,
+          "spread": 17.635223388671875
+        },
+        {
+          "label": "L14.inner.sgate",
+          "distinct": 6,
+          "spread": 0.09727096557617188
+        },
+        {
+          "label": "L15.inner.gate-o",
+          "distinct": 6,
+          "spread": 1209.5625
+        },
+        {
+          "label": "L15.inner.up-o",
+          "distinct": 6,
+          "spread": 292.49066162109375
+        },
+        {
+          "label": "L15.inner.expert-down",
+          "distinct": 6,
+          "spread": 16.925750732421875
+        },
+        {
+          "label": "L15.inner.moe-sum",
+          "distinct": 6,
+          "spread": 3.6011009216308594
+        },
+        {
+          "label": "L15.inner.shared",
+          "distinct": 6,
+          "spread": 40.25604248046875
+        },
+        {
+          "label": "L15.inner.sgate",
+          "distinct": 6,
+          "spread": 0.10235595703125
+        },
+        {
+          "label": "L16.inner.gate-o",
+          "distinct": 6,
+          "spread": 1264.09375
+        },
+        {
+          "label": "L16.inner.up-o",
+          "distinct": 6,
+          "spread": 262.154296875
+        },
+        {
+          "label": "L16.inner.expert-down",
+          "distinct": 7,
+          "spread": 30.07921600341797
+        },
+        {
+          "label": "L16.inner.moe-sum",
+          "distinct": 7,
+          "spread": 3.0769872665405273
+        },
+        {
+          "label": "L16.inner.shared",
+          "distinct": 6,
+          "spread": 14.601806640625
+        },
+        {
+          "label": "L16.inner.sgate",
+          "distinct": 6,
+          "spread": 0.22430801391601562
+        },
+        {
+          "label": "L17.inner.gate-o",
+          "distinct": 7,
+          "spread": 1089.40625
+        },
+        {
+          "label": "L17.inner.up-o",
+          "distinct": 7,
+          "spread": 226.14013671875
+        },
+        {
+          "label": "L17.inner.expert-down",
+          "distinct": 7,
+          "spread": 30.547882080078125
+        },
+        {
+          "label": "L17.inner.moe-sum",
+          "distinct": 7,
+          "spread": 1.1766738891601562
+        },
+        {
+          "label": "L17.inner.shared",
+          "distinct": 7,
+          "spread": 18.1148681640625
+        },
+        {
+          "label": "L17.inner.sgate",
+          "distinct": 6,
+          "spread": 0.15805435180664062
+        },
+        {
+          "label": "L18.inner.gate-o",
+          "distinct": 7,
+          "spread": 1766.0625
+        },
+        {
+          "label": "L18.inner.up-o",
+          "distinct": 7,
+          "spread": 252.1832275390625
+        },
+        {
+          "label": "L18.inner.expert-down",
+          "distinct": 7,
+          "spread": 36.99175262451172
+        },
+        {
+          "label": "L18.inner.moe-sum",
+          "distinct": 7,
+          "spread": 5.299006938934326
+        },
+        {
+          "label": "L18.inner.shared",
+          "distinct": 7,
+          "spread": 40.86084747314453
+        },
+        {
+          "label": "L18.inner.sgate",
+          "distinct": 7,
+          "spread": 0.11601638793945312
+        },
+        {
+          "label": "L19.inner.gate-o",
+          "distinct": 7,
+          "spread": 1377.15625
+        },
+        {
+          "label": "L19.inner.up-o",
+          "distinct": 7,
+          "spread": 489.18072509765625
+        },
+        {
+          "label": "L19.inner.expert-down",
+          "distinct": 7,
+          "spread": 43.64345169067383
+        },
+        {
+          "label": "L19.inner.moe-sum",
+          "distinct": 7,
+          "spread": 2.608306646347046
+        },
+        {
+          "label": "L19.inner.shared",
+          "distinct": 7,
+          "spread": 35.1474609375
+        },
+        {
+          "label": "L19.inner.sgate",
+          "distinct": 7,
+          "spread": 0.13106536865234375
+        },
+        {
+          "label": "L20.inner.gate-o",
+          "distinct": 7,
+          "spread": 2121.3125
+        },
+        {
+          "label": "L20.inner.up-o",
+          "distinct": 7,
+          "spread": 666.7480773925781
+        },
+        {
+          "label": "L20.inner.expert-down",
+          "distinct": 7,
+          "spread": 28.686471939086914
+        },
+        {
+          "label": "L20.inner.moe-sum",
+          "distinct": 7,
+          "spread": 3.6370744705200195
+        },
+        {
+          "label": "L20.inner.shared",
+          "distinct": 7,
+          "spread": 16.53692626953125
+        },
+        {
+          "label": "L20.inner.sgate",
+          "distinct": 7,
+          "spread": 0.22098159790039062
+        },
+        {
+          "label": "L21.inner.gate-o",
+          "distinct": 7,
+          "spread": 1195.1875
+        },
+        {
+          "label": "L21.inner.up-o",
+          "distinct": 7,
+          "spread": 256.1676025390625
+        },
+        {
+          "label": "L21.inner.expert-down",
+          "distinct": 8,
+          "spread": 87.80595397949219
+        },
+        {
+          "label": "L21.inner.moe-sum",
+          "distinct": 8,
+          "spread": 5.205862045288086
+        },
+        {
+          "label": "L21.inner.shared",
+          "distinct": 7,
+          "spread": 4.37530517578125
+        },
+        {
+          "label": "L21.inner.sgate",
+          "distinct": 7,
+          "spread": 0.5032730102539062
+        },
+        {
+          "label": "L22.inner.gate-o",
+          "distinct": 8,
+          "spread": 2757.4375
+        },
+        {
+          "label": "L22.inner.up-o",
+          "distinct": 8,
+          "spread": 424.5650329589844
+        },
+        {
+          "label": "L22.inner.expert-down",
+          "distinct": 8,
+          "spread": 42.70845031738281
+        },
+        {
+          "label": "L22.inner.moe-sum",
+          "distinct": 8,
+          "spread": 6.323299407958984
+        },
+        {
+          "label": "L22.inner.shared",
+          "distinct": 8,
+          "spread": 12.557815551757812
+        },
+        {
+          "label": "L22.inner.sgate",
+          "distinct": 8,
+          "spread": 0.22292709350585938
+        },
+        {
+          "label": "L23.inner.gate-o",
+          "distinct": 8,
+          "spread": 1963.90625
+        },
+        {
+          "label": "L23.inner.up-o",
+          "distinct": 8,
+          "spread": 289.627197265625
+        },
+        {
+          "label": "L23.inner.expert-down",
+          "distinct": 8,
+          "spread": 46.0457763671875
+        },
+        {
+          "label": "L23.inner.moe-sum",
+          "distinct": 8,
+          "spread": 5.424808025360107
+        },
+        {
+          "label": "L23.inner.shared",
+          "distinct": 8,
+          "spread": 19.19781494140625
+        },
+        {
+          "label": "L23.inner.sgate",
+          "distinct": 8,
+          "spread": 0.12303924560546875
+        },
+        {
+          "label": "L24.inner.gate-o",
+          "distinct": 8,
+          "spread": 4161.03125
+        },
+        {
+          "label": "L24.inner.up-o",
+          "distinct": 8,
+          "spread": 589.164306640625
+        },
+        {
+          "label": "L24.inner.expert-down",
+          "distinct": 8,
+          "spread": 47.11028480529785
+        },
+        {
+          "label": "L24.inner.moe-sum",
+          "distinct": 8,
+          "spread": 4.999785423278809
+        },
+        {
+          "label": "L24.inner.shared",
+          "distinct": 8,
+          "spread": 28.310211181640625
+        },
+        {
+          "label": "L24.inner.sgate",
+          "distinct": 8,
+          "spread": 0.146514892578125
+        },
+        {
+          "label": "L25.inner.gate-o",
+          "distinct": 8,
+          "spread": 2750.90625
+        },
+        {
+          "label": "L25.inner.up-o",
+          "distinct": 8,
+          "spread": 335.281494140625
+        },
+        {
+          "label": "L25.inner.expert-down",
+          "distinct": 8,
+          "spread": 20.970779418945312
+        },
+        {
+          "label": "L25.inner.moe-sum",
+          "distinct": 8,
+          "spread": 4.096446990966797
+        },
+        {
+          "label": "L25.inner.shared",
+          "distinct": 8,
+          "spread": 16.77001953125
+        },
+        {
+          "label": "L25.inner.sgate",
+          "distinct": 8,
+          "spread": 0.12078475952148438
+        },
+        {
+          "label": "L26.inner.gate-o",
+          "distinct": 8,
+          "spread": 4514.46875
+        },
+        {
+          "label": "L26.inner.up-o",
+          "distinct": 8,
+          "spread": 485.69842529296875
+        },
+        {
+          "label": "L26.inner.expert-down",
+          "distinct": 8,
+          "spread": 46.30615234375
+        },
+        {
+          "label": "L26.inner.moe-sum",
+          "distinct": 8,
+          "spread": 5.819068908691406
+        },
+        {
+          "label": "L26.inner.shared",
+          "distinct": 8,
+          "spread": 31.079238891601562
+        },
+        {
+          "label": "L26.inner.sgate",
+          "distinct": 8,
+          "spread": 0.223480224609375
+        },
+        {
+          "label": "L27.inner.gate-o",
+          "distinct": 8,
+          "spread": 3419
+        },
+        {
+          "label": "L27.inner.up-o",
+          "distinct": 8,
+          "spread": 423.096435546875
+        },
+        {
+          "label": "L27.inner.expert-down",
+          "distinct": 8,
+          "spread": 86.79745483398438
+        },
+        {
+          "label": "L27.inner.moe-sum",
+          "distinct": 8,
+          "spread": 9.929935455322266
+        },
+        {
+          "label": "L27.inner.shared",
+          "distinct": 8,
+          "spread": 47.039794921875
+        },
+        {
+          "label": "L27.inner.sgate",
+          "distinct": 8,
+          "spread": 0.36252593994140625
+        },
+        {
+          "label": "L28.inner.gate-o",
+          "distinct": 8,
+          "spread": 2247.4375
+        },
+        {
+          "label": "L28.inner.up-o",
+          "distinct": 8,
+          "spread": 532.94677734375
+        },
+        {
+          "label": "L28.inner.expert-down",
+          "distinct": 8,
+          "spread": 49.617095947265625
+        },
+        {
+          "label": "L28.inner.moe-sum",
+          "distinct": 8,
+          "spread": 7.05308723449707
+        },
+        {
+          "label": "L28.inner.shared",
+          "distinct": 8,
+          "spread": 20.6265869140625
+        },
+        {
+          "label": "L28.inner.sgate",
+          "distinct": 8,
+          "spread": 0.267822265625
+        },
+        {
+          "label": "L29.inner.gate-o",
+          "distinct": 8,
+          "spread": 2831.125
+        },
+        {
+          "label": "L29.inner.up-o",
+          "distinct": 8,
+          "spread": 269.42950439453125
+        },
+        {
+          "label": "L29.inner.expert-down",
+          "distinct": 8,
+          "spread": 93.41220092773438
+        },
+        {
+          "label": "L29.inner.moe-sum",
+          "distinct": 8,
+          "spread": 11.321731567382812
+        },
+        {
+          "label": "L29.inner.shared",
+          "distinct": 8,
+          "spread": 38.6181640625
+        },
+        {
+          "label": "L29.inner.sgate",
+          "distinct": 8,
+          "spread": 0.11143875122070312
+        },
+        {
+          "label": "L30.inner.gate-o",
+          "distinct": 8,
+          "spread": 1173.125
+        },
+        {
+          "label": "L30.inner.up-o",
+          "distinct": 8,
+          "spread": 488.041015625
+        },
+        {
+          "label": "L30.inner.expert-down",
+          "distinct": 8,
+          "spread": 87.56573486328125
+        },
+        {
+          "label": "L30.inner.moe-sum",
+          "distinct": 8,
+          "spread": 8.885499000549316
+        },
+        {
+          "label": "L30.inner.shared",
+          "distinct": 8,
+          "spread": 41.08782958984375
+        },
+        {
+          "label": "L30.inner.sgate",
+          "distinct": 8,
+          "spread": 0.07880973815917969
+        },
+        {
+          "label": "L31.inner.gate-o",
+          "distinct": 8,
+          "spread": 3260.03125
+        },
+        {
+          "label": "L31.inner.up-o",
+          "distinct": 8,
+          "spread": 440.02978515625
+        },
+        {
+          "label": "L31.inner.expert-down",
+          "distinct": 8,
+          "spread": 90.24686431884766
+        },
+        {
+          "label": "L31.inner.moe-sum",
+          "distinct": 8,
+          "spread": 4.550693511962891
+        },
+        {
+          "label": "L31.inner.shared",
+          "distinct": 8,
+          "spread": 73.008056640625
+        },
+        {
+          "label": "L31.inner.sgate",
+          "distinct": 7,
+          "spread": 0.15032386779785156
+        },
+        {
+          "label": "L32.inner.gate-o",
+          "distinct": 8,
+          "spread": 6026.125
+        },
+        {
+          "label": "L32.inner.up-o",
+          "distinct": 8,
+          "spread": 659.30859375
+        },
+        {
+          "label": "L32.inner.expert-down",
+          "distinct": 8,
+          "spread": 85.38031005859375
+        },
+        {
+          "label": "L32.inner.moe-sum",
+          "distinct": 8,
+          "spread": 8.504615783691406
+        },
+        {
+          "label": "L32.inner.shared",
+          "distinct": 8,
+          "spread": 31.911865234375
+        },
+        {
+          "label": "L32.inner.sgate",
+          "distinct": 8,
+          "spread": 0.17479324340820312
+        },
+        {
+          "label": "L33.inner.gate-o",
+          "distinct": 8,
+          "spread": 5411.125
+        },
+        {
+          "label": "L33.inner.up-o",
+          "distinct": 8,
+          "spread": 1277.489013671875
+        },
+        {
+          "label": "L33.inner.expert-down",
+          "distinct": 8,
+          "spread": 76.7741584777832
+        },
+        {
+          "label": "L33.inner.moe-sum",
+          "distinct": 8,
+          "spread": 6.994579315185547
+        },
+        {
+          "label": "L33.inner.shared",
+          "distinct": 8,
+          "spread": 44.5986328125
+        },
+        {
+          "label": "L33.inner.sgate",
+          "distinct": 8,
+          "spread": 0.07445907592773438
+        },
+        {
+          "label": "L34.inner.gate-o",
+          "distinct": 8,
+          "spread": 6685.1875
+        },
+        {
+          "label": "L34.inner.up-o",
+          "distinct": 8,
+          "spread": 740.804931640625
+        },
+        {
+          "label": "L34.inner.expert-down",
+          "distinct": 8,
+          "spread": 96.5943603515625
+        },
+        {
+          "label": "L34.inner.moe-sum",
+          "distinct": 8,
+          "spread": 12.16552734375
+        },
+        {
+          "label": "L34.inner.shared",
+          "distinct": 8,
+          "spread": 82.279052734375
+        },
+        {
+          "label": "L34.inner.sgate",
+          "distinct": 8,
+          "spread": 0.12031173706054688
+        },
+        {
+          "label": "L35.inner.gate-o",
+          "distinct": 8,
+          "spread": 3198.4375
+        },
+        {
+          "label": "L35.inner.up-o",
+          "distinct": 8,
+          "spread": 688.4949951171875
+        },
+        {
+          "label": "L35.inner.expert-down",
+          "distinct": 8,
+          "spread": 80.29529571533203
+        },
+        {
+          "label": "L35.inner.moe-sum",
+          "distinct": 8,
+          "spread": 6.4815826416015625
+        },
+        {
+          "label": "L35.inner.shared",
+          "distinct": 8,
+          "spread": 146.408203125
+        },
+        {
+          "label": "L35.inner.sgate",
+          "distinct": 7,
+          "spread": 0.09236717224121094
+        },
+        {
+          "label": "L36.inner.gate-o",
+          "distinct": 8,
+          "spread": 8080.3125
+        },
+        {
+          "label": "L36.inner.up-o",
+          "distinct": 8,
+          "spread": 833.10986328125
+        },
+        {
+          "label": "L36.inner.expert-down",
+          "distinct": 8,
+          "spread": 149.7584228515625
+        },
+        {
+          "label": "L36.inner.moe-sum",
+          "distinct": 8,
+          "spread": 20.479963779449463
+        },
+        {
+          "label": "L36.inner.shared",
+          "distinct": 8,
+          "spread": 43.004669189453125
+        },
+        {
+          "label": "L36.inner.sgate",
+          "distinct": 8,
+          "spread": 0.24795150756835938
+        },
+        {
+          "label": "L37.inner.gate-o",
+          "distinct": 8,
+          "spread": 8413.375
+        },
+        {
+          "label": "L37.inner.up-o",
+          "distinct": 8,
+          "spread": 635.6845703125
+        },
+        {
+          "label": "L37.inner.expert-down",
+          "distinct": 8,
+          "spread": 149.6064453125
+        },
+        {
+          "label": "L37.inner.moe-sum",
+          "distinct": 8,
+          "spread": 17.613548278808594
+        },
+        {
+          "label": "L37.inner.shared",
+          "distinct": 8,
+          "spread": 74.2159423828125
+        },
+        {
+          "label": "L37.inner.sgate",
+          "distinct": 7,
+          "spread": 0.21017837524414062
+        },
+        {
+          "label": "L38.inner.gate-o",
+          "distinct": 8,
+          "spread": 13074.1875
+        },
+        {
+          "label": "L38.inner.up-o",
+          "distinct": 8,
+          "spread": 1318.465087890625
+        },
+        {
+          "label": "L38.inner.expert-down",
+          "distinct": 8,
+          "spread": 91.795654296875
+        },
+        {
+          "label": "L38.inner.moe-sum",
+          "distinct": 8,
+          "spread": 17.200286865234375
+        },
+        {
+          "label": "L38.inner.shared",
+          "distinct": 8,
+          "spread": 57.6419677734375
+        },
+        {
+          "label": "L38.inner.sgate",
+          "distinct": 8,
+          "spread": 0.19600296020507812
+        },
+        {
+          "label": "L39.inner.gate-o",
+          "distinct": 8,
+          "spread": 11732.9375
+        },
+        {
+          "label": "L39.inner.up-o",
+          "distinct": 8,
+          "spread": 1321.005859375
+        },
+        {
+          "label": "L39.inner.expert-down",
+          "distinct": 9,
+          "spread": 165.850341796875
+        },
+        {
+          "label": "L39.inner.moe-sum",
+          "distinct": 9,
+          "spread": 14.704864501953125
+        },
+        {
+          "label": "L39.inner.shared",
+          "distinct": 8,
+          "spread": 143.01708984375
+        },
+        {
+          "label": "L39.inner.sgate",
+          "distinct": 8,
+          "spread": 0.5563201904296875
+        },
+        {
+          "label": "logits",
+          "distinct": 9,
+          "spread": 3300496
+        },
+        {
+          "label": "logits-last",
+          "distinct": 8,
+          "spread": 10799
+        }
+      ]
+    }
+  }
+}

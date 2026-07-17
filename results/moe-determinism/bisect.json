@@ -1,0 +1,2410 @@
+{
+  "bean": "genmlx-mdet",
+  "model": "/home/robert/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-8bit/snapshots/28d10f45a04981989f5a2e53e38f6473e81e815a",
+  "T": 512,
+  "n-runs": 10,
+  "modes": [
+    "baseline",
+    "lazy",
+    "eager",
+    "decode"
+  ],
+  "results": {
+    "baseline": {
+      "ms": [
+        2606.211187000001,
+        2247.5211420000014,
+        2252.471332000001,
+        2253.4403490000004,
+        2258.323743000001,
+        2241.5515730000006,
+        2258.574342000007,
+        2289.192434000004,
+        2264.9781430000003,
+        2278.204362000004
+      ],
+      "divergent": [
+        "logits",
+        "logits-last"
+      ],
+      "analysis": [
+        {
+          "label": "logits",
+          "distinct": 10,
+          "spread": 3285440
+        },
+        {
+          "label": "logits-last",
+          "distinct": 10,
+          "spread": 12910.578125
+        }
+      ]
+    },
+    "lazy": {
+      "ms": [
+        2387.6800869999934,
+        2342.545155,
+        2370.1649770000004,
+        2372.1997409999967,
+        2353.900142999999,
+        2415.2802690000026,
+        2320.2245079999993,
+        2364.274188999996,
+        2364.0507790000047,
+        2334.1279550000036
+      ],
+      "divergent": [
+        "L00.linear.mlp-out",
+        "L01.linear.attn-out",
+        "L01.router-topk-idx",
+        "L01.router-topk-w",
+        "L01.linear.mlp-out",
+        "L02.linear.attn-out",
+        "L02.router-topk-idx",
+        "L02.router-topk-w",
+        "L02.linear.mlp-out",
+        "L03.full.attn-out",
+        "L03.router-topk-idx",
+        "L03.router-topk-w",
+        "L03.full.mlp-out",
+        "L04.linear.attn-out",
+        "L04.router-topk-idx",
+        "L04.router-topk-w",
+        "L04.linear.mlp-out",
+        "L05.linear.attn-out",
+        "L05.router-topk-idx",
+        "L05.router-topk-w",
+        "L05.linear.mlp-out",
+        "L06.linear.attn-out",
+        "L06.router-topk-idx",
+        "L06.router-topk-w",
+        "L06.linear.mlp-out",
+        "L07.full.attn-out",
+        "L07.router-topk-idx",
+        "L07.router-topk-w",
+        "L07.full.mlp-out",
+        "L08.linear.attn-out",
+        "L08.router-topk-idx",
+        "L08.router-topk-w",
+        "L08.linear.mlp-out",
+        "L09.linear.attn-out",
+        "L09.router-topk-idx",
+        "L09.router-topk-w",
+        "L09.linear.mlp-out",
+        "L10.linear.attn-out",
+        "L10.router-topk-idx",
+        "L10.router-topk-w",
+        "L10.linear.mlp-out",
+        "L11.full.attn-out",
+        "L11.router-topk-idx",
+        "L11.router-topk-w",
+        "L11.full.mlp-out",
+        "L12.linear.attn-out",
+        "L12.router-topk-idx",
+        "L12.router-topk-w",
+        "L12.linear.mlp-out",
+        "L13.linear.attn-out",
+        "L13.router-topk-idx",
+        "L13.router-topk-w",
+        "L13.linear.mlp-out",
+        "L14.linear.attn-out",
+        "L14.router-topk-idx",
+        "L14.router-topk-w",
+        "L14.linear.mlp-out",
+        "L15.full.attn-out",
+        "L15.router-topk-idx",
+        "L15.router-topk-w",
+        "L15.full.mlp-out",
+        "L16.linear.attn-out",
+        "L16.router-topk-idx",
+        "L16.router-topk-w",
+        "L16.linear.mlp-out",
+        "L17.linear.attn-out",
+        "L17.router-topk-idx",
+        "L17.router-topk-w",
+        "L17.linear.mlp-out",
+        "L18.linear.attn-out",
+        "L18.router-topk-idx",
+        "L18.router-topk-w",
+        "L18.linear.mlp-out",
+        "L19.full.attn-out",
+        "L19.router-topk-idx",
+        "L19.router-topk-w",
+        "L19.full.mlp-out",
+        "L20.linear.attn-out",
+        "L20.router-topk-idx",
+        "L20.router-topk-w",
+        "L20.linear.mlp-out",
+        "L21.linear.attn-out",
+        "L21.router-topk-idx",
+        "L21.router-topk-w",
+        "L21.linear.mlp-out",
+        "L22.linear.attn-out",
+        "L22.router-topk-idx",
+        "L22.router-topk-w",
+        "L22.linear.mlp-out",
+        "L23.full.attn-out",
+        "L23.router-topk-idx",
+        "L23.router-topk-w",
+        "L23.full.mlp-out",
+        "L24.linear.attn-out",
+        "L24.router-topk-idx",
+        "L24.router-topk-w",
+        "L24.linear.mlp-out",
+        "L25.linear.attn-out",
+        "L25.router-topk-idx",
+        "L25.router-topk-w",
+        "L25.linear.mlp-out",
+        "L26.linear.attn-out",
+        "L26.router-topk-idx",
+        "L26.router-topk-w",
+        "L26.linear.mlp-out",
+        "L27.full.attn-out",
+        "L27.router-topk-idx",
+        "L27.router-topk-w",
+        "L27.full.mlp-out",
+        "L28.linear.attn-out",
+        "L28.router-topk-idx",
+        "L28.router-topk-w",
+        "L28.linear.mlp-out",
+        "L29.linear.attn-out",
+        "L29.router-topk-idx",
+        "L29.router-topk-w",
+        "L29.linear.mlp-out",
+        "L30.linear.attn-out",
+        "L30.router-topk-idx",
+        "L30.router-topk-w",
+        "L30.linear.mlp-out",
+        "L31.full.attn-out",
+        "L31.router-topk-idx",
+        "L31.router-topk-w",
+        "L31.full.mlp-out",
+        "L32.linear.attn-out",
+        "L32.router-topk-idx",
+        "L32.router-topk-w",
+        "L32.linear.mlp-out",
+        "L33.linear.attn-out",
+        "L33.router-topk-idx",
+        "L33.router-topk-w",
+        "L33.linear.mlp-out",
+        "L34.linear.attn-out",
+        "L34.router-topk-idx",
+        "L34.router-topk-w",
+        "L34.linear.mlp-out",
+        "L35.full.attn-out",
+        "L35.router-topk-idx",
+        "L35.router-topk-w",
+        "L35.full.mlp-out",
+        "L36.linear.attn-out",
+        "L36.router-topk-idx",
+        "L36.router-topk-w",
+        "L36.linear.mlp-out",
+        "L37.linear.attn-out",
+        "L37.router-topk-idx",
+        "L37.router-topk-w",
+        "L37.linear.mlp-out",
+        "L38.linear.attn-out",
+        "L38.router-topk-idx",
+        "L38.router-topk-w",
+        "L38.linear.mlp-out",
+        "L39.full.attn-out",
+        "L39.router-topk-idx",
+        "L39.router-topk-w",
+        "L39.full.mlp-out",
+        "final-norm",
+        "logits",
+        "logits-last"
+      ],
+      "analysis": [
+        {
+          "label": "L00.linear.attn-out",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.router-topk-idx",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.router-topk-w",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.linear.mlp-out",
+          "distinct": 2,
+          "spread": 0.0066814422607421875
+        },
+        {
+          "label": "L01.linear.attn-out",
+          "distinct": 2,
+          "spread": 0.027191162109375
+        },
+        {
+          "label": "L01.router-topk-idx",
+          "distinct": 2,
+          "spread": 47.0625
+        },
+        {
+          "label": "L01.router-topk-w",
+          "distinct": 2,
+          "spread": 0.0124664306640625
+        },
+        {
+          "label": "L01.linear.mlp-out",
+          "distinct": 3,
+          "spread": 0.02376079559326172
+        },
+        {
+          "label": "L02.linear.attn-out",
+          "distinct": 3,
+          "spread": 0.0850677490234375
+        },
+        {
+          "label": "L02.router-topk-idx",
+          "distinct": 3,
+          "spread": 264.09375
+        },
+        {
+          "label": "L02.router-topk-w",
+          "distinct": 3,
+          "spread": 0.00091552734375
+        },
+        {
+          "label": "L02.linear.mlp-out",
+          "distinct": 4,
+          "spread": 0.1974353790283203
+        },
+        {
+          "label": "L03.full.attn-out",
+          "distinct": 4,
+          "spread": 0.26096343994140625
+        },
+        {
+          "label": "L03.router-topk-idx",
+          "distinct": 4,
+          "spread": 416.8125
+        },
+        {
+          "label": "L03.router-topk-w",
+          "distinct": 4,
+          "spread": 0.0351104736328125
+        },
+        {
+          "label": "L03.full.mlp-out",
+          "distinct": 4,
+          "spread": 0.07805466651916504
+        },
+        {
+          "label": "L04.linear.attn-out",
+          "distinct": 4,
+          "spread": 0.0659942626953125
+        },
+        {
+          "label": "L04.router-topk-idx",
+          "distinct": 4,
+          "spread": 1512.21875
+        },
+        {
+          "label": "L04.router-topk-w",
+          "distinct": 4,
+          "spread": 0.0342559814453125
+        },
+        {
+          "label": "L04.linear.mlp-out",
+          "distinct": 4,
+          "spread": 0.4541463851928711
+        },
+        {
+          "label": "L05.linear.attn-out",
+          "distinct": 4,
+          "spread": 0.3740081787109375
+        },
+        {
+          "label": "L05.router-topk-idx",
+          "distinct": 4,
+          "spread": 2110.1875
+        },
+        {
+          "label": "L05.router-topk-w",
+          "distinct": 4,
+          "spread": 0.0276947021484375
+        },
+        {
+          "label": "L05.linear.mlp-out",
+          "distinct": 4,
+          "spread": 0.39839935302734375
+        },
+        {
+          "label": "L06.linear.attn-out",
+          "distinct": 4,
+          "spread": 0.784698486328125
+        },
+        {
+          "label": "L06.router-topk-idx",
+          "distinct": 4,
+          "spread": 1871.59375
+        },
+        {
+          "label": "L06.router-topk-w",
+          "distinct": 4,
+          "spread": 0.0176849365234375
+        },
+        {
+          "label": "L06.linear.mlp-out",
+          "distinct": 4,
+          "spread": 0.7020492553710938
+        },
+        {
+          "label": "L07.full.attn-out",
+          "distinct": 4,
+          "spread": 1.1728744506835938
+        },
+        {
+          "label": "L07.router-topk-idx",
+          "distinct": 4,
+          "spread": 2268.15625
+        },
+        {
+          "label": "L07.router-topk-w",
+          "distinct": 4,
+          "spread": 0.058990478515625
+        },
+        {
+          "label": "L07.full.mlp-out",
+          "distinct": 4,
+          "spread": 0.5514678955078125
+        },
+        {
+          "label": "L08.linear.attn-out",
+          "distinct": 4,
+          "spread": 0.303436279296875
+        },
+        {
+          "label": "L08.router-topk-idx",
+          "distinct": 4,
+          "spread": 1076.1875
+        },
+        {
+          "label": "L08.router-topk-w",
+          "distinct": 4,
+          "spread": 0.017669677734375
+        },
+        {
+          "label": "L08.linear.mlp-out",
+          "distinct": 4,
+          "spread": 1.203329086303711
+        },
+        {
+          "label": "L09.linear.attn-out",
+          "distinct": 4,
+          "spread": 0.44170379638671875
+        },
+        {
+          "label": "L09.router-topk-idx",
+          "distinct": 4,
+          "spread": 2187.8125
+        },
+        {
+          "label": "L09.router-topk-w",
+          "distinct": 4,
+          "spread": 0.094879150390625
+        },
+        {
+          "label": "L09.linear.mlp-out",
+          "distinct": 4,
+          "spread": 1.4573402404785156
+        },
+        {
+          "label": "L10.linear.attn-out",
+          "distinct": 4,
+          "spread": 3.7043991088867188
+        },
+        {
+          "label": "L10.router-topk-idx",
+          "distinct": 4,
+          "spread": 1570.4375
+        },
+        {
+          "label": "L10.router-topk-w",
+          "distinct": 4,
+          "spread": 0.1321563720703125
+        },
+        {
+          "label": "L10.linear.mlp-out",
+          "distinct": 4,
+          "spread": 0.5902099609375
+        },
+        {
+          "label": "L11.full.attn-out",
+          "distinct": 4,
+          "spread": 2.3375320434570312
+        },
+        {
+          "label": "L11.router-topk-idx",
+          "distinct": 4,
+          "spread": 1158.375
+        },
+        {
+          "label": "L11.router-topk-w",
+          "distinct": 4,
+          "spread": 0.090972900390625
+        },
+        {
+          "label": "L11.full.mlp-out",
+          "distinct": 4,
+          "spread": 1.8295269012451172
+        },
+        {
+          "label": "L12.linear.attn-out",
+          "distinct": 4,
+          "spread": 4.370903015136719
+        },
+        {
+          "label": "L12.router-topk-idx",
+          "distinct": 4,
+          "spread": 1961.96875
+        },
+        {
+          "label": "L12.router-topk-w",
+          "distinct": 4,
+          "spread": 0.2144012451171875
+        },
+        {
+          "label": "L12.linear.mlp-out",
+          "distinct": 4,
+          "spread": 0.549957275390625
+        },
+        {
+          "label": "L13.linear.attn-out",
+          "distinct": 4,
+          "spread": 0.9534835815429688
+        },
+        {
+          "label": "L13.router-topk-idx",
+          "distinct": 4,
+          "spread": 1218.625
+        },
+        {
+          "label": "L13.router-topk-w",
+          "distinct": 4,
+          "spread": 0.2194366455078125
+        },
+        {
+          "label": "L13.linear.mlp-out",
+          "distinct": 4,
+          "spread": 2.9241714477539062
+        },
+        {
+          "label": "L14.linear.attn-out",
+          "distinct": 4,
+          "spread": 4.9952239990234375
+        },
+        {
+          "label": "L14.router-topk-idx",
+          "distinct": 4,
+          "spread": 1533.3125
+        },
+        {
+          "label": "L14.router-topk-w",
+          "distinct": 4,
+          "spread": 0.2036590576171875
+        },
+        {
+          "label": "L14.linear.mlp-out",
+          "distinct": 5,
+          "spread": 2.7377243041992188
+        },
+        {
+          "label": "L15.full.attn-out",
+          "distinct": 5,
+          "spread": 10.497299194335938
+        },
+        {
+          "label": "L15.router-topk-idx",
+          "distinct": 5,
+          "spread": 3025.8125
+        },
+        {
+          "label": "L15.router-topk-w",
+          "distinct": 5,
+          "spread": 0.1712493896484375
+        },
+        {
+          "label": "L15.full.mlp-out",
+          "distinct": 5,
+          "spread": 6.361549377441406
+        },
+        {
+          "label": "L16.linear.attn-out",
+          "distinct": 5,
+          "spread": 12.91461181640625
+        },
+        {
+          "label": "L16.router-topk-idx",
+          "distinct": 5,
+          "spread": 2468.0625
+        },
+        {
+          "label": "L16.router-topk-w",
+          "distinct": 5,
+          "spread": 0.2165069580078125
+        },
+        {
+          "label": "L16.linear.mlp-out",
+          "distinct": 5,
+          "spread": 4.4295654296875
+        },
+        {
+          "label": "L17.linear.attn-out",
+          "distinct": 5,
+          "spread": 7.411224365234375
+        },
+        {
+          "label": "L17.router-topk-idx",
+          "distinct": 5,
+          "spread": 4098.40625
+        },
+        {
+          "label": "L17.router-topk-w",
+          "distinct": 5,
+          "spread": 0.292449951171875
+        },
+        {
+          "label": "L17.linear.mlp-out",
+          "distinct": 6,
+          "spread": 5.5515289306640625
+        },
+        {
+          "label": "L18.linear.attn-out",
+          "distinct": 6,
+          "spread": 10.373893737792969
+        },
+        {
+          "label": "L18.router-topk-idx",
+          "distinct": 6,
+          "spread": 1727.90625
+        },
+        {
+          "label": "L18.router-topk-w",
+          "distinct": 6,
+          "spread": 0.5697174072265625
+        },
+        {
+          "label": "L18.linear.mlp-out",
+          "distinct": 7,
+          "spread": 5.710611820220947
+        },
+        {
+          "label": "L19.full.attn-out",
+          "distinct": 7,
+          "spread": 11.31890869140625
+        },
+        {
+          "label": "L19.router-topk-idx",
+          "distinct": 7,
+          "spread": 2783.5
+        },
+        {
+          "label": "L19.router-topk-w",
+          "distinct": 7,
+          "spread": 0.09588623046875
+        },
+        {
+          "label": "L19.full.mlp-out",
+          "distinct": 7,
+          "spread": 6.464569091796875
+        },
+        {
+          "label": "L20.linear.attn-out",
+          "distinct": 7,
+          "spread": 5.5535888671875
+        },
+        {
+          "label": "L20.router-topk-idx",
+          "distinct": 7,
+          "spread": 1699.28125
+        },
+        {
+          "label": "L20.router-topk-w",
+          "distinct": 7,
+          "spread": 0.5384368896484375
+        },
+        {
+          "label": "L20.linear.mlp-out",
+          "distinct": 7,
+          "spread": 7.2310028076171875
+        },
+        {
+          "label": "L21.linear.attn-out",
+          "distinct": 7,
+          "spread": 6.543613433837891
+        },
+        {
+          "label": "L21.router-topk-idx",
+          "distinct": 7,
+          "spread": 1991.125
+        },
+        {
+          "label": "L21.router-topk-w",
+          "distinct": 7,
+          "spread": 0.36962890625
+        },
+        {
+          "label": "L21.linear.mlp-out",
+          "distinct": 8,
+          "spread": 13.545204162597656
+        },
+        {
+          "label": "L22.linear.attn-out",
+          "distinct": 8,
+          "spread": 6.624267578125
+        },
+        {
+          "label": "L22.router-topk-idx",
+          "distinct": 8,
+          "spread": 3063.90625
+        },
+        {
+          "label": "L22.router-topk-w",
+          "distinct": 8,
+          "spread": 0.8208160400390625
+        },
+        {
+          "label": "L22.linear.mlp-out",
+          "distinct": 8,
+          "spread": 18.780426025390625
+        },
+        {
+          "label": "L23.full.attn-out",
+          "distinct": 8,
+          "spread": 11.288978576660156
+        },
+        {
+          "label": "L23.router-topk-idx",
+          "distinct": 8,
+          "spread": 4469.625
+        },
+        {
+          "label": "L23.router-topk-w",
+          "distinct": 8,
+          "spread": 0.982666015625
+        },
+        {
+          "label": "L23.full.mlp-out",
+          "distinct": 8,
+          "spread": 3.5303192138671875
+        },
+        {
+          "label": "L24.linear.attn-out",
+          "distinct": 8,
+          "spread": 5.880157470703125
+        },
+        {
+          "label": "L24.router-topk-idx",
+          "distinct": 8,
+          "spread": 3800.546875
+        },
+        {
+          "label": "L24.router-topk-w",
+          "distinct": 8,
+          "spread": 0.29815673828125
+        },
+        {
+          "label": "L24.linear.mlp-out",
+          "distinct": 8,
+          "spread": 8.980735778808594
+        },
+        {
+          "label": "L25.linear.attn-out",
+          "distinct": 8,
+          "spread": 11.256416320800781
+        },
+        {
+          "label": "L25.router-topk-idx",
+          "distinct": 8,
+          "spread": 4445.75
+        },
+        {
+          "label": "L25.router-topk-w",
+          "distinct": 8,
+          "spread": 0.231353759765625
+        },
+        {
+          "label": "L25.linear.mlp-out",
+          "distinct": 8,
+          "spread": 9.276214599609375
+        },
+        {
+          "label": "L26.linear.attn-out",
+          "distinct": 8,
+          "spread": 10.187530517578125
+        },
+        {
+          "label": "L26.router-topk-idx",
+          "distinct": 8,
+          "spread": 2383.9375
+        },
+        {
+          "label": "L26.router-topk-w",
+          "distinct": 8,
+          "spread": 0.76904296875
+        },
+        {
+          "label": "L26.linear.mlp-out",
+          "distinct": 8,
+          "spread": 6.021785736083984
+        },
+        {
+          "label": "L27.full.attn-out",
+          "distinct": 8,
+          "spread": 9.317238807678223
+        },
+        {
+          "label": "L27.router-topk-idx",
+          "distinct": 8,
+          "spread": 2612.5625
+        },
+        {
+          "label": "L27.router-topk-w",
+          "distinct": 8,
+          "spread": 0.680633544921875
+        },
+        {
+          "label": "L27.full.mlp-out",
+          "distinct": 8,
+          "spread": 25.02142333984375
+        },
+        {
+          "label": "L28.linear.attn-out",
+          "distinct": 8,
+          "spread": 3.05120849609375
+        },
+        {
+          "label": "L28.router-topk-idx",
+          "distinct": 8,
+          "spread": 3675.4375
+        },
+        {
+          "label": "L28.router-topk-w",
+          "distinct": 8,
+          "spread": 0.64923095703125
+        },
+        {
+          "label": "L28.linear.mlp-out",
+          "distinct": 8,
+          "spread": 11.363433837890625
+        },
+        {
+          "label": "L29.linear.attn-out",
+          "distinct": 8,
+          "spread": 25.0572509765625
+        },
+        {
+          "label": "L29.router-topk-idx",
+          "distinct": 8,
+          "spread": 3054.671875
+        },
+        {
+          "label": "L29.router-topk-w",
+          "distinct": 8,
+          "spread": 0.357452392578125
+        },
+        {
+          "label": "L29.linear.mlp-out",
+          "distinct": 8,
+          "spread": 16.072250366210938
+        },
+        {
+          "label": "L30.linear.attn-out",
+          "distinct": 8,
+          "spread": 10.420654296875
+        },
+        {
+          "label": "L30.router-topk-idx",
+          "distinct": 8,
+          "spread": 3743.3125
+        },
+        {
+          "label": "L30.router-topk-w",
+          "distinct": 8,
+          "spread": 0.539093017578125
+        },
+        {
+          "label": "L30.linear.mlp-out",
+          "distinct": 8,
+          "spread": 12.11968994140625
+        },
+        {
+          "label": "L31.full.attn-out",
+          "distinct": 8,
+          "spread": 22.712364196777344
+        },
+        {
+          "label": "L31.router-topk-idx",
+          "distinct": 8,
+          "spread": 4223.90625
+        },
+        {
+          "label": "L31.router-topk-w",
+          "distinct": 8,
+          "spread": 0.4851226806640625
+        },
+        {
+          "label": "L31.full.mlp-out",
+          "distinct": 8,
+          "spread": 13.4866943359375
+        },
+        {
+          "label": "L32.linear.attn-out",
+          "distinct": 8,
+          "spread": 22.647476196289062
+        },
+        {
+          "label": "L32.router-topk-idx",
+          "distinct": 8,
+          "spread": 2058.34375
+        },
+        {
+          "label": "L32.router-topk-w",
+          "distinct": 8,
+          "spread": 0.327911376953125
+        },
+        {
+          "label": "L32.linear.mlp-out",
+          "distinct": 8,
+          "spread": 16.823226928710938
+        },
+        {
+          "label": "L33.linear.attn-out",
+          "distinct": 8,
+          "spread": 26.632343292236328
+        },
+        {
+          "label": "L33.router-topk-idx",
+          "distinct": 8,
+          "spread": 2547.140625
+        },
+        {
+          "label": "L33.router-topk-w",
+          "distinct": 8,
+          "spread": 0.372467041015625
+        },
+        {
+          "label": "L33.linear.mlp-out",
+          "distinct": 8,
+          "spread": 14.41232681274414
+        },
+        {
+          "label": "L34.linear.attn-out",
+          "distinct": 8,
+          "spread": 18.171142578125
+        },
+        {
+          "label": "L34.router-topk-idx",
+          "distinct": 8,
+          "spread": 3823.9375
+        },
+        {
+          "label": "L34.router-topk-w",
+          "distinct": 8,
+          "spread": 0.33294677734375
+        },
+        {
+          "label": "L34.linear.mlp-out",
+          "distinct": 8,
+          "spread": 23.135009765625
+        },
+        {
+          "label": "L35.full.attn-out",
+          "distinct": 8,
+          "spread": 78.38607788085938
+        },
+        {
+          "label": "L35.router-topk-idx",
+          "distinct": 8,
+          "spread": 3489.84375
+        },
+        {
+          "label": "L35.router-topk-w",
+          "distinct": 8,
+          "spread": 0.533935546875
+        },
+        {
+          "label": "L35.full.mlp-out",
+          "distinct": 8,
+          "spread": 12.0355224609375
+        },
+        {
+          "label": "L36.linear.attn-out",
+          "distinct": 8,
+          "spread": 12.74151611328125
+        },
+        {
+          "label": "L36.router-topk-idx",
+          "distinct": 8,
+          "spread": 2716.046875
+        },
+        {
+          "label": "L36.router-topk-w",
+          "distinct": 8,
+          "spread": 0.513885498046875
+        },
+        {
+          "label": "L36.linear.mlp-out",
+          "distinct": 8,
+          "spread": 26.437664031982422
+        },
+        {
+          "label": "L37.linear.attn-out",
+          "distinct": 8,
+          "spread": 34.61921501159668
+        },
+        {
+          "label": "L37.router-topk-idx",
+          "distinct": 8,
+          "spread": 2951.5
+        },
+        {
+          "label": "L37.router-topk-w",
+          "distinct": 8,
+          "spread": 0.594451904296875
+        },
+        {
+          "label": "L37.linear.mlp-out",
+          "distinct": 8,
+          "spread": 17.55706024169922
+        },
+        {
+          "label": "L38.linear.attn-out",
+          "distinct": 8,
+          "spread": 55.98150634765625
+        },
+        {
+          "label": "L38.router-topk-idx",
+          "distinct": 8,
+          "spread": 2158.1875
+        },
+        {
+          "label": "L38.router-topk-w",
+          "distinct": 8,
+          "spread": 0.3787994384765625
+        },
+        {
+          "label": "L38.linear.mlp-out",
+          "distinct": 9,
+          "spread": 51.814697265625
+        },
+        {
+          "label": "L39.full.attn-out",
+          "distinct": 9,
+          "spread": 59.9591064453125
+        },
+        {
+          "label": "L39.router-topk-idx",
+          "distinct": 9,
+          "spread": 5617.5625
+        },
+        {
+          "label": "L39.router-topk-w",
+          "distinct": 9,
+          "spread": 0.435516357421875
+        },
+        {
+          "label": "L39.full.mlp-out",
+          "distinct": 9,
+          "spread": 93.9111328125
+        },
+        {
+          "label": "final-norm",
+          "distinct": 9,
+          "spread": 1593.1650390625
+        },
+        {
+          "label": "logits",
+          "distinct": 9,
+          "spread": 3768064
+        },
+        {
+          "label": "logits-last",
+          "distinct": 9,
+          "spread": 13345.375
+        }
+      ]
+    },
+    "eager": {
+      "ms": [
+        2698.1619000000064,
+        2698.025556000008,
+        2720.0355299999937,
+        2703.2456000000093,
+        2721.077590999994,
+        2701.99325900001,
+        2734.359098000001,
+        2715.4610660000035,
+        2696.5604989999993,
+        2711.491385000001
+      ],
+      "divergent": [
+        "L00.linear.mlp-out",
+        "L01.linear.attn-out",
+        "L01.router-topk-idx",
+        "L01.router-topk-w",
+        "L01.linear.mlp-out",
+        "L02.linear.attn-out",
+        "L02.router-topk-idx",
+        "L02.router-topk-w",
+        "L02.linear.mlp-out",
+        "L03.full.attn-out",
+        "L03.router-topk-idx",
+        "L03.router-topk-w",
+        "L03.full.mlp-out",
+        "L04.linear.attn-out",
+        "L04.router-topk-idx",
+        "L04.router-topk-w",
+        "L04.linear.mlp-out",
+        "L05.linear.attn-out",
+        "L05.router-topk-idx",
+        "L05.router-topk-w",
+        "L05.linear.mlp-out",
+        "L06.linear.attn-out",
+        "L06.router-topk-idx",
+        "L06.router-topk-w",
+        "L06.linear.mlp-out",
+        "L07.full.attn-out",
+        "L07.router-topk-idx",
+        "L07.router-topk-w",
+        "L07.full.mlp-out",
+        "L08.linear.attn-out",
+        "L08.router-topk-idx",
+        "L08.router-topk-w",
+        "L08.linear.mlp-out",
+        "L09.linear.attn-out",
+        "L09.router-topk-idx",
+        "L09.router-topk-w",
+        "L09.linear.mlp-out",
+        "L10.linear.attn-out",
+        "L10.router-topk-idx",
+        "L10.router-topk-w",
+        "L10.linear.mlp-out",
+        "L11.full.attn-out",
+        "L11.router-topk-idx",
+        "L11.router-topk-w",
+        "L11.full.mlp-out",
+        "L12.linear.attn-out",
+        "L12.router-topk-idx",
+        "L12.router-topk-w",
+        "L12.linear.mlp-out",
+        "L13.linear.attn-out",
+        "L13.router-topk-idx",
+        "L13.router-topk-w",
+        "L13.linear.mlp-out",
+        "L14.linear.attn-out",
+        "L14.router-topk-idx",
+        "L14.router-topk-w",
+        "L14.linear.mlp-out",
+        "L15.full.attn-out",
+        "L15.router-topk-idx",
+        "L15.router-topk-w",
+        "L15.full.mlp-out",
+        "L16.linear.attn-out",
+        "L16.router-topk-idx",
+        "L16.router-topk-w",
+        "L16.linear.mlp-out",
+        "L17.linear.attn-out",
+        "L17.router-topk-idx",
+        "L17.router-topk-w",
+        "L17.linear.mlp-out",
+        "L18.linear.attn-out",
+        "L18.router-topk-idx",
+        "L18.router-topk-w",
+        "L18.linear.mlp-out",
+        "L19.full.attn-out",
+        "L19.router-topk-idx",
+        "L19.router-topk-w",
+        "L19.full.mlp-out",
+        "L20.linear.attn-out",
+        "L20.router-topk-idx",
+        "L20.router-topk-w",
+        "L20.linear.mlp-out",
+        "L21.linear.attn-out",
+        "L21.router-topk-idx",
+        "L21.router-topk-w",
+        "L21.linear.mlp-out",
+        "L22.linear.attn-out",
+        "L22.router-topk-idx",
+        "L22.router-topk-w",
+        "L22.linear.mlp-out",
+        "L23.full.attn-out",
+        "L23.router-topk-idx",
+        "L23.router-topk-w",
+        "L23.full.mlp-out",
+        "L24.linear.attn-out",
+        "L24.router-topk-idx",
+        "L24.router-topk-w",
+        "L24.linear.mlp-out",
+        "L25.linear.attn-out",
+        "L25.router-topk-idx",
+        "L25.router-topk-w",
+        "L25.linear.mlp-out",
+        "L26.linear.attn-out",
+        "L26.router-topk-idx",
+        "L26.router-topk-w",
+        "L26.linear.mlp-out",
+        "L27.full.attn-out",
+        "L27.router-topk-idx",
+        "L27.router-topk-w",
+        "L27.full.mlp-out",
+        "L28.linear.attn-out",
+        "L28.router-topk-idx",
+        "L28.router-topk-w",
+        "L28.linear.mlp-out",
+        "L29.linear.attn-out",
+        "L29.router-topk-idx",
+        "L29.router-topk-w",
+        "L29.linear.mlp-out",
+        "L30.linear.attn-out",
+        "L30.router-topk-idx",
+        "L30.router-topk-w",
+        "L30.linear.mlp-out",
+        "L31.full.attn-out",
+        "L31.router-topk-idx",
+        "L31.router-topk-w",
+        "L31.full.mlp-out",
+        "L32.linear.attn-out",
+        "L32.router-topk-idx",
+        "L32.router-topk-w",
+        "L32.linear.mlp-out",
+        "L33.linear.attn-out",
+        "L33.router-topk-idx",
+        "L33.router-topk-w",
+        "L33.linear.mlp-out",
+        "L34.linear.attn-out",
+        "L34.router-topk-idx",
+        "L34.router-topk-w",
+        "L34.linear.mlp-out",
+        "L35.full.attn-out",
+        "L35.router-topk-idx",
+        "L35.router-topk-w",
+        "L35.full.mlp-out",
+        "L36.linear.attn-out",
+        "L36.router-topk-idx",
+        "L36.router-topk-w",
+        "L36.linear.mlp-out",
+        "L37.linear.attn-out",
+        "L37.router-topk-idx",
+        "L37.router-topk-w",
+        "L37.linear.mlp-out",
+        "L38.linear.attn-out",
+        "L38.router-topk-idx",
+        "L38.router-topk-w",
+        "L38.linear.mlp-out",
+        "L39.full.attn-out",
+        "L39.router-topk-idx",
+        "L39.router-topk-w",
+        "L39.full.mlp-out",
+        "final-norm",
+        "logits",
+        "logits-last"
+      ],
+      "analysis": [
+        {
+          "label": "L00.linear.attn-out",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.router-topk-idx",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.router-topk-w",
+          "distinct": 1,
+          "spread": 0
+        },
+        {
+          "label": "L00.linear.mlp-out",
+          "distinct": 2,
+          "spread": 0.0021085739135742188
+        },
+        {
+          "label": "L01.linear.attn-out",
+          "distinct": 2,
+          "spread": 0.009368896484375
+        },
+        {
+          "label": "L01.router-topk-idx",
+          "distinct": 2,
+          "spread": 14.375
+        },
+        {
+          "label": "L01.router-topk-w",
+          "distinct": 2,
+          "spread": 0.001312255859375
+        },
+        {
+          "label": "L01.linear.mlp-out",
+          "distinct": 2,
+          "spread": 0.01822662353515625
+        },
+        {
+          "label": "L02.linear.attn-out",
+          "distinct": 2,
+          "spread": 0.04925537109375
+        },
+        {
+          "label": "L02.router-topk-idx",
+          "distinct": 2,
+          "spread": 167.09375
+        },
+        {
+          "label": "L02.router-topk-w",
+          "distinct": 2,
+          "spread": 0.0008697509765625
+        },
+        {
+          "label": "L02.linear.mlp-out",
+          "distinct": 3,
+          "spread": 0.039825439453125
+        },
+        {
+          "label": "L03.full.attn-out",
+          "distinct": 3,
+          "spread": 0.0615692138671875
+        },
+        {
+          "label": "L03.router-topk-idx",
+          "distinct": 3,
+          "spread": 159.0625
+        },
+        {
+          "label": "L03.router-topk-w",
+          "distinct": 3,
+          "spread": 0.0279388427734375
+        },
+        {
+          "label": "L03.full.mlp-out",
+          "distinct": 3,
+          "spread": 0.07100296020507812
+        },
+        {
+          "label": "L04.linear.attn-out",
+          "distinct": 3,
+          "spread": 0.03662109375
+        },
+        {
+          "label": "L04.router-topk-idx",
+          "distinct": 3,
+          "spread": 962.34375
+        },
+        {
+          "label": "L04.router-topk-w",
+          "distinct": 3,
+          "spread": 0.0121612548828125
+        },
+        {
+          "label": "L04.linear.mlp-out",
+          "distinct": 3,
+          "spread": 0.2338557243347168
+        },
+        {
+          "label": "L05.linear.attn-out",
+          "distinct": 3,
+          "spread": 0.105926513671875
+        },
+        {
+          "label": "L05.router-topk-idx",
+          "distinct": 3,
+          "spread": 876.8125
+        },
+        {
+          "label": "L05.router-topk-w",
+          "distinct": 3,
+          "spread": 0.0163421630859375
+        },
+        {
+          "label": "L05.linear.mlp-out",
+          "distinct": 3,
+          "spread": 0.0336151123046875
+        },
+        {
+          "label": "L06.linear.attn-out",
+          "distinct": 3,
+          "spread": 0.1614532470703125
+        },
+        {
+          "label": "L06.router-topk-idx",
+          "distinct": 3,
+          "spread": 175.59375
+        },
+        {
+          "label": "L06.router-topk-w",
+          "distinct": 3,
+          "spread": 0.01763916015625
+        },
+        {
+          "label": "L06.linear.mlp-out",
+          "distinct": 6,
+          "spread": 0.07535934448242188
+        },
+        {
+          "label": "L07.full.attn-out",
+          "distinct": 6,
+          "spread": 0.18292236328125
+        },
+        {
+          "label": "L07.router-topk-idx",
+          "distinct": 6,
+          "spread": 641.0625
+        },
+        {
+          "label": "L07.router-topk-w",
+          "distinct": 6,
+          "spread": 0.0206756591796875
+        },
+        {
+          "label": "L07.full.mlp-out",
+          "distinct": 6,
+          "spread": 0.3524913787841797
+        },
+        {
+          "label": "L08.linear.attn-out",
+          "distinct": 6,
+          "spread": 0.267303466796875
+        },
+        {
+          "label": "L08.router-topk-idx",
+          "distinct": 6,
+          "spread": 1191.09375
+        },
+        {
+          "label": "L08.router-topk-w",
+          "distinct": 6,
+          "spread": 0.0356292724609375
+        },
+        {
+          "label": "L08.linear.mlp-out",
+          "distinct": 7,
+          "spread": 0.4121112823486328
+        },
+        {
+          "label": "L09.linear.attn-out",
+          "distinct": 7,
+          "spread": 0.6283149719238281
+        },
+        {
+          "label": "L09.router-topk-idx",
+          "distinct": 7,
+          "spread": 1724.109375
+        },
+        {
+          "label": "L09.router-topk-w",
+          "distinct": 7,
+          "spread": 0.045440673828125
+        },
+        {
+          "label": "L09.linear.mlp-out",
+          "distinct": 8,
+          "spread": 0.7744483947753906
+        },
+        {
+          "label": "L10.linear.attn-out",
+          "distinct": 8,
+          "spread": 2.1655044555664062
+        },
+        {
+          "label": "L10.router-topk-idx",
+          "distinct": 8,
+          "spread": 1472.34375
+        },
+        {
+          "label": "L10.router-topk-w",
+          "distinct": 8,
+          "spread": 0.069000244140625
+        },
+        {
+          "label": "L10.linear.mlp-out",
+          "distinct": 8,
+          "spread": 1.16693115234375
+        },
+        {
+          "label": "L11.full.attn-out",
+          "distinct": 8,
+          "spread": 0.6545066833496094
+        },
+        {
+          "label": "L11.router-topk-idx",
+          "distinct": 8,
+          "spread": 1425.375
+        },
+        {
+          "label": "L11.router-topk-w",
+          "distinct": 8,
+          "spread": 0.1136627197265625
+        },
+        {
+          "label": "L11.full.mlp-out",
+          "distinct": 8,
+          "spread": 1.3994197845458984
+        },
+        {
+          "label": "L12.linear.attn-out",
+          "distinct": 8,
+          "spread": 2.237031936645508
+        },
+        {
+          "label": "L12.router-topk-idx",
+          "distinct": 8,
+          "spread": 2454.78125
+        },
+        {
+          "label": "L12.router-topk-w",
+          "distinct": 8,
+          "spread": 0.025360107421875
+        },
+        {
+          "label": "L12.linear.mlp-out",
+          "distinct": 8,
+          "spread": 1.1137828826904297
+        },
+        {
+          "label": "L13.linear.attn-out",
+          "distinct": 8,
+          "spread": 2.4448699951171875
+        },
+        {
+          "label": "L13.router-topk-idx",
+          "distinct": 8,
+          "spread": 2247.59375
+        },
+        {
+          "label": "L13.router-topk-w",
+          "distinct": 8,
+          "spread": 0.1232147216796875
+        },
+        {
+          "label": "L13.linear.mlp-out",
+          "distinct": 8,
+          "spread": 2.2025146484375
+        },
+        {
+          "label": "L14.linear.attn-out",
+          "distinct": 8,
+          "spread": 3.0914764404296875
+        },
+        {
+          "label": "L14.router-topk-idx",
+          "distinct": 8,
+          "spread": 1984.75
+        },
+        {
+          "label": "L14.router-topk-w",
+          "distinct": 8,
+          "spread": 0.2052154541015625
+        },
+        {
+          "label": "L14.linear.mlp-out",
+          "distinct": 9,
+          "spread": 2.0690536499023438
+        },
+        {
+          "label": "L15.full.attn-out",
+          "distinct": 9,
+          "spread": 5.9588165283203125
+        },
+        {
+          "label": "L15.router-topk-idx",
+          "distinct": 9,
+          "spread": 1830.71875
+        },
+        {
+          "label": "L15.router-topk-w",
+          "distinct": 9,
+          "spread": 0.273712158203125
+        },
+        {
+          "label": "L15.full.mlp-out",
+          "distinct": 9,
+          "spread": 7.333227157592773
+        },
+        {
+          "label": "L16.linear.attn-out",
+          "distinct": 9,
+          "spread": 8.454010009765625
+        },
+        {
+          "label": "L16.router-topk-idx",
+          "distinct": 9,
+          "spread": 2480.03125
+        },
+        {
+          "label": "L16.router-topk-w",
+          "distinct": 9,
+          "spread": 0.1898040771484375
+        },
+        {
+          "label": "L16.linear.mlp-out",
+          "distinct": 9,
+          "spread": 7.8487701416015625
+        },
+        {
+          "label": "L17.linear.attn-out",
+          "distinct": 9,
+          "spread": 8.372909545898438
+        },
+        {
+          "label": "L17.router-topk-idx",
+          "distinct": 9,
+          "spread": 3922.25
+        },
+        {
+          "label": "L17.router-topk-w",
+          "distinct": 9,
+          "spread": 0.37408447265625
+        },
+        {
+          "label": "L17.linear.mlp-out",
+          "distinct": 9,
+          "spread": 3.233367919921875
+        },
+        {
+          "label": "L18.linear.attn-out",
+          "distinct": 9,
+          "spread": 2.743927001953125
+        },
+        {
+          "label": "L18.router-topk-idx",
+          "distinct": 9,
+          "spread": 3936.578125
+        },
+        {
+          "label": "L18.router-topk-w",
+          "distinct": 9,
+          "spread": 0.545623779296875
+        },
+        {
+          "label": "L18.linear.mlp-out",
+          "distinct": 9,
+          "spread": 5.432275295257568
+        },
+        {
+          "label": "L19.full.attn-out",
+          "distinct": 9,
+          "spread": 9.412635803222656
+        },
+        {
+          "label": "L19.router-topk-idx",
+          "distinct": 9,
+          "spread": 4604.53125
+        },
+        {
+          "label": "L19.router-topk-w",
+          "distinct": 9,
+          "spread": 0.4713134765625
+        },
+        {
+          "label": "L19.full.mlp-out",
+          "distinct": 10,
+          "spread": 4.88922119140625
+        },
+        {
+          "label": "L20.linear.attn-out",
+          "distinct": 10,
+          "spread": 12.8623046875
+        },
+        {
+          "label": "L20.router-topk-idx",
+          "distinct": 10,
+          "spread": 3281.53125
+        },
+        {
+          "label": "L20.router-topk-w",
+          "distinct": 10,
+          "spread": 0.2133331298828125
+        },
+        {
+          "label": "L20.linear.mlp-out",
+          "distinct": 10,
+          "spread": 13.446029663085938
+        },
+        {
+          "label": "L21.linear.attn-out",
+          "distinct": 10,
+          "spread": 11.443889617919922
+        },
+        {
+          "label": "L21.router-topk-idx",
+          "distinct": 10,
+          "spread": 2613.96875
+        },
+        {
+          "label": "L21.router-topk-w",
+          "distinct": 10,
+          "spread": 0.3585968017578125
+        },
+        {
+          "label": "L21.linear.mlp-out",
+          "distinct": 10,
+          "spread": 7.7558135986328125
+        },
+        {
+          "label": "L22.linear.attn-out",
+          "distinct": 10,
+          "spread": 8.33319091796875
+        },
+        {
+          "label": "L22.router-topk-idx",
+          "distinct": 10,
+          "spread": 4549.03125
+        },
+        {
+          "label": "L22.router-topk-w",
+          "distinct": 10,
+          "spread": 0.4452056884765625
+        },
+        {
+          "label": "L22.linear.mlp-out",
+          "distinct": 10,
+          "spread": 14.747611999511719
+        },
+        {
+          "label": "L23.full.attn-out",
+          "distinct": 10,
+          "spread": 22.587918281555176
+        },
+        {
+          "label": "L23.router-topk-idx",
+          "distinct": 10,
+          "spread": 3396.3125
+        },
+        {
+          "label": "L23.router-topk-w",
+          "distinct": 10,
+          "spread": 0.5662689208984375
+        },
+        {
+          "label": "L23.full.mlp-out",
+          "distinct": 10,
+          "spread": 7.8152313232421875
+        },
+        {
+          "label": "L24.linear.attn-out",
+          "distinct": 10,
+          "spread": 12.162796020507812
+        },
+        {
+          "label": "L24.router-topk-idx",
+          "distinct": 10,
+          "spread": 5044.734375
+        },
+        {
+          "label": "L24.router-topk-w",
+          "distinct": 10,
+          "spread": 0.468902587890625
+        },
+        {
+          "label": "L24.linear.mlp-out",
+          "distinct": 10,
+          "spread": 7.997650146484375
+        },
+        {
+          "label": "L25.linear.attn-out",
+          "distinct": 10,
+          "spread": 5.6607818603515625
+        },
+        {
+          "label": "L25.router-topk-idx",
+          "distinct": 10,
+          "spread": 3802.1875
+        },
+        {
+          "label": "L25.router-topk-w",
+          "distinct": 10,
+          "spread": 0.4402923583984375
+        },
+        {
+          "label": "L25.linear.mlp-out",
+          "distinct": 10,
+          "spread": 12.883865356445312
+        },
+        {
+          "label": "L26.linear.attn-out",
+          "distinct": 10,
+          "spread": 13.89642333984375
+        },
+        {
+          "label": "L26.router-topk-idx",
+          "distinct": 10,
+          "spread": 3174.8125
+        },
+        {
+          "label": "L26.router-topk-w",
+          "distinct": 10,
+          "spread": 0.73846435546875
+        },
+        {
+          "label": "L26.linear.mlp-out",
+          "distinct": 10,
+          "spread": 20.383434295654297
+        },
+        {
+          "label": "L27.full.attn-out",
+          "distinct": 10,
+          "spread": 16.80025863647461
+        },
+        {
+          "label": "L27.router-topk-idx",
+          "distinct": 10,
+          "spread": 5594.8125
+        },
+        {
+          "label": "L27.router-topk-w",
+          "distinct": 10,
+          "spread": 0.482879638671875
+        },
+        {
+          "label": "L27.full.mlp-out",
+          "distinct": 10,
+          "spread": 17.11627197265625
+        },
+        {
+          "label": "L28.linear.attn-out",
+          "distinct": 10,
+          "spread": 10.058441162109375
+        },
+        {
+          "label": "L28.router-topk-idx",
+          "distinct": 10,
+          "spread": 4352.5625
+        },
+        {
+          "label": "L28.router-topk-w",
+          "distinct": 10,
+          "spread": 0.5469512939453125
+        },
+        {
+          "label": "L28.linear.mlp-out",
+          "distinct": 10,
+          "spread": 11.8533935546875
+        },
+        {
+          "label": "L29.linear.attn-out",
+          "distinct": 10,
+          "spread": 13.053253173828125
+        },
+        {
+          "label": "L29.router-topk-idx",
+          "distinct": 10,
+          "spread": 4436.09375
+        },
+        {
+          "label": "L29.router-topk-w",
+          "distinct": 10,
+          "spread": 0.4909820556640625
+        },
+        {
+          "label": "L29.linear.mlp-out",
+          "distinct": 10,
+          "spread": 7.5577239990234375
+        },
+        {
+          "label": "L30.linear.attn-out",
+          "distinct": 10,
+          "spread": 14.49798583984375
+        },
+        {
+          "label": "L30.router-topk-idx",
+          "distinct": 10,
+          "spread": 4366.265625
+        },
+        {
+          "label": "L30.router-topk-w",
+          "distinct": 10,
+          "spread": 0.397705078125
+        },
+        {
+          "label": "L30.linear.mlp-out",
+          "distinct": 10,
+          "spread": 18.97132110595703
+        },
+        {
+          "label": "L31.full.attn-out",
+          "distinct": 10,
+          "spread": 10.063232421875
+        },
+        {
+          "label": "L31.router-topk-idx",
+          "distinct": 10,
+          "spread": 3617.75
+        },
+        {
+          "label": "L31.router-topk-w",
+          "distinct": 10,
+          "spread": 0.4793548583984375
+        },
+        {
+          "label": "L31.full.mlp-out",
+          "distinct": 10,
+          "spread": 23.24102783203125
+        },
+        {
+          "label": "L32.linear.attn-out",
+          "distinct": 10,
+          "spread": 24.731948852539062
+        },
+        {
+          "label": "L32.router-topk-idx",
+          "distinct": 10,
+          "spread": 6457.3125
+        },
+        {
+          "label": "L32.router-topk-w",
+          "distinct": 10,
+          "spread": 0.2255859375
+        },
+        {
+          "label": "L32.linear.mlp-out",
+          "distinct": 10,
+          "spread": 24.40069580078125
+        },
+        {
+          "label": "L33.linear.attn-out",
+          "distinct": 10,
+          "spread": 17.46379852294922
+        },
+        {
+          "label": "L33.router-topk-idx",
+          "distinct": 10,
+          "spread": 3957.375
+        },
+        {
+          "label": "L33.router-topk-w",
+          "distinct": 10,
+          "spread": 0.5006561279296875
+        },
+        {
+          "label": "L33.linear.mlp-out",
+          "distinct": 10,
+          "spread": 14.934642791748047
+        },
+        {
+          "label": "L34.linear.attn-out",
+          "distinct": 10,
+          "spread": 37.32940673828125
+        },
+        {
+          "label": "L34.router-topk-idx",
+          "distinct": 10,
+          "spread": 5280.34375
+        },
+        {
+          "label": "L34.router-topk-w",
+          "distinct": 10,
+          "spread": 0.50799560546875
+        },
+        {
+          "label": "L34.linear.mlp-out",
+          "distinct": 10,
+          "spread": 16.031173706054688
+        },
+        {
+          "label": "L35.full.attn-out",
+          "distinct": 10,
+          "spread": 35.90509033203125
+        },
+        {
+          "label": "L35.router-topk-idx",
+          "distinct": 10,
+          "spread": 4188.8125
+        },
+        {
+          "label": "L35.router-topk-w",
+          "distinct": 10,
+          "spread": 0.588623046875
+        },
+        {
+          "label": "L35.full.mlp-out",
+          "distinct": 10,
+          "spread": 15.4693603515625
+        },
+        {
+          "label": "L36.linear.attn-out",
+          "distinct": 10,
+          "spread": 29.4937744140625
+        },
+        {
+          "label": "L36.router-topk-idx",
+          "distinct": 10,
+          "spread": 4088.03125
+        },
+        {
+          "label": "L36.router-topk-w",
+          "distinct": 10,
+          "spread": 0.5448150634765625
+        },
+        {
+          "label": "L36.linear.mlp-out",
+          "distinct": 10,
+          "spread": 22.299686431884766
+        },
+        {
+          "label": "L37.linear.attn-out",
+          "distinct": 10,
+          "spread": 36.45472717285156
+        },
+        {
+          "label": "L37.router-topk-idx",
+          "distinct": 10,
+          "spread": 7957.625
+        },
+        {
+          "label": "L37.router-topk-w",
+          "distinct": 10,
+          "spread": 0.3128204345703125
+        },
+        {
+          "label": "L37.linear.mlp-out",
+          "distinct": 10,
+          "spread": 8.78256607055664
+        },
+        {
+          "label": "L38.linear.attn-out",
+          "distinct": 10,
+          "spread": 35.87593078613281
+        },
+        {
+          "label": "L38.router-topk-idx",
+          "distinct": 10,
+          "spread": 6786.96875
+        },
+        {
+          "label": "L38.router-topk-w",
+          "distinct": 10,
+          "spread": 0.346160888671875
+        },
+        {
+          "label": "L38.linear.mlp-out",
+          "distinct": 10,
+          "spread": 35.616973876953125
+        },
+        {
+          "label": "L39.full.attn-out",
+          "distinct": 10,
+          "spread": 88.7781982421875
+        },
+        {
+          "label": "L39.router-topk-idx",
+          "distinct": 10,
+          "spread": 3580.84375
+        },
+        {
+          "label": "L39.router-topk-w",
+          "distinct": 10,
+          "spread": 0.322052001953125
+        },
+        {
+          "label": "L39.full.mlp-out",
+          "distinct": 10,
+          "spread": 132.03271484375
+        },
+        {
+          "label": "final-norm",
+          "distinct": 10,
+          "spread": 910.8173828125
+        },
+        {
+          "label": "logits",
+          "distinct": 10,
+          "spread": 3195776
+        },
+        {
+          "label": "logits-last",
+          "distinct": 10,
+          "spread": 9394.6875
+        }
+      ]
+    },
+    "decode": {
+      "distinct-token-seqs": 1,
+      "first-divergent-step": 3,
+      "per-step-distinct": [
+        1,
+        1,
+        1,
+        3,
+        3,
+        3,
+        3,
+        3,
+        4,
+        5,
+        6,
+        6,
+        6,
+        8,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "token-seqs": [
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ],
+        [
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894,
+          13,
+          24811,
+          12396,
+          4384,
+          7233,
+          75389,
+          10633,
+          888,
+          33241,
+          11,
+          321,
+          42903,
+          369,
+          32894
+        ]
+      ]
+    }
+  }
+}
