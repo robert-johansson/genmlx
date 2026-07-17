@@ -5,10 +5,20 @@
     "": {
       "dependencies": {
         "@genmlx/core": "file:./mlx-node/packages/genmlx-core",
+        "nbb": "1.4.208",
+      },
+      "devDependencies": {
+        "long": "^5.3.2",
       },
     },
   },
   "packages": {
     "@genmlx/core": ["@genmlx/core@file:mlx-node/packages/genmlx-core", {}],
+
+    "import-meta-resolve": ["import-meta-resolve@4.2.0", "", {}, "sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg=="],
+
+    "long": ["long@5.3.2", "", {}, "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="],
+
+    "nbb": ["nbb@1.4.208", "", { "dependencies": { "import-meta-resolve": "^4.1.0" }, "bin": { "nbb": "cli.js", "nbbun": "nbbun.js" } }, "sha512-SvkQfK+wKKy10F7c4llVX/+ys0sKEHeFwLPIA3UFrD3LBjLKbkUv7huQcHviZ1rEZ/qffTHp9u2OioyekqVgOA=="],
   }
 }
