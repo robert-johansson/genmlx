@@ -658,6 +658,53 @@
     (-> (.forwardBranch model id (ids->input [token-id]))
         (mx/index 0) (mx/index 0))))
 
+(defn forward-branch-tokens
+  "Advance branch `id` by MULTIPLE tokens in one (optionally chunked)
+   cached continuation — the pi-provider delta-prefill primitive
+   (genmlx-djw6): a tool-loop turn extends the committed prefix by just its
+   suffix instead of cold-replaying the history. Returns LAST-position
+   logits [vocab]. Owned branches only (the native branch surface steps
+   per-token). opts :chunk bounds the per-block transient exactly like
+   prefill-chunked (materialize + jsc-cleanup! per block); nil/0 runs one
+   slab. An empty token-ids is refused — the branch must end at a position
+   whose logits exist."
+  ([model id token-ids] (forward-branch-tokens model id token-ids nil))
+  ([model id token-ids {:keys [chunk]}]
+   (when-not (cljs-forward-model? model)
+     (throw (ex-info "forward-branch-tokens drives the OWNED branch ledger; native branches advance per-token via forward-branch."
+                     {:genmlx/error :branch-tokens-owned-only
+                      :model-type (type model)})))
+   (let [ids (vec token-ids)
+         n   (count ids)]
+     (when (zero? n)
+       (throw (ex-info "forward-branch-tokens: empty token-ids"
+                       {:genmlx/error :empty-branch-tokens :id id})))
+     (let [{:keys [cache offset rope-delta batch]} (owned-branch-state model id)]
+       (when batch
+         (throw (ex-info (str "forward-branch-tokens: branch " id " is [K=" batch
+                              "]-batched — continue with forward-branch-batched.")
+                         {:genmlx/error :batched-branch-scalar-step
+                          :id id :batch batch})))
+       (let [cache (or cache (fwd/init-cache (:fwd model)))
+             blocks (if (or (nil? chunk) (<= chunk 0) (>= chunk n))
+                      [ids]
+                      (mapv vec (partition-all chunk ids)))
+             many? (> (count blocks) 1)]
+         (loop [bs blocks, cache cache, off offset, last-logits nil]
+           (if (empty? bs)
+             (do (swap! (:branches model) assoc-in [:branches id]
+                        {:cache cache :offset (+ offset n) :rope-delta rope-delta})
+                 last-logits)
+             (let [block (first bs)
+                   [lg cache'] (fwd/forward-cached (:fwd model) block cache
+                                                   (+ off (or rope-delta 0)))
+                   lg-last (mx/index lg (dec (count block)))]
+               (when many?
+                 (fwd/materialize-cache! cache')
+                 (mx/materialize! lg-last)
+                 (mx/jsc-cleanup!))
+               (recur (rest bs) cache' (+ off (count block)) lg-last)))))))))
+
 (defn forward-branch-batched
   "Advance a [K]-batched branch `id` by one lockstep token per lane
    (genmlx-lo6e): `tok` is a [K]-shaped int array; returns logits [K vocab].

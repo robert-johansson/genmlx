@@ -95,6 +95,30 @@
   (if (q35? m) (q35/prefill-chunked m ids chunk) (q3/prefill m ids)))
 (defn step               [m cache offset id] (if (q35? m) (q35/step m cache offset id)  (q3/step m cache offset id)))
 
+(defn forward-cached
+  "Multi-token cached CONTINUATION from absolute position `offset`, threading
+   and extending `cache`. Returns [logits new-cache], logits [T vocab].
+   Exact on the q35 family (its causal mask is prior-width aware); the dense
+   :qwen3 mask has no prior-width support, so a T>1 continuation there
+   degrades to per-token steps — same math, one token at a time (the
+   pi-provider delta-prefill primitive, genmlx-djw6)."
+  [m ids cache offset]
+  (if (q35? m)
+    (q35/forward-cached m (vec ids) cache offset)
+    (loop [i 0, cache cache, acc []]
+      (if (= i (count ids))
+        [(mx/stack acc) cache]
+        (let [[lg cache'] (q3/step m cache (+ offset i) (nth ids i))]
+          (recur (inc i) cache' (conj acc lg)))))))
+
+(defn materialize-cache!
+  "Force-evaluate every array in a per-layer cache — the chunked-continuation
+   eval boundary (family-agnostic: entries are maps of arrays or nils).
+   Returns the cache."
+  [cache]
+  (apply mx/materialize! (mapcat vals (remove nil? cache)))
+  cache)
+
 ;; --- [K]-particle batch axis (genmlx-9uyg) ---------------------------------
 
 (defn step-batched
