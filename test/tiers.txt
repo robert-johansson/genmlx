@@ -250,8 +250,8 @@ slow test/genmlx/llm_batched_checkevery_test.cljs
 slow test/genmlx/llm_batched_forward_gate_test.cljs
 slow test/genmlx/llm_batched_gf_test.cljs
 fast test/genmlx/llm_batched_mask_test.cljs
-slow test/genmlx/llm_branch_tokens_test.cljs
 slow test/genmlx/llm_branched_test.cljs
+slow test/genmlx/llm_branch_tokens_test.cljs
 slow test/genmlx/llm_bytes_test.cljs
 bench test/genmlx/llm_cache_benchmark.cljs
 fast test/genmlx/llm_chat_render_test.cljs
@@ -272,6 +272,7 @@ slow test/genmlx/llm_msa_test.cljs
 exclude test/genmlx/llm_owned_branch_moe_test.cljs
 slow test/genmlx/llm_owned_branch_test.cljs
 exclude test/genmlx/llm_owned_vlm_gf_test.cljs
+slow test/genmlx/llm_pi_provider_test.cljs
 slow test/genmlx/llm_proposer_test.cljs
 fast test/genmlx/llm_pure_helpers_test.cljs
 fast test/genmlx/llm_quantization_gate_test.cljs
