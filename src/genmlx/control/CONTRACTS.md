@@ -6,6 +6,20 @@ decisions. One principle, projected onto the computational environment.
 
 These are the v1.0-frozen shapes (extensions are additive).
 
+## Two controller families (the axis is about WHEN TO STOP)
+
+| controller | objective | stop decision | inversion |
+|---|---|---|---|
+| `meta-mdp` (VOC) | downstream decision-value − λ·cost | policy read (softmax over EU) | none — nobody profiles a VOC controller from its stopping behaviour |
+| `cybernetic` (TOTE) | **none** — discrepancy + decaying code register + gated hazard | drawn from the controller's PRNG key and **recorded as a site**; `replay-gf` + `p/generate` = the trajectory likelihood | controller latents recoverable from stopping behaviour alone (metacognitive profiling; the product-form ridge + do()-collapse laws in `control_cybernetic_test.cljs`) |
+
+Both wrap the same base-steppable shape `{:init :step :done? :best}`.
+Value-of-computation is one answer to "when to stop", not the definition:
+`genmlx.control.cybernetic` must never require `decision-value` or the cost
+meter (grep-guarded), mirroring `assert-downstream!` in the other direction.
+Reference: the mct-genmlx harness (mct ADR-0002/0009/0015), whose validated
+controller this generalizes (bean genmlx-cyst).
+
 ## One-way dependency (enforced)
 
 ```
