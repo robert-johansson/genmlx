@@ -186,7 +186,7 @@
                                            (or tools js/undefined) think?)]
         (vreset! (:abort? session) false)
         (swap! state* assoc-in [:sessions sid :busy?] true)
-        (let [prompt      (vec rendered)
+        (let [prompt      (vec (js/Array.from rendered))
               committed   (:tokens session)
               shared      (shared-prefix-len committed prompt)
               append?     (and (= shared (count committed)) (< shared (count prompt)))
@@ -203,7 +203,9 @@
               _ (when (empty? suffix)
                   (throw (ex-info "pi-provider: rendered prompt does not extend the committed prefix"
                                   {:genmlx/error :empty-suffix :sid sid})))
-              prefill-chunk (.-prefillChunk config)
+              ;; bounded prefill transient by default (mirrors v1's paged
+              ;; chunking); config.prefillChunk overrides, <=0 disables
+              prefill-chunk (or (.-prefillChunk config) 2048)
               eos-id      (llm/eos-token-id tokenizer)
               think-start (llm/token->id tokenizer "<think>")
               think-end   (llm/token->id tokenizer "</think>")
@@ -294,6 +296,7 @@
       (p/catch
        (fn [err]
          ;; error terminal: same shape v1 emits; branch marked for rebuild
+         (js/console.error "[pi-provider] turn error:" err)
          (when-let [s (get-in @state* [:sessions sid])]
            (swap! state* update-in [:sessions sid]
                   #(assoc % :busy? false :tokens [])))
