@@ -13,9 +13,16 @@
         session reproduces the text byte-for-byte
      P5 error taxonomy: unknown session rejects with finishReason error;
         dispose is idempotent
+     P6 incremental detok: detok-step chained over the REAL tokenizer on
+        multi-byte text reproduces the full decode byte-for-byte, with no
+        replacement char ever leaking into a flushed piece
+     P7 :logit-mask seam (genmlx-3g0t entry): a mask that pins everything
+        but EOS forces an empty stop turn; clearing it restores generation
+     P8 K-lane seam (genmlx-maww entry): bestOfK > 1 is a typed error
 
    Run: bunx --bun nbb@1.4.208 test/genmlx/llm_pi_provider_test.cljs"
   (:require [genmlx.llm.pi-provider :as pp]
+            [genmlx.mlx :as mx]
             [promesa.core :as pr]
             ["fs" :as fs]
             ["os" :as os]
@@ -52,9 +59,77 @@
 (def cfg-greedy
   {:temperature 0 :maxNewTokens 24 :reasoningEffort "none"})
 
+(defn- run-detok-chain
+  "Feed token ids one at a time through pp/detok-step (the engine's
+   incremental streamer); resolves to {:text concat-of-pieces
+   :clean? no-piece-ever-held-a-replacement-char}."
+  [decode-fn ids]
+  (let [n (count ids)]
+    (pr/loop [i 0 pending [] acc "" clean? true]
+      (if (= i n)
+        (if (empty? pending)
+          {:text acc :clean? clean?}
+          (pr/let [tail (decode-fn pending)]
+            {:text (str acc tail) :clean? clean?}))
+        (pr/let [{:keys [piece pending]} (pp/detok-step decode-fn pending (nth ids i))]
+          (pr/recur (inc i) pending (str acc piece)
+                    (and clean? (not (re-find #"�" piece)))))))))
+
 (defn- summary []
   (println (str "\n== llm-pi-provider: " @pass " passed, " @fail " failed =="))
   (when (pos? @fail) (set! (.-exitCode js/process) 1)))
+
+(defn- seam-tests
+  "P6-P8: incremental detok + the 3g0t/maww extension seams. `info` is the
+   loadModel result (carries :eosTokenId)."
+  [info]
+  (let [eos (.-eosTokenId info)]
+    (pr/let [;; P6: real-tokenizer incremental detok on multi-byte text
+             core (js/require "@genmlx/core")
+             tok  (.fromPretrained (.-Qwen3Tokenizer core)
+                                   (str model-dir "/tokenizer.json"))
+             s    "Grüße, 🌍! 漢字→λ done."
+             ids-u32 (.encode tok s false)
+             ids  (vec (js/Array.from ids-u32))
+             decode-fn (fn [toks]
+                         (.decode tok (js/Uint32Array.from (into-array toks))))
+             full (.decode tok ids-u32)
+             {:keys [text clean?]} (run-detok-chain decode-fn ids)]
+      (assert-true "P6: detok-step chain reproduces the full decode" (= full text))
+      (assert-true "P6: no replacement char ever flushed mid-char" clean?)
+      (assert-true "P6: the probe string really was multi-token multi-byte"
+                   (> (count ids) 6))
+      ;; P7: logit-mask pins everything but EOS -> empty stop turn
+      (let [sid3 (.newSession engine "{}")
+            mask (fn [logits _gen]
+                   (let [vocab (first (mx/shape logits))]
+                     (mx/where (mx/equal (mx/arange 0 vocab 1) (mx/scalar eos))
+                               logits (mx/scalar -1e30))))]
+        (pp/set-logit-mask! sid3 mask)
+        (pr/let [{fm :final} (run-turn sid3 msgs-1 cfg-greedy)]
+          (assert-true "P7: masked turn stops immediately (EOS forced)"
+                       (= "stop" (:finishReason fm)))
+          (assert-true "P7: masked turn emits no text" (= "" (:text fm)))
+          (assert-true "P7: masked turn sampled exactly the EOS" (= 1 (:numTokens fm)))
+          (pp/set-logit-mask! sid3 nil)
+          (pr/let [{fu :final} (run-turn sid3
+                                         (assoc-in msgs-1 [1 :content]
+                                                   "Reply with exactly one short French word.")
+                                         cfg-greedy)]
+            (assert-true "P7: cleared mask generates again"
+                         (and (contains? #{"stop" "length"} (:finishReason fu))
+                              (seq (:text fu))))
+            (assert-true "P7: set-logit-mask! on unknown session throws"
+                         (try (pp/set-logit-mask! "nope" nil) false
+                              (catch :default _ true)))
+            (.dispose engine sid3)
+            ;; P8: the K-lane seam refuses bestOfK > 1 with a typed error
+            (let [sid4 (.newSession engine "{}")]
+              (pr/let [{fk :final} (run-turn sid4 msgs-1 (assoc cfg-greedy :bestOfK 2))]
+                (assert-true "P8: bestOfK 2 -> finishReason error" (= "error" (:finishReason fk)))
+                (assert-true "P8: error names the maww seam"
+                             (boolean (re-find #"maww" (str (:errorMessage fk)))))
+                (.dispose engine sid4)))))))))
 
 (if-not model-dir
   (do (println "SKIP llm-pi-provider — no qwen3.5-0.8b checkpoint") (summary))
@@ -100,7 +175,8 @@
                       (.dispose engine sid)
                       (.dispose engine sid)
                       (assert-true "P5: double dispose no-ops" true)
-                      (summary)))))))))
+                      (pr/let [_ (seam-tests info)]
+                        (summary))))))))))
       (pr/catch (fn [e]
                   (println "ERROR:" (str e))
                   (swap! fail inc)
