@@ -103,6 +103,7 @@ medium test/genmlx/conjugate_gp_test.cljs
 slow test/genmlx/conjugate_posterior_test.cljs
 medium test/genmlx/conjugate_test.cljs
 fast test/genmlx/contract_verification_test.cljs
+medium test/genmlx/control_cybernetic_test.cljs
 medium test/genmlx/control_metareasoner_test.cljs
 medium test/genmlx/conv_scatter_test.cljs
 slow test/genmlx/co_refine_accept_test.cljs
@@ -244,6 +245,8 @@ medium test/genmlx/level0_certification_test.cljs
 medium test/genmlx/limitations_fixes_test.cljs
 medium test/genmlx/linear_gaussian_elim_test.cljs
 slow test/genmlx/llm_backend_test.cljs
+slow test/genmlx/llm_batched_branch_test.cljs
+slow test/genmlx/llm_batched_checkevery_test.cljs
 slow test/genmlx/llm_batched_forward_gate_test.cljs
 slow test/genmlx/llm_batched_gf_test.cljs
 fast test/genmlx/llm_batched_mask_test.cljs
@@ -261,6 +264,7 @@ slow test/genmlx/llm_forward_parity_test.cljs
 fast test/genmlx/llm_forward_seam_test.cljs
 slow test/genmlx/llm_gemma4_test.cljs
 slow test/genmlx/llm_grammar_test.cljs
+slow test/genmlx/llm_lanes_smc_test.cljs
 slow test/genmlx/llm_moe_guard_test.cljs
 fast test/genmlx/llm_msa_scoring_test.cljs
 slow test/genmlx/llm_msa_test.cljs
@@ -279,6 +283,9 @@ fast test/genmlx/llm_schema_grammar_test.cljs
 slow test/genmlx/llm_sharded_load_test.cljs
 slow test/genmlx/llm_structured_test.cljs
 fast test/genmlx/llm_token_mcmc_test.cljs
+slow test/genmlx/llm_toolcall_test.cljs
+exclude test/genmlx/llm_vlm_batched_smoke_test.cljs
+exclude test/genmlx/llm_vlm_flat_branch_test.cljs
 slow test/genmlx/llm_weights_test.cljs
 fast test/genmlx/location_scale_property_test.cljs
 medium test/genmlx/loop_compilation_test.cljs
@@ -347,6 +354,7 @@ fast test/genmlx/program_golden_test.cljs
 fast test/genmlx/program_test.cljs
 fast test/genmlx/project_test.cljs
 medium test/genmlx/proposal_edit_test.cljs
+medium test/genmlx/qmm_determinism_test.cljs
 fast test/genmlx/qwake_gradient_test.cljs
 slow test/genmlx/qwen2_coder_test.cljs
 slow test/genmlx/qwen3_moe_layout_coherence_test.cljs
