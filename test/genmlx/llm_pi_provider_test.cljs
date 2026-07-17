@@ -19,6 +19,11 @@
      P7 :logit-mask seam (genmlx-3g0t entry): a mask that pins everything
         but EOS forces an empty stop turn; clearing it restores generation
      P8 K-lane seam (genmlx-maww entry): bestOfK > 1 is a typed error
+     P9 images (genmlx-5aah): an imageRefs turn runs the owned VLM prefill
+        (marker tokens in the render; the model SEES the image — names the
+        fixture's color at temp 0), a follow-up text turn delta-prefills
+        over the image-conditioned branch, and a temp-0 rerun on a fresh
+        session is byte-identical
 
    Run: bunx --bun nbb@1.4.208 test/genmlx/llm_pi_provider_test.cljs"
   (:require [genmlx.llm.pi-provider :as pp]
@@ -42,15 +47,18 @@
 (def engine pp/engine)
 
 (defn- run-turn
-  "Drive engine.turnStream; resolves to {:final <parsed> :deltas [parsed...]}."
-  [sid messages config]
-  (let [deltas (atom [])]
-    (-> (.turnStream engine sid
-                     (js/JSON.stringify (clj->js messages))
-                     (js/JSON.stringify (clj->js config))
-                     (fn [dj] (swap! deltas conj (js->clj (js/JSON.parse dj) :keywordize-keys true))))
-        (pr/then (fn [fj] {:final (js->clj (js/JSON.parse fj) :keywordize-keys true)
-                           :deltas @deltas})))))
+  "Drive engine.turnStream; resolves to {:final <parsed> :deltas [parsed...]}.
+   4-arity passes an images array (the 5aah non-JSON leg)."
+  ([sid messages config] (run-turn sid messages config nil))
+  ([sid messages config images]
+   (let [deltas (atom [])]
+     (-> (.turnStream engine sid
+                      (js/JSON.stringify (clj->js messages))
+                      (js/JSON.stringify (clj->js config))
+                      (fn [dj] (swap! deltas conj (js->clj (js/JSON.parse dj) :keywordize-keys true)))
+                      (when images (into-array images)))
+         (pr/then (fn [fj] {:final (js->clj (js/JSON.parse fj) :keywordize-keys true)
+                            :deltas @deltas}))))))
 
 (def msgs-1
   [{:role "system" :content "You are a terse assistant."}
@@ -79,9 +87,12 @@
   (println (str "\n== llm-pi-provider: " @pass " passed, " @fail " failed =="))
   (when (pos? @fail) (set! (.-exitCode js/process) 1)))
 
+(declare image-tests)
+
 (defn- seam-tests
-  "P6-P8: incremental detok + the 3g0t/maww extension seams. `info` is the
-   loadModel result (carries :eosTokenId)."
+  "P6-P9: incremental detok + the 3g0t/maww extension seams + the 5aah
+   image path. `info` is the loadModel result (carries :eosTokenId).
+   Ends by calling image-tests -> summary."
   [info]
   (let [eos (.-eosTokenId info)]
     (pr/let [;; P6: real-tokenizer incremental detok on multi-byte text
@@ -129,7 +140,69 @@
                 (assert-true "P8: bestOfK 2 -> finishReason error" (= "error" (:finishReason fk)))
                 (assert-true "P8: error names the maww seam"
                              (boolean (re-find #"maww" (str (:errorMessage fk)))))
-                (.dispose engine sid4)))))))))
+                (.dispose engine sid4)
+                (image-tests info)))))))))
+
+(def msgs-img
+  [{:role "user"
+    :content "What is the dominant color of this image? Reply with exactly one English word."
+    :imageRefs [0]}])
+
+(defn- image-tests
+  "P9: the 5aah image path on the 0.8b VLM snapshot.
+
+   The delta-prefill leg uses the mask seam to force an EMPTY turn-1 reply:
+   the chat template TRIMS assistant content on re-render, so a whitespace-
+   led sampled reply legitimately rebuilds (v1-parity accounting — same
+   trim, same rebuild). An empty reply re-renders exactly, making the
+   append property deterministic — and the follow-up answer can then only
+   come from the image-conditioned KV BRANCH (the suffix prefill is pure
+   text), which is the strongest form of the 'session remembers the image'
+   acceptance."
+  [info]
+  (let [png (fs/readFileSync "test/genmlx/assets/red-64.png")
+        eos (.-eosTokenId info)
+        sidA (.newSession engine "{}")]
+    (pr/let [{fi :final} (run-turn sidA msgs-img (assoc cfg-greedy :maxNewTokens 8) [png])]
+      (println "    image-turn text:" (pr-str (:text fi)))
+      (assert-true "P9: image turn completes"
+                   (contains? #{"stop" "length"} (:finishReason fi)))
+      (assert-true "P9: image turn is a full (uncached) VLM prefill"
+                   (zero? (:cachedTokens fi)))
+      (assert-true "P9: the model SEES the image (names the color)"
+                   (boolean (re-find #"(?i)red" (str (:text fi)))))
+      ;; temp-0 determinism across the VLM prefill
+      (let [sidB (.newSession engine "{}")]
+        (pr/let [{fb :final} (run-turn sidB msgs-img (assoc cfg-greedy :maxNewTokens 8) [png])]
+          (assert-true "P9: temp-0 image-turn rerun is byte-identical"
+                       (= (:text fi) (:text fb)))
+          (.dispose engine sidB)
+          (.dispose engine sidA)
+          ;; delta-prefill leg: masked-EOS image turn -> empty reply ->
+          ;; the extension property holds deterministically
+          (let [sidC (.newSession engine "{}")
+                mask (fn [logits _gen]
+                       (let [vocab (first (mx/shape logits))]
+                         (mx/where (mx/equal (mx/arange 0 vocab 1) (mx/scalar eos))
+                                   logits (mx/scalar -1e30))))]
+            (pp/set-logit-mask! sidC mask)
+            (pr/let [{fc :final} (run-turn sidC msgs-img cfg-greedy [png])]
+              (assert-true "P9: masked image turn commits the render only"
+                           (and (= "stop" (:finishReason fc)) (= "" (:text fc))))
+              (pp/set-logit-mask! sidC nil)
+              (let [msgs-2 (conj msgs-img
+                                 {:role "assistant" :content ""}
+                                 {:role "user"
+                                  :content "What color was the image? Reply with exactly one English word."})]
+                (pr/let [{f2 :final} (run-turn sidC msgs-2 cfg-greedy [png])]
+                  (println "    image-memory text:" (pr-str (:text f2))
+                           "| cached" (:cachedTokens f2) "of" (:promptTokens f2))
+                  (assert-true "P9: DELTA PREFILL over the image prefix (cached >= turn-1 render)"
+                               (>= (:cachedTokens f2) (:promptTokens fc)))
+                  (assert-true "P9: the CACHED image branch still answers the color"
+                               (boolean (re-find #"(?i)red" (str (:text f2)))))
+                  (.dispose engine sidC)
+                  (summary))))))))))
 
 (if-not model-dir
   (do (println "SKIP llm-pi-provider — no qwen3.5-0.8b checkpoint") (summary))
@@ -175,8 +248,7 @@
                       (.dispose engine sid)
                       (.dispose engine sid)
                       (assert-true "P5: double dispose no-ops" true)
-                      (pr/let [_ (seam-tests info)]
-                        (summary))))))))))
+                      (seam-tests info)))))))))
       (pr/catch (fn [e]
                   (println "ERROR:" (str e))
                   (swap! fail inc)

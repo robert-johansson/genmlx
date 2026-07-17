@@ -696,8 +696,11 @@
                         {:cache cache :offset (+ offset n) :rope-delta rope-delta})
                  last-logits)
              (let [block (first bs)
+                   ;; rotation at the compressed position, mask at the
+                   ;; PHYSICAL cache width — they differ over a VLM prefix
+                   ;; (rope-delta; genmlx-5aah)
                    [lg cache'] (fwd/forward-cached (:fwd model) block cache
-                                                   (+ off (or rope-delta 0)))
+                                                   (+ off (or rope-delta 0)) off)
                    lg-last (mx/index lg (dec (count block)))]
                (when many?
                  (fwd/materialize-cache! cache')

@@ -29,15 +29,24 @@
    the world-membrane edge like world/net.cljs — never read by pure code.
    Per-turn abort is a volatile in the session entry.
 
-   Extension seams (landed as seams, features pending):
+   Extension seams:
    - :logit-mask (genmlx-3g0t): set-logit-mask! installs a per-session
      (fn [logits gen-tokens] -> logits'|nil) applied before every sampling
      step — the grammar-constraint entry point.
-   - images (genmlx-5aah): collect-images threads message images to the
-     prefill decision point; non-empty is a typed error until the owned
-     VLM prefill is wired.
    - K-lane decode (genmlx-maww): config.bestOfK is read and >1 is a typed
-     error where the batched forward-branch-lanes decode will plug in."
+     error where the batched forward-branch-lanes decode will plug in.
+
+   Images (genmlx-5aah, LANDED): image bytes ride turnStream's optional
+   5th arg (a JS array of Uint8Array — bytes never cross the JSON seam);
+   messages carry imageRefs indices, reattached as msg.images before
+   applyChatTemplate so the SAME Rust renderer emits the vision markers
+   (render parity with v1 by construction). An image-bearing render
+   REBUILDS the session branch through the owned VLM prefill
+   (forward-prefill {:images ...} -> branch-cache!): vision tower once,
+   image-conditioned branch after — subsequent text-only turns delta-
+   prefill over it transparently (branch entries carry :rope-delta).
+   cachedTokens is 0 on the image-arrival turn (an honest full prefill),
+   and covers the whole image prefix on every later turn."
   (:require [genmlx.llm.backend :as llm]
             [genmlx.llm.sampling :as samp]
             [genmlx.llm.toolcall :as tc]
@@ -137,17 +146,31 @@
         (recur (inc i))
         i))))
 
-(defn- collect-images
-  "Gather image payloads riding the messages, in message order — the
-   genmlx-5aah threading seam. These flow to the prefill decision point in
-   turn-stream*; when the owned VLM prefill (vlm-prefill-flat!) is wired
-   they route into it, today any image is the typed 5aah error."
-  [messages]
-  (into []
-        (mapcat (fn [m]
-                  (when-let [imgs (.-images m)]
-                    (array-seq imgs))))
-        messages))
+(defn- reattach-images!
+  "Rebind image bytes onto the JSON-parsed messages: each message's
+   imageRefs (indices into `images-arr`, the turnStream 5th arg) becomes
+   msg.images = [Uint8Array ...] — the shape the Rust ChatMessage takes,
+   so applyChatTemplate renders the vision markers inline (genmlx-5aah).
+   Returns all images in message order."
+  [messages images-arr]
+  (let [arr (or images-arr #js [])]
+    (into []
+          (mapcat (fn [m]
+                    (when-let [refs (.-imageRefs m)]
+                      (let [imgs (mapv #(aget arr %) (array-seq refs))]
+                        (when (some nil? imgs)
+                          (throw (ex-info "pi-provider: imageRefs points past the images array"
+                                          {:genmlx/error :bad-image-ref})))
+                        (set! (.-images m) (into-array imgs))
+                        (js-delete m "imageRefs")
+                        imgs))))
+          (array-seq messages))))
+
+(defn- images-key
+  "Cheap identity key for an image sequence (count + per-image byte
+   lengths) — enough to detect an image set change between renders."
+  [images]
+  (mapv #(.-byteLength %) images))
 
 (def ^:private max-pending-detok
   "Cap on tokens held back awaiting a complete UTF-8 char (a char spans at
@@ -217,7 +240,7 @@
                :reasoningTokens reasoning
                :cachedTokens cached}))))
 
-(defn- turn-stream* [sid messages-json config-json on-delta]
+(defn- turn-stream* [sid messages-json config-json on-delta images-arr]
   (-> (p/let [{:keys [model tokenizer]} (resident)
               session (session! sid)
               _ (when (:busy? session)
@@ -225,14 +248,9 @@
                                   {:genmlx/error :turn-in-flight :sid sid})))
               messages (js/JSON.parse messages-json)
               config   (js/JSON.parse config-json)
-              ;; 5aah seam: images are threaded to the prefill decision here;
-              ;; until the owned VLM prefill is wired, any image is typed.
-              images   (collect-images messages)
-              _ (when (seq images)
-                  (throw (ex-info (str "pi-provider: image-bearing history — the genmlx "
-                                       "provider is text-only until genmlx-5aah lands; "
-                                       "run VLM turns on the mlx provider.")
-                                  {:genmlx/error :images-unsupported-until-5aah})))
+              ;; 5aah: rebind image bytes (the non-JSON leg of the seam) onto
+              ;; their messages so the Rust renderer emits vision markers.
+              images   (reattach-images! messages images-arr)
               ;; maww seam: the K-lane (batched best-of-K) decode entry.
               best-of-k (or (.-bestOfK config) 1)
               _ (when (and (number? best-of-k) (> best-of-k 1))
@@ -249,22 +267,23 @@
         (let [prompt      (vec (js/Array.from rendered))
               committed   (:tokens session)
               shared      (shared-prefix-len committed prompt)
-              append?     (and (= shared (count committed)) (< shared (count prompt)))
-              branch      (:branch-id session)
-              ;; non-append (edited/compacted/regenerated history): rebuild
-              branch      (if (or append? (zero? (count committed)))
-                            branch
-                            (do (llm/dispose-branch! model branch)
-                                (let [b (fresh-branch! model)]
-                                  (swap! state* assoc-in [:sessions sid :branch-id] b)
-                                  b)))
+              img-key     (images-key images)
+              same-imgs?  (= img-key (or (:images-key session) []))
+              append?     (and same-imgs?
+                               (= shared (count committed))
+                               (< shared (count prompt)))
+              ;; a render whose image set changed (first image, tool-result
+              ;; image, edited history) rebuilds through the VLM prefill
+              vlm-build?  (and (seq images) (not append?))
               cached      (if append? shared 0)
               suffix      (subvec prompt cached)
-              _ (when (empty? suffix)
+              _ (when (and (not vlm-build?) (empty? suffix))
                   (throw (ex-info "pi-provider: rendered prompt does not extend the committed prefix"
                                   {:genmlx/error :empty-suffix :sid sid})))
               ;; bounded prefill transient by default (mirrors v1's paged
-              ;; chunking); config.prefillChunk overrides, <=0 disables
+              ;; chunking); config.prefillChunk overrides, <=0 disables.
+              ;; The VLM prefill has its own measured-optimal default (192)
+              ;; — only an EXPLICIT config chunk overrides it there.
               prefill-chunk (or (.-prefillChunk config) 2048)
               eos-id      (llm/eos-token-id tokenizer)
               think-start (llm/token->id tokenizer "<think>")
@@ -272,9 +291,39 @@
               budget      (.-thinkingTokenBudget config)
               max-new     (or (.-maxNewTokens config) 512)
               scfg        (sampling-cfg config)
-              logits0     (llm/forward-branch-tokens model branch suffix
-                                                     (when (number? prefill-chunk)
-                                                       {:chunk prefill-chunk}))
+              [branch logits0]
+              (cond
+                append?
+                [(:branch-id session)
+                 (llm/forward-branch-tokens model (:branch-id session) suffix
+                                            (when (number? prefill-chunk)
+                                              {:chunk prefill-chunk}))]
+
+                vlm-build?
+                ;; owned VLM prefill over the FULL prompt (vision tower ->
+                ;; pad-slot scatter -> M-RoPE decoder), then fork the cache
+                ;; cell into the session branch — later text-only turns
+                ;; delta-prefill over the image-conditioned branch.
+                (do (llm/dispose-branch! model (:branch-id session))
+                    (let [lg (llm/forward-prefill model prompt
+                                                  {:images images
+                                                   :chunk (let [c (.-prefillChunk config)]
+                                                            (when (number? c) c))})
+                          b  (llm/branch-cache! model)]
+                      (swap! state* assoc-in [:sessions sid :branch-id] b)
+                      [b lg]))
+
+                :else
+                ;; text-only rebuild (edited/compacted/regenerated history)
+                (let [b (if (zero? (count committed))
+                          (:branch-id session)
+                          (do (llm/dispose-branch! model (:branch-id session))
+                              (let [b (fresh-branch! model)]
+                                (swap! state* assoc-in [:sessions sid :branch-id] b)
+                                b)))]
+                  [b (llm/forward-branch-tokens model b suffix
+                                                (when (number? prefill-chunk)
+                                                  {:chunk prefill-chunk}))]))
               ;; template-opened think block: the generation prompt ends inside
               ;; <think> (the opener may be followed by a newline token, so
               ;; sniff the tail rather than only the last token)
@@ -309,6 +358,7 @@
                         (swap! state* update-in [:sessions sid]
                                (fn [s] (-> s
                                            (assoc :tokens (into prompt fed))
+                                           (assoc :images-key img-key)
                                            (assoc :key key)
                                            (assoc :busy? false))))
                         (finish-payload {:gen-text gen-text
@@ -367,11 +417,20 @@
               result))))
       (p/catch
        (fn [err]
-         ;; error terminal: same shape v1 emits; branch marked for rebuild
+         ;; error terminal: same shape v1 emits. The branch may have
+         ;; consumed tokens before the throw, so dispose + fresh (a stale
+         ;; branch with reset bookkeeping would let the next turn APPEND a
+         ;; full prompt after the dead prefix). :turn-in-flight must NOT
+         ;; touch state — the live turn owns it.
          (js/console.error "[pi-provider] turn error:" err)
-         (when-let [s (get-in @state* [:sessions sid])]
+         (when (and (not= :turn-in-flight (:genmlx/error (ex-data err)))
+                    (get-in @state* [:sessions sid]))
+           (when-let [mm (:model-map @state*)]
+             (llm/dispose-branch! (:model mm) (get-in @state* [:sessions sid :branch-id]))
+             (swap! state* assoc-in [:sessions sid :branch-id]
+                    (fresh-branch! (:model mm))))
            (swap! state* update-in [:sessions sid]
-                  #(assoc % :busy? false :tokens [])))
+                  #(assoc % :busy? false :tokens [] :images-key [])))
          (js/JSON.stringify
           (clj->js {:text "" :thinking nil :rawText ""
                     :finishReason "error"
@@ -389,8 +448,8 @@
   "The #js turn-engine API consumed by genmlx-host.ts (GenmlxTurnEngine)."
   #js {:loadModel  (fn [path] (load-model!* path))
        :newSession (fn [opts-json] (new-session* opts-json))
-       :turnStream (fn [sid messages-json config-json on-delta]
-                     (turn-stream* sid messages-json config-json on-delta))
+       :turnStream (fn [sid messages-json config-json on-delta images]
+                     (turn-stream* sid messages-json config-json on-delta images))
        :abort      (fn [sid] (abort* sid))
        :dispose    (fn [sid] (dispose* sid))})
 

@@ -615,15 +615,24 @@
 (defn forward-cached
   "Run the forward over `token-ids` from absolute position `offset`, threading
    and extending the per-layer `cache`. Returns [logits new-cache] with logits
-   [seq vocab]. A causal mask is built for multi-token chunks (prefill)."
-  [{:keys [config weights] :as model} token-ids cache offset]
-  (let [{:keys [hidden vocab]} config
-        T     (count token-ids)
-        ids   (mx/array (vec token-ids) [T] mx/int32)
-        embed (get weights (str wp "embed_tokens.weight"))
-        h0    (mx/reshape (mx/take-idx embed ids 0) [1 T hidden])
-        [logits new-cache] (forward-hidden model h0 T cache offset nil offset)]
-    [(mx/reshape logits [T vocab]) new-cache]))
+   [seq vocab]. A causal mask is built for multi-token chunks (prefill).
+
+   `prior` (5-arity; default = offset) = PHYSICAL tokens already in the
+   cache — the mask width. The two differ after a VLM prefix (genmlx-5aah):
+   rotation continues at the M-RoPE-COMPRESSED position (offset = physical
+   + rope-delta) while the mask must span the cache's physical length, or a
+   multi-token continuation broadcasts (T, offset+T) against physical+T
+   attention scores."
+  ([model token-ids cache offset]
+   (forward-cached model token-ids cache offset nil))
+  ([{:keys [config weights] :as model} token-ids cache offset prior]
+   (let [{:keys [hidden vocab]} config
+         T     (count token-ids)
+         ids   (mx/array (vec token-ids) [T] mx/int32)
+         embed (get weights (str wp "embed_tokens.weight"))
+         h0    (mx/reshape (mx/take-idx embed ids 0) [1 T hidden])
+         [logits new-cache] (forward-hidden model h0 T cache offset nil (or prior offset))]
+     [(mx/reshape logits [T vocab]) new-cache])))
 
 (defn step-batched
   "Advance K lockstep lanes one token each from a [K …]-shaped `cache`

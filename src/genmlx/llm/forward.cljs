@@ -101,15 +101,21 @@
    Exact on the q35 family (its causal mask is prior-width aware); the dense
    :qwen3 mask has no prior-width support, so a T>1 continuation there
    degrades to per-token steps — same math, one token at a time (the
-   pi-provider delta-prefill primitive, genmlx-djw6)."
-  [m ids cache offset]
-  (if (q35? m)
-    (q35/forward-cached m (vec ids) cache offset)
-    (loop [i 0, cache cache, acc []]
-      (if (= i (count ids))
-        [(mx/stack acc) cache]
-        (let [[lg cache'] (q3/step m cache (+ offset i) (nth ids i))]
-          (recur (inc i) cache' (conj acc lg)))))))
+   pi-provider delta-prefill primitive, genmlx-djw6).
+
+   5-arity `prior` = PHYSICAL cache length when it differs from the
+   rotation position (a VLM prefix's rope-delta, genmlx-5aah); q35 threads
+   it into the mask width. The :qwen3 family has no VLM prefixes, so its
+   per-token path ignores it (offset == physical there)."
+  ([m ids cache offset] (forward-cached m ids cache offset nil))
+  ([m ids cache offset prior]
+   (if (q35? m)
+     (q35/forward-cached m (vec ids) cache offset prior)
+     (loop [i 0, cache cache, acc []]
+       (if (= i (count ids))
+         [(mx/stack acc) cache]
+         (let [[lg cache'] (q3/step m cache (+ offset i) (nth ids i))]
+           (recur (inc i) cache' (conj acc lg))))))))
 
 (defn materialize-cache!
   "Force-evaluate every array in a per-layer cache — the chunked-continuation
