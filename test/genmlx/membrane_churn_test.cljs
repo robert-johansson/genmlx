@@ -12,10 +12,11 @@
 
    genmlx-py4a repro (IS retains all N traces): exercised here only at a MODEST
    scale on a light model — enough to confirm the trace-retaining path runs and
-   stays bounded under the new membrane. The FULL py4a stress (a heavy nested-
-   combinator plate at high :samples, ~264 live arrays/sample) is the dangerous
-   regime and is deferred to the original mct-genmlx repro on a wedge-tolerant
-   host; see the bean."
+   stays bounded under the new membrane. The FULL stress (the mct nested-
+   combinator plate, escalating to :samples 3000) was re-run against the
+   ORIGINAL mct-genmlx repro on Thor 2026-07-12 (genmlx-plfx): 3/3 clean
+   completions, bounded memory — the plfx-controlled-loop-plate test below
+   pins that shape in-tree."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.dynamic :as dyn]
             [genmlx.dist :as dist]
@@ -25,6 +26,20 @@
             [genmlx.inference.importance :as is]
             [genmlx.protocols :as p])
   (:require-macros [genmlx.gen :refer [gen]]))
+
+(defn- assert-count-ceiling!
+  "The buffer-COUNT ceiling is a Metal-only gauge: get-num-resources /
+   get-resource-limit live in MLX's Metal allocator and return 0 on CUDA,
+   where the ~499000 count wall does not exist (see count-tracking-available?
+   in mlx.cljs). Assert the ceiling only where it is measurable; elsewhere a
+   visible SKIP — the completion/no-abort asserts above it still run, and the
+   CUDA-side bounded-memory evidence is the guarded MemAvailable log of the
+   genmlx-plfx repro runs."
+  [c limit msg]
+  (if (pos? limit)
+    (is (< c (long (* 0.9 limit))) msg)
+    (println (str "  [SKIP] " msg " — no Metal buffer-count gauge on this "
+                  "backend (limit=0, CUDA)"))))
 
 (def churn-model
   (dyn/auto-key
@@ -63,8 +78,8 @@
       ;; reaching here at all means no SIGTRAP/exit-144 (a crash would kill the
       ;; process before the asserts) — the uncatchable-abort wedge is gone.
       (is @completed "completed all generates without SIGTRAP/exit-144")
-      (is (< @maxc (long (* 0.9 limit)))
-          (str "peak live-buffer count " @maxc " stays well under the ~" limit " wall"))
+      (assert-count-ceiling! @maxc limit
+        (str "peak live-buffer count " @maxc " stays well under the ~" limit " wall"))
       (is (= 0 @mx/alloc-retry-count)
           "automatic cleanup kept the loop off the wall (reactive retry never needed)"))))
 
@@ -81,7 +96,7 @@
                     " | proactive-sweeps=" @mx/proactive-sweep-count
                     " | reactive-retries=" @mx/alloc-retry-count))
       (is (some? result) "importance-sampling completed without abort")
-      (is (< c (long (* 0.9 limit))) "IS live-buffer count bounded under the wall"))))
+      (assert-count-ceiling! c limit "IS live-buffer count bounded under the wall"))))
 
 ;; --- genmlx-py4a: nested PLATE (shared latent + N sessions x cycles tracing
 ;;     sites) at MODERATE scale. Before the deep-trace materialize fix
@@ -125,7 +140,64 @@
       (is (js/isFinite ml) "log-ml estimate is finite")
       (is (js/isFinite (mx/item (cm/get-value (cm/get-submap (:choices (first traces)) :mu))))
           "retained trace leaf is materialized + usable (deep-materialize worked)")
-      (is (< c (long (* 0.9 limit)))
-          (str "plate IS live-buffer count " c " stays under the ~" limit " wall")))))
+      (assert-count-ceiling! c limit
+        (str "plate IS live-buffer count " c " stays under the ~" limit " wall")))))
+
+;; --- genmlx-plfx: the mct repro shape PROPER — shared latents + N
+;;     controlled-loop blocks with traced bernoulli stop sites and HOST
+;;     (mx/item) branching per cycle. This is the nested-combinator plate the
+;;     original exit-144 report ran (docs/genmlx-bugs/ in mct-genmlx): loop
+;;     length is data-dependent, every cycle syncs the GPU, and each sample
+;;     traces O(sessions x cycles) sites. Verified against the ORIGINAL repro
+;;     on this host 2026-07-12 (3 escalating runs to :samples 3000, zero
+;;     aborts, bounded memory); this test pins the shape in-tree at a
+;;     tier-appropriate scale.
+(defn- run-stop-loop
+  "Inline mct-style controlled loop (their run-controlled-loop): per cycle,
+   a traced monitor site + a traced Bernoulli stop site branched on with
+   mx/item."
+  [trace addr-prefix stop-p mon-p max-iters]
+  (loop [t 0]
+    (let [_ (trace (keyword (str addr-prefix "_mon" t)) (dist/bernoulli mon-p))
+          s (trace (keyword (str addr-prefix "_stop" t)) (dist/bernoulli stop-p))]
+      (if (or (>= (mx/item s) 1.0) (>= (inc t) max-iters))
+        t
+        (recur (inc t))))))
+
+(def controlled-loop-plate
+  (dyn/auto-key
+    (gen [n-sessions]
+      (let [cb (trace :cb (dist/uniform 0 1))
+            ca (trace :ca (dist/uniform 0 1))
+            sm (trace :sm (dist/uniform 0 1))
+            ps (mx/multiply (mx/scalar 0.45)
+                            (mx/multiply ca (mx/subtract (mx/scalar 1.0) cb)))]
+        (dotimes [s n-sessions]
+          (run-stop-loop trace (str "s" s) ps sm 22))
+        :done))))
+
+(deftest plfx-controlled-loop-plate-is-bounded
+  (testing "library IS survives the controlled-loop plate (the mct exit-144 shape)"
+    (reset! mx/alloc-retry-count 0)
+    (reset! mx/proactive-sweep-count 0)
+    (let [sessions 10 samples 300
+          limit (mx/get-resource-limit)
+          obs (cm/choicemap :ca (mx/scalar 0.85) :sm (mx/scalar 0.6))
+          {:keys [traces log-ml-estimate]}
+          (is/importance-sampling {:samples samples :key (rng/fresh-key 7)}
+                                  controlled-loop-plate [sessions] obs)
+          c (mx/get-num-resources)
+          ml (mx/item log-ml-estimate)]
+      (println (str "  CONTROLLED-LOOP PLATE IS " samples " samples x " sessions
+                    " sessions (<=22 cycles, mx/item branching)"
+                    " | live-buffers=" c "/" limit
+                    " | proactive-sweeps=" @mx/proactive-sweep-count
+                    " | reactive-retries=" @mx/alloc-retry-count
+                    " | log-ml=" ml))
+      (is (= samples (count traces)) "all N traces returned — completion, no abort")
+      (is (js/isFinite ml) "log-ml estimate is finite")
+      (assert-count-ceiling! c limit
+        (str "controlled-loop plate live-buffer count " c
+             " stays under the ~" limit " wall")))))
 
 (cljs.test/run-tests)
