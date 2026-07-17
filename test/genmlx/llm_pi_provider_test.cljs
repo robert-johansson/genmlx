@@ -18,7 +18,12 @@
         replacement char ever leaking into a flushed piece
      P7 :logit-mask seam (genmlx-3g0t entry): a mask that pins everything
         but EOS forces an empty stop turn; clearing it restores generation
-     P8 K-lane seam (genmlx-maww entry): bestOfK > 1 is a typed error
+     P8 K-lane lockstep parity (genmlx-maww): a temp-0 bestOfK turn (no
+        verifier) reproduces the scalar greedy text through the batched
+        forward — and the K commit (prompt only) delta-prefills on turn 2
+     P11 verifier callback seam (genmlx-maww): called once with all K
+        candidates; winner/scores protocols; throw/timeout fallback to
+        candidate 0; thinking/grammar composition guards
      P9 images (genmlx-5aah): an imageRefs turn runs the owned VLM prefill
         (marker tokens in the render; the model SEES the image — names the
         fixture's color at temp 0), a follow-up text turn delta-prefills
@@ -53,15 +58,18 @@
 
 (defn- run-turn
   "Drive engine.turnStream; resolves to {:final <parsed> :deltas [parsed...]}.
-   4-arity passes an images array (the 5aah non-JSON leg)."
+   4-arity passes an images array (the 5aah non-JSON leg); 5-arity adds the
+   maww verifier callback."
   ([sid messages config] (run-turn sid messages config nil))
-  ([sid messages config images]
+  ([sid messages config images] (run-turn sid messages config images nil))
+  ([sid messages config images verifier]
    (let [deltas (atom [])]
      (-> (.turnStream engine sid
                       (js/JSON.stringify (clj->js messages))
                       (js/JSON.stringify (clj->js config))
                       (fn [dj] (swap! deltas conj (js->clj (js/JSON.parse dj) :keywordize-keys true)))
-                      (when images (into-array images)))
+                      (when images (into-array images))
+                      verifier)
          (pr/then (fn [fj] {:final (js->clj (js/JSON.parse fj) :keywordize-keys true)
                             :deltas @deltas}))))))
 
@@ -92,7 +100,7 @@
   (println (str "\n== llm-pi-provider: " @pass " passed, " @fail " failed =="))
   (when (pos? @fail) (set! (.-exitCode js/process) 1)))
 
-(declare image-tests grammar-tests)
+(declare image-tests grammar-tests k-verifier-tests)
 
 (defn- point-tool
   "Native ToolDefinition (properties as a JSON STRING, the wire shape
@@ -162,14 +170,29 @@
                          (try (pp/set-logit-mask! "nope" nil) false
                               (catch :default _ true)))
             (.dispose engine sid3)
-            ;; P8: the K-lane seam refuses bestOfK > 1 with a typed error
-            (let [sid4 (.newSession engine "{}")]
-              (pr/let [{fk :final} (run-turn sid4 msgs-1 (assoc cfg-greedy :bestOfK 2))]
-                (assert-true "P8: bestOfK 2 -> finishReason error" (= "error" (:finishReason fk)))
-                (assert-true "P8: error names the maww seam"
-                             (boolean (re-find #"maww" (str (:errorMessage fk)))))
-                (.dispose engine sid4)
-                (image-tests info)))))))))
+            ;; P8: K-lane LOCKSTEP PARITY — temp-0 bestOfK reproduces the
+            ;; scalar greedy text (batched forward == scalar forward through
+            ;; the whole stack), and the prompt-only K commit delta-prefills
+            (let [sidS (.newSession engine "{}")
+                  sid4 (.newSession engine "{}")]
+              (pr/let [{fs :final} (run-turn sidS msgs-1 cfg-greedy)
+                       {fk :final} (run-turn sid4 msgs-1 (assoc cfg-greedy :bestOfK 3))]
+                (.dispose engine sidS)
+                (println "    K-turn text:" (pr-str (:text fk))
+                         "| winner" (:winnerIndex fk) "of" (:candidateCount fk))
+                (assert-true "P8: temp-0 K-turn text == scalar greedy text"
+                             (= (:text fk) (:text fs)))
+                (assert-true "P8: no-verifier fallback = candidate 0, K candidates generated"
+                             (and (= 0 (:winnerIndex fk)) (= 3 (:candidateCount fk))
+                                  (= 3 (:bestOfK fk))))
+                (let [msgs-k2 (conj msgs-1
+                                    {:role "assistant" :content (:text fk)}
+                                    {:role "user" :content "Now reply with a different word."})]
+                  (pr/let [{fk2 :final} (run-turn sid4 msgs-k2 cfg-greedy)]
+                    (assert-true "P8: turn after a K-turn delta-prefills the whole prompt"
+                                 (= (:cachedTokens fk2) (:promptTokens fk)))
+                    (.dispose engine sid4)
+                    (image-tests info)))))))))))
 
 (def msgs-img
   [{:role "user"
@@ -252,9 +275,12 @@
    off-pattern 999999 coordinates, the constrained arm CANNOT — the pair
    proves the mask engaged, not that the model behaved."
   []
-  (let [cfg-ctl (assoc cfg-greedy :temperature 1.0 :maxNewTokens 64
+  ;; maxNewTokens 192: at 64 a late-opening block can be truncated mid-tag
+  ;; by the budget — a sampling artifact, not a grammar failure (verified:
+  ;; 100 emissions at 192 = zero parse errors; 5 truncations at 64)
+  (let [cfg-ctl (assoc cfg-greedy :temperature 1.0 :maxNewTokens 192
                        :tools [(point-tool xy-plain)])
-        cfg-pat (assoc cfg-greedy :temperature 1.0 :maxNewTokens 64
+        cfg-pat (assoc cfg-greedy :temperature 1.0 :maxNewTokens 192
                        :tools [(point-tool xy-pattern)])]
     (pr/let [ctl-runs (stress-emissions cfg-ctl 6)
              pat-runs (stress-emissions cfg-pat 6)]
@@ -280,7 +306,67 @@
                          (and (= "error" (:finishReason fe))
                               (boolean (re-find #"reader-level|cljs"
                                                 (str (:errorMessage fe))))))
-            (summary)))))))
+            (k-verifier-tests)))))))
+
+(defn- k-verifier-tests
+  "P11: the maww verifier-callback seam on the 0.8b (hot lanes, K=4)."
+  []
+  (let [cfgk (assoc cfg-greedy :temperature 1.0 :maxNewTokens 48 :bestOfK 4)
+        seen (atom [])
+        v-winner (fn [cj]
+                   (swap! seen conj (js->clj (js/JSON.parse cj) :keywordize-keys true))
+                   (js/JSON.stringify #js {:winner 2}))
+        sid (.newSession engine "{}")]
+    (pr/let [{f :final} (run-turn sid msgs-1 cfgk nil v-winner)]
+      (let [cands (:candidates (first @seen))]
+        (assert-true "P11: verifier called exactly once with all K candidates"
+                     (and (= 1 (count @seen)) (= 4 (count cands))))
+        (assert-true "P11: candidates carry text + parsed toolCalls fields"
+                     (every? #(and (contains? % :text) (contains? % :toolCalls)) cands))
+        (assert-true "P11: winner-index protocol honored (final text == candidate 2)"
+                     (and (= 2 (:winnerIndex f))
+                          (= (:text f) (:text (nth cands 2))))))
+      (.dispose engine sid)
+      (let [sid2  (.newSession engine "{}")
+            seen2 (atom nil)
+            v-scores (fn [cj]
+                       (reset! seen2 (js->clj (js/JSON.parse cj) :keywordize-keys true))
+                       ;; ties at indices 1 and 3 -> lowest wins
+                       (js/JSON.stringify #js {:scores #js [0.1 0.9 0.3 0.9]}))]
+        (pr/let [{f2 :final} (run-turn sid2 msgs-1 cfgk nil v-scores)]
+          (assert-true "P11: scores protocol = argmax, ties -> lowest index"
+                       (and (= 1 (:winnerIndex f2))
+                            (= (:text f2) (:text (nth (:candidates @seen2) 1)))))
+          (.dispose engine sid2)
+          (let [sid3 (.newSession engine "{}")
+                v-throw (fn [_] (throw (js/Error. "verifier exploded")))]
+            (pr/let [{f3 :final} (run-turn sid3 msgs-1 cfgk nil v-throw)]
+              (assert-true "P11: throwing verifier -> fallback to candidate 0"
+                           (and (contains? #{"stop" "length" "toolUse"} (:finishReason f3))
+                                (= 0 (:winnerIndex f3))))
+              (.dispose engine sid3)
+              (let [sid5 (.newSession engine "{}")
+                    v-hang (fn [_] (js/Promise. (fn [_ _])))]
+                (pr/let [{f5 :final} (run-turn sid5 msgs-1
+                                               (assoc cfgk :verifierTimeoutMs 150)
+                                               nil v-hang)]
+                  (assert-true "P11: hanging verifier -> timeout fallback to candidate 0"
+                               (and (= 0 (:winnerIndex f5))
+                                    (contains? #{"stop" "length" "toolUse"} (:finishReason f5))))
+                  (.dispose engine sid5)
+                  (let [sid6 (.newSession engine "{}")]
+                    (pr/let [{fe :final} (run-turn sid6 msgs-1
+                                                   (assoc cfgk :reasoningEffort "medium"))]
+                      (assert-true "P11: bestOfK + thinking -> typed error"
+                                   (and (= "error" (:finishReason fe))
+                                        (boolean (re-find #"thinking" (str (:errorMessage fe))))))
+                      (pr/let [{fg :final} (run-turn sid6 msgs-point
+                                                     (assoc cfgk :tools [(point-tool xy-pattern)]))]
+                        (assert-true "P11: bestOfK + grammar -> typed error"
+                                     (and (= "error" (:finishReason fg))
+                                          (boolean (re-find #"grammar" (str (:errorMessage fg))))))
+                        (.dispose engine sid6)
+                        (summary)))))))))))))
 
 (if-not model-dir
   (do (println "SKIP llm-pi-provider — no qwen3.5-0.8b checkpoint") (summary))

@@ -33,8 +33,14 @@
    - :logit-mask: set-logit-mask! installs a per-session
      (fn [logits gen-tokens] -> logits'|nil) applied before every sampling
      step — the external constraint hook.
-   - K-lane decode (genmlx-maww): config.bestOfK is read and >1 is a typed
-     error where the batched forward-branch-lanes decode will plug in.
+
+   Best-of-K + verifier (genmlx-maww, LANDED): config.bestOfK > 1 decodes
+   K candidate turns in lockstep on a FORK of the session branch — one
+   batched forward per token — then calls turnStream's optional verifier
+   callback ONCE with all K candidates and streams the winner. Fallback-
+   to-first on verifier absence/throw/timeout/malformed answer; bestOfK 1
+   is the scalar path unchanged. v1 scope: no thinking, no grammar
+   composition (typed errors); candidates do not stream token-by-token.
 
    Per-argument grammar (genmlx-3g0t, LANDED): a tool parameter schema
    that declares a JSON-Schema `pattern` regex turns the whole declared
@@ -60,6 +66,7 @@
             [genmlx.llm.grammar :as gram]
             [genmlx.llm.sampling :as samp]
             [genmlx.llm.toolcall :as tc]
+            [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [promesa.core :as p]))
 
@@ -325,23 +332,116 @@
 
 (defn- finish-payload
   [{:keys [gen-text think-text raw-text finish-reason prompt-tokens sampled
-           reasoning cached sid]}]
+           reasoning cached sid extra]}]
   (let [{:keys [toolCalls toolCallErrors]} (toolcalls-for-final gen-text sid)
         reason (if (and (= finish-reason "stop") (seq toolCalls))
                  "toolUse" finish-reason)]
     (js/JSON.stringify
-     (clj->js {:text gen-text
-               :thinking (when (seq think-text) think-text)
-               :rawText raw-text
-               :finishReason reason
-               :toolCalls toolCalls
-               :toolCallErrors toolCallErrors
-               :promptTokens prompt-tokens
-               :numTokens sampled
-               :reasoningTokens reasoning
-               :cachedTokens cached}))))
+     (clj->js (merge {:text gen-text
+                      :thinking (when (seq think-text) think-text)
+                      :rawText raw-text
+                      :finishReason reason
+                      :toolCalls toolCalls
+                      :toolCallErrors toolCallErrors
+                      :promptTokens prompt-tokens
+                      :numTokens sampled
+                      :reasoningTokens reasoning
+                      :cachedTokens cached}
+                     extra)))))
 
-(defn- turn-stream* [sid messages-json config-json on-delta images-arr]
+;; ---------------------------------------------------------------------------
+;; best-of-K decode + verifier callback (genmlx-maww)
+;;
+;; SEAM CONTRACT v1: turnStream's 6th arg is an optional verifier callback
+;;   (candidatesJson: string) => Promise<resultJson: string>
+;; called ONCE per bestOfK>1 turn with ALL K candidates:
+;;   {"candidates": [{"index", "text", "finishReason", "toolCalls",
+;;                    "toolCallErrors"}, ...]}
+;; and answering either {"winner": <index>} or {"scores": [K numbers]}
+;; (argmax; ties -> lowest index). Degenerate semantics (the bean's
+;; done-means): verifier ABSENT / THROWS / TIMES OUT (config
+;; verifierTimeoutMs, default 10000) / answers MALFORMED -> candidate 0;
+;; bestOfK 1 (or absent) -> the scalar path, byte-identical to the core
+;; provider. K candidates come from ONE batched forward per token
+;; (forward-branch-batched over a FORK of the session branch — the session's
+;; scalar branch never advances, so the commit stays honest: committed = the
+;; prompt the branch consumed; the next turn delta-prefills the winner's
+;; re-rendered reply as an ordinary suffix). v1 scope: thinking and
+;; per-argument grammar do not compose with K>1 (typed errors); candidate
+;; turns do not stream token-by-token (the winner arrives as one delta).
+;; ---------------------------------------------------------------------------
+
+(defn- verifier-winner
+  "Parse a verifier result JSON into a winner index over k candidates;
+   malformed -> 0 (fallback-to-first)."
+  [res-json k]
+  (try
+    (let [r      (js/JSON.parse res-json)
+          w      (.-winner r)
+          scores (.-scores r)]
+      (cond
+        (and (number? w) (>= w 0) (< w k) (== w (js/Math.floor w)))
+        w
+
+        (and scores (= k (.-length scores)))
+        ;; argmax, ties -> lowest index (max-key keeps the LAST max, so
+        ;; feed indices in reverse)
+        (first (apply max-key second (reverse (map-indexed vector (vec scores)))))
+
+        :else 0))
+    (catch :default _ 0)))
+
+(defn- call-verifier
+  "Invoke the external verifier with the candidates; resolves to the winner
+   index. Absent verifier, throw, timeout, or malformed answer -> 0."
+  [verifier candidates timeout-ms]
+  (if-not (fn? verifier)
+    (p/resolved 0)
+    (-> (p/race [(-> (p/resolved nil)
+                     (p/then (fn [_] (verifier (js/JSON.stringify
+                                                (clj->js {:candidates candidates})))))
+                     (p/then (fn [res] (verifier-winner res (count candidates)))))
+                 (p/delay timeout-ms ::timeout)])
+        (p/then (fn [r] (if (= r ::timeout) 0 r)))
+        (p/catch (fn [_] 0)))))
+
+(defn- decode-k-lanes!
+  "Advance K lockstep lanes on branch `fork-id` until every lane stops or
+   max-new. The first step samples K tokens from the SHARED prompt logits
+   (per-lane keys); each later step feeds a [K] token vector through ONE
+   batched forward (the scalar fork tiles lazily inside
+   forward-branch-batched). Finished lanes are fed EOS padding; their
+   outputs are ignored. Resolves to {:lanes [{:gen :reason}] :aborted?}."
+  [model fork-id logits0 k lane-keys scfg max-new eos-id abort?*]
+  (p/loop [i 0
+           lanes (mapv (fn [key] {:gen [] :key key :done false :reason "length"})
+                       lane-keys)
+           logits logits0
+           scalar? true]
+    (if (or @abort?* (every? :done lanes) (>= i max-new))
+      {:lanes (mapv #(select-keys % [:gen :reason]) lanes)
+       :aborted? (boolean @abort?*)}
+      (let [sampled (mapv (fn [j {:keys [gen key done] :as lane}]
+                            (if done
+                              (assoc lane :tok eos-id)
+                              (let [lg (if scalar? logits (mx/index logits j))
+                                    [tok key'] (samp/sample-token key lg scfg gen)]
+                                (if (= tok eos-id)
+                                  (assoc lane :done true :reason "stop"
+                                         :key key' :tok eos-id)
+                                  (-> lane
+                                      (assoc :key key' :tok tok)
+                                      (update :gen conj tok))))))
+                          (range k) lanes)]
+        (llm/sweep-tick! i sweep-every)
+        (if (every? :done sampled)
+          (p/recur (inc i) (mapv #(dissoc % :tok) sampled) logits scalar?)
+          (let [toks    (mapv :tok sampled)
+                logits' (llm/forward-branch-batched
+                         model fork-id (mx/array toks [k] mx/int32))]
+            (p/recur (inc i) (mapv #(dissoc % :tok) sampled) logits' false)))))))
+
+(defn- turn-stream* [sid messages-json config-json on-delta images-arr verifier]
   (-> (p/let [{:keys [model tokenizer]} (resident)
               session (session! sid)
               _ (when (:busy? session)
@@ -352,14 +452,15 @@
               ;; 5aah: rebind image bytes (the non-JSON leg of the seam) onto
               ;; their messages so the Rust renderer emits vision markers.
               images   (reattach-images! messages images-arr)
-              ;; maww seam: the K-lane (batched best-of-K) decode entry.
+              ;; maww: the K-lane (batched best-of-K) decode entry.
               best-of-k (or (.-bestOfK config) 1)
-              _ (when (and (number? best-of-k) (> best-of-k 1))
-                  (throw (ex-info (str "pi-provider: bestOfK=" best-of-k
-                                       " — batched K-lane decode is reserved for "
-                                       "genmlx-maww; only bestOfK 1 runs today.")
-                                  {:genmlx/error :best-of-k-unsupported-until-maww})))
+              k-mode?   (and (number? best-of-k) (> best-of-k 1))
               think?   (enable-thinking? config)
+              _ (when (and k-mode? think?)
+                  (throw (ex-info (str "pi-provider: bestOfK=" best-of-k " does not "
+                                       "compose with thinking in v1 — set "
+                                       "reasoningEffort none for best-of-K turns.")
+                                  {:genmlx/error :best-of-k-thinking-unsupported})))
               tools    (.-tools config)
               rendered (.applyChatTemplate tokenizer messages true
                                            (or tools js/undefined) think?)]
@@ -396,6 +497,13 @@
               ;; per decode step (compiled once per toolset, cached)
               gmask       (when-let [specs (tool-grammar-spec tools)]
                             (grammar-masker (toolcall-constraint! tokenizer specs)))
+              _ (when (and k-mode? gmask)
+                  (throw (ex-info (str "pi-provider: bestOfK=" best-of-k " does not "
+                                       "compose with per-argument grammar constraints "
+                                       "in v1 (the batched-DFA vtables are the "
+                                       "follow-up); drop the pattern annotations or "
+                                       "run bestOfK 1.")
+                                  {:genmlx/error :best-of-k-grammar-unsupported})))
               [branch logits0]
               (cond
                 append?
@@ -518,13 +626,74 @@
                                   (step (-> base
                                             (assoc :logits (llm/forward-branch model branch tok)
                                                    :pending (:pending dt))
-                                            (record-piece piece)))))))))))]
-            (p/let [result (step {:i 0 :logits logits0 :key (:key session)
-                                  :gen [] :fed [] :sampled 0 :reasoning 0
-                                  :in-think? in-think0 :pending [] :vis []
-                                  :think-pieces [] :text-pieces []})]
+                                            (record-piece piece)))))))))))
+                  (commit-k! [key']
+                    ;; the session branch never advanced past the prompt (the
+                    ;; K lanes ran on a fork), so the honest commit is P alone
+                    (swap! state* update-in [:sessions sid]
+                           (fn [s] (-> s
+                                       (assoc :tokens prompt)
+                                       (assoc :images-key img-key)
+                                       (assoc :key key')
+                                       (assoc :busy? false)))))
+                  (k-turn! []
+                    (let [k         best-of-k
+                          fork      (llm/branch-from model branch)
+                          ks        (rng/split-n (:key session) (inc k))
+                          lane-keys (vec (take k ks))
+                          sess-key' (peek ks)]
+                      (-> (p/let [{:keys [lanes aborted?]}
+                                  (decode-k-lanes! model fork logits0 k lane-keys
+                                                   scfg max-new eos-id
+                                                   (:abort? session))]
+                            (if aborted?
+                              (do (commit-k! sess-key')
+                                  (finish-payload {:gen-text "" :think-text ""
+                                                   :raw-text ""
+                                                   :finish-reason "aborted"
+                                                   :prompt-tokens (count prompt)
+                                                   :sampled 0 :reasoning 0
+                                                   :cached cached :sid sid
+                                                   :extra {:bestOfK k}}))
+                              (p/let [texts (p/all (mapv #(decode-toks (:gen %)) lanes))]
+                                (let [candidates
+                                      (vec (map-indexed
+                                            (fn [j text]
+                                              (let [{:keys [toolCalls toolCallErrors]}
+                                                    (toolcalls-for-final text sid)]
+                                                {:index j :text text
+                                                 :finishReason (:reason (nth lanes j))
+                                                 :toolCalls toolCalls
+                                                 :toolCallErrors toolCallErrors}))
+                                            texts))]
+                                  (p/let [widx (call-verifier
+                                                verifier candidates
+                                                (or (.-verifierTimeoutMs config) 10000))]
+                                    (let [wc (nth candidates widx)
+                                          wl (nth lanes widx)]
+                                      (emit! (:text wc) false)
+                                      (commit-k! sess-key')
+                                      (finish-payload
+                                       {:gen-text (:text wc) :think-text ""
+                                        :raw-text (:text wc)
+                                        :finish-reason (:finishReason wc)
+                                        :prompt-tokens (count prompt)
+                                        :sampled (+ (count (:gen wl))
+                                                    (if (= "stop" (:reason wl)) 1 0))
+                                        :reasoning 0
+                                        :cached cached :sid sid
+                                        :extra {:bestOfK k :winnerIndex widx
+                                                :candidateCount (count candidates)}})))))))
+                          (p/finally (fn [_ _] (llm/dispose-branch! model fork))))))]
+            (p/let [result (if k-mode?
+                             (k-turn!)
+                             (step {:i 0 :logits logits0 :key (:key session)
+                                    :gen [] :fed [] :sampled 0 :reasoning 0
+                                    :in-think? in-think0 :pending [] :vis []
+                                    :think-pieces [] :text-pieces []}))]
               (println (str "[pi-provider] turn " sid ": " (count prompt) " prompt ("
-                            cached " cached), " (- (js/Date.now) t0) " ms"))
+                            cached " cached), " (- (js/Date.now) t0) " ms"
+                            (when k-mode? (str " [bestOfK " best-of-k "]"))))
               result))))
       (p/catch
        (fn [err]
@@ -559,8 +728,8 @@
   "The #js turn-engine API consumed by genmlx-host.ts (GenmlxTurnEngine)."
   #js {:loadModel  (fn [path] (load-model!* path))
        :newSession (fn [opts-json] (new-session* opts-json))
-       :turnStream (fn [sid messages-json config-json on-delta images]
-                     (turn-stream* sid messages-json config-json on-delta images))
+       :turnStream (fn [sid messages-json config-json on-delta images verifier]
+                     (turn-stream* sid messages-json config-json on-delta images verifier))
        :abort      (fn [sid] (abort* sid))
        :dispose    (fn [sid] (dispose* sid))})
 
