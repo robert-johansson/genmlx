@@ -30,11 +30,20 @@
    Per-turn abort is a volatile in the session entry.
 
    Extension seams:
-   - :logit-mask (genmlx-3g0t): set-logit-mask! installs a per-session
+   - :logit-mask: set-logit-mask! installs a per-session
      (fn [logits gen-tokens] -> logits'|nil) applied before every sampling
-     step — the grammar-constraint entry point.
+     step — the external constraint hook.
    - K-lane decode (genmlx-maww): config.bestOfK is read and >1 is a typed
      error where the batched forward-branch-lanes decode will plug in.
+
+   Per-argument grammar (genmlx-3g0t, LANDED): a tool parameter schema
+   that declares a JSON-Schema `pattern` regex turns the whole declared
+   toolset into a tool-call DFA (toolcall.cljs qwen3_xml dialect) applied
+   at the same per-decode masking point — malformed tool calls and
+   off-pattern argument values become UNREPRESENTABLE at sampling time.
+   The DFA sees only the VISIBLE stream (think blocks skip it). The
+   `x-genmlx-grammar: \"cljs\"` reader-level annotation is reserved
+   (typed error until wired).
 
    Images (genmlx-5aah, LANDED): image bytes ride turnStream's optional
    5th arg (a JS array of Uint8Array — bytes never cross the JSON seam);
@@ -48,6 +57,7 @@
    cachedTokens is 0 on the image-arrival turn (an honest full prefill),
    and covers the whole image prefix on every later turn."
   (:require [genmlx.llm.backend :as llm]
+            [genmlx.llm.grammar :as gram]
             [genmlx.llm.sampling :as samp]
             [genmlx.llm.toolcall :as tc]
             [genmlx.mlx.random :as rng]
@@ -85,7 +95,8 @@
         (when-let [old (:model-map @state*)]
           (doseq [[_ s] sessions]
             (llm/dispose-branch! (:model old) (:branch-id s))))
-        (swap! state* assoc :model-map nil :model-path nil :sessions {})
+        (swap! state* assoc :model-map nil :model-path nil :sessions {}
+               :grammar-cache {} :token-index nil)
         (p/let [mm (llm/load-model path {:cljs-forward? true})]
           (when-not (llm/cljs-forward-model? (:model mm))
             (throw (ex-info "pi-provider: checkpoint did not load on the owned forward"
@@ -207,6 +218,96 @@
    :repetition-penalty (.-repetitionPenalty config)
    :presence-penalty   (.-presencePenalty config)})
 
+;; ---------------------------------------------------------------------------
+;; per-argument grammar constraints (genmlx-3g0t)
+;;
+;; The constraint declaration RIDES THE TOOL PARAMETER SCHEMA — the seam is
+;; the contract: an extension annotates a string parameter and the provider
+;; compiles the whole declared toolset into one tool-call DFA (toolcall.cljs
+;; dialect: prose (block prose)*), applied through the same per-decode
+;; logit-mask point set-logit-mask! exposes. Two annotations:
+;;   - `pattern` (standard JSON Schema): a grammar.cljs regex for the
+;;     argument VALUE — malformed argument text becomes UNREPRESENTABLE at
+;;     sampling time.
+;;   - `x-genmlx-grammar: "cljs"`: reserved for the reader-level (edamame)
+;;     constraint; declaring it today is a typed error, never a silent
+;;     ignore.
+;; Grammar activation is annotation-presence — a toolset with no annotated
+;; params runs unconstrained (v1-parity decoding).
+;; ---------------------------------------------------------------------------
+
+(defn- tool-grammar-spec
+  "Parse the native ToolDefinition[] (config.tools — `properties` arrives as
+   a JSON string) into the compile-toolcall tools spec, or nil when no
+   parameter declares a grammar annotation."
+  [tools]
+  (when (and tools (pos? (.-length tools)))
+    (let [specs
+          (mapv (fn [t]
+                  (let [f     (.-function t)
+                        praw  (some-> f .-parameters .-properties)
+                        props (cond (string? praw) (js/JSON.parse praw)
+                                    (some? praw)   praw
+                                    :else          #js {})
+                        names (js/Object.keys props)]
+                    {:name (.-name f)
+                     :params
+                     (mapv (fn [k]
+                             (let [prop (aget props k)
+                                   xg   (aget prop "x-genmlx-grammar")
+                                   pat  (.-pattern prop)]
+                               (when (= xg "cljs")
+                                 (throw (ex-info (str "pi-provider: parameter " k " of tool "
+                                                      (.-name f) " declares x-genmlx-grammar "
+                                                      "\"cljs\" — the reader-level constraint is "
+                                                      "not wired yet (genmlx-3g0t follow-up); "
+                                                      "use a JSON-Schema `pattern` regex.")
+                                                 {:genmlx/error :cljs-grammar-not-implemented
+                                                  :tool (.-name f) :param k})))
+                               (cond-> {:name k}
+                                 (string? pat) (assoc :pattern pat))))
+                           names)}))
+                (array-seq tools))]
+      (when (some #(some :pattern (:params %)) specs)
+        specs))))
+
+(defn- toolcall-constraint!
+  "Compile (and cache) the tool-call grammar constraint for `specs` over the
+   resident tokenizer. The vocab token-index is built once per resident
+   model; compiled constraints are cached by spec value."
+  [tokenizer specs]
+  (or (get-in @state* [:grammar-cache specs])
+      (let [tix (or (:token-index @state*)
+                    (let [t (gram/build-token-index tokenizer)]
+                      (swap! state* assoc :token-index t)
+                      t))
+            c   (tc/compile-toolcall tokenizer specs {:token-index tix})]
+        (swap! state* assoc-in [:grammar-cache specs] c)
+        c)))
+
+(defn- grammar-masker
+  "Per-turn closure over `constraint`: advances the DFA through the VISIBLE
+   token stream (think blocks and markers never touch it) and masks logits
+   for the next position. Small per-turn state->mask memo (prose loops sit
+   in one state; the toolcall DFA is too large to precompute in full)."
+  [constraint]
+  (let [{:keys [dfa token-index]} constraint
+        st* (volatile! {:state (:start dfa) :seen 0 :memo {}})]
+    (fn [logits vis]
+      (let [{:keys [state seen memo]} @st*
+            state' (reduce (fn [s t]
+                             (let [txt (nth token-index t nil)]
+                               (if (seq txt) (gram/dfa-advance-string dfa s txt) s)))
+                           state (subvec vis seen))
+            memo'  (if (or (contains? memo state') (>= (count memo) 64))
+                     memo
+                     (assoc memo state' (gram/get-mask constraint state')))
+            _      (vreset! st* {:state state' :seen (count vis) :memo memo'})]
+        (gram/apply-mask (if-let [m (get memo' state')]
+                           (assoc constraint :masks {state' m})
+                           constraint)
+                         state' logits)))))
+
 (defn- toolcalls-for-final
   "Parse qwen3_xml tool-call blocks out of the visible text into the
    ChatStreamFinal toolCalls shape (ok calls only; malformed blocks surface
@@ -291,6 +392,10 @@
               budget      (.-thinkingTokenBudget config)
               max-new     (or (.-maxNewTokens config) 512)
               scfg        (sampling-cfg config)
+              ;; 3g0t: annotated tool params -> the tool-call DFA, applied
+              ;; per decode step (compiled once per toolset, cached)
+              gmask       (when-let [specs (tool-grammar-spec tools)]
+                            (grammar-masker (toolcall-constraint! tokenizer specs)))
               [branch logits0]
               (cond
                 append?
@@ -371,7 +476,7 @@
                                          :cached cached
                                          :sid sid}))))
                   (step [{:keys [i logits key gen fed sampled reasoning in-think?
-                                 pending] :as st}]
+                                 pending vis] :as st}]
                     (let [sess (session! sid)]
                       (cond
                         @(:abort? sess) (finish st "aborted")
@@ -379,10 +484,14 @@
                         :else
                         (let [force-close? (and in-think? (number? budget) (some? think-end)
                                                 (>= reasoning budget))
-                              ;; 3g0t seam: the per-decode grammar hook
-                              logits*      (if-let [mask (:logit-mask sess)]
-                                             (or (mask logits gen) logits)
-                                             logits)
+                              ;; grammar mask (3g0t) over the VISIBLE stream,
+                              ;; then the external :logit-mask hook
+                              logits*      (let [lg (if (and gmask (not in-think?))
+                                                      (gmask logits vis)
+                                                      logits)]
+                                             (if-let [mask (:logit-mask sess)]
+                                               (or (mask lg gen) lg)
+                                               lg))
                               [tok key']   (if force-close?
                                              [think-end key]
                                              (samp/sample-token key logits* scfg gen))]
@@ -394,7 +503,9 @@
                                               :i (inc i) :key key'
                                               :gen (conj gen tok) :fed (conj fed tok)
                                               :sampled (inc sampled)
-                                              :reasoning (if in-think? (inc reasoning) reasoning))]
+                                              :reasoning (if in-think? (inc reasoning) reasoning)
+                                              :vis (if (or in-think? think-marker?)
+                                                     vis (conj vis tok)))]
                               (if think-marker?
                                 ;; marker: flush held text under the pre-marker
                                 ;; mode, then switch — marker text never leaks
@@ -410,7 +521,7 @@
                                             (record-piece piece)))))))))))]
             (p/let [result (step {:i 0 :logits logits0 :key (:key session)
                                   :gen [] :fed [] :sampled 0 :reasoning 0
-                                  :in-think? in-think0 :pending []
+                                  :in-think? in-think0 :pending [] :vis []
                                   :think-pieces [] :text-pieces []})]
               (println (str "[pi-provider] turn " sid ": " (count prompt) " prompt ("
                             cached " cached), " (- (js/Date.now) t0) " ms"))

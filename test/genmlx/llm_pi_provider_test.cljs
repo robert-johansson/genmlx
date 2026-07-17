@@ -24,6 +24,11 @@
         fixture's color at temp 0), a follow-up text turn delta-prefills
         over the image-conditioned branch, and a temp-0 rerun on a fresh
         session is byte-identical
+     P10 per-argument grammar (genmlx-3g0t): a JSON-Schema pattern on a
+        tool parameter compiles the toolset into the tool-call DFA — the
+        constrained arm's argument MUST match where the unconstrained
+        control overflows; hot-temperature emissions never produce an
+        unparseable call; x-genmlx-grammar \"cljs\" is a typed error
 
    Run: bunx --bun nbb@1.4.208 test/genmlx/llm_pi_provider_test.cljs"
   (:require [genmlx.llm.pi-provider :as pp]
@@ -87,7 +92,30 @@
   (println (str "\n== llm-pi-provider: " @pass " passed, " @fail " failed =="))
   (when (pos? @fail) (set! (.-exitCode js/process) 1)))
 
-(declare image-tests)
+(declare image-tests grammar-tests)
+
+(defn- point-tool
+  "Native ToolDefinition (properties as a JSON STRING, the wire shape
+   toolsToDefinitions produces) — `props` = the properties map."
+  [props]
+  {:type "function"
+   :function {:name "set_point"
+              :description "Set a 2D point on the board."
+              :parameters {:type "object"
+                           :properties (js/JSON.stringify (clj->js props))
+                           :required ["xy"]}}})
+
+(def xy-plain {:xy {:type "string" :description "coordinates ROW,COL"}})
+(def xy-pattern
+  (assoc-in xy-plain [:xy :pattern] "-?[0-9]{1,3},-?[0-9]{1,3}"))
+(def xy-cljs
+  (assoc-in xy-plain [:xy :x-genmlx-grammar] "cljs"))
+
+(def msgs-point
+  [{:role "system" :content "You are a function-calling assistant."}
+   {:role "user" :content "Use the set_point tool to set the point at row 999999, column 888888."}])
+
+(def xy-re #"-?\d{1,3},-?\d{1,3}")
 
 (defn- seam-tests
   "P6-P9: incremental detok + the 3g0t/maww extension seams + the 5aah
@@ -202,7 +230,57 @@
                   (assert-true "P9: the CACHED image branch still answers the color"
                                (boolean (re-find #"(?i)red" (str (:text f2)))))
                   (.dispose engine sidC)
-                  (summary))))))))))
+                  (grammar-tests))))))))))
+
+(defn- stress-emissions
+  "N hot-temperature turns, one fresh session each; resolves to the vector
+   of {:calls :errors} per turn."
+  [cfg n]
+  (pr/loop [i 0 acc []]
+    (if (= i n)
+      acc
+      (let [sid (.newSession engine "{}")]
+        (pr/let [{f :final} (run-turn sid msgs-point cfg)]
+          (.dispose engine sid)
+          (pr/recur (inc i) (conj acc {:calls (:toolCalls f)
+                                       :errors (:toolCallErrors f)})))))))
+
+(defn- grammar-tests
+  "P10: the 3g0t per-argument grammar leg on the 0.8b. The 0.8b at temp 0
+   answers this prompt in prose without calling, so both arms run HOT
+   (temp 1.0): the unconstrained control faithfully emits the requested
+   off-pattern 999999 coordinates, the constrained arm CANNOT — the pair
+   proves the mask engaged, not that the model behaved."
+  []
+  (let [cfg-ctl (assoc cfg-greedy :temperature 1.0 :maxNewTokens 64
+                       :tools [(point-tool xy-plain)])
+        cfg-pat (assoc cfg-greedy :temperature 1.0 :maxNewTokens 64
+                       :tools [(point-tool xy-pattern)])]
+    (pr/let [ctl-runs (stress-emissions cfg-ctl 6)
+             pat-runs (stress-emissions cfg-pat 6)]
+      (let [ctl-xys   (keep #(get-in % [:arguments :xy]) (mapcat :calls ctl-runs))
+            pat-calls (mapcat :calls pat-runs)
+            pat-xys   (keep #(get-in % [:arguments :xy]) pat-calls)]
+        (println "    control xys:    " (pr-str (vec ctl-xys)))
+        (println "    constrained xys:" (pr-str (vec pat-xys)))
+        (assert-true "P10: unconstrained control emits the requested OFF-pattern coords"
+                     (boolean (some #(not (re-matches xy-re %)) ctl-xys)))
+        (assert-true "P10: constrained turns produced calls (non-vacuous)"
+                     (pos? (count pat-xys)))
+        (assert-true "P10: zero unparseable calls under the grammar"
+                     (every? #(empty? (:errors %)) pat-runs))
+        (assert-true "P10: every constrained xy stays on-pattern"
+                     (every? #(re-matches xy-re %) pat-xys))
+        ;; reserved reader-level annotation: typed error, not silence
+        (let [sid-c (.newSession engine "{}")]
+          (pr/let [{fe :final} (run-turn sid-c msgs-point
+                                         (assoc cfg-greedy :tools [(point-tool xy-cljs)]))]
+            (.dispose engine sid-c)
+            (assert-true "P10: x-genmlx-grammar cljs -> typed error"
+                         (and (= "error" (:finishReason fe))
+                              (boolean (re-find #"reader-level|cljs"
+                                                (str (:errorMessage fe))))))
+            (summary)))))))
 
 (if-not model-dir
   (do (println "SKIP llm-pi-provider — no qwen3.5-0.8b checkpoint") (summary))
