@@ -87,23 +87,101 @@
           :forward-chunk-size 4
           :group-size group-size
           :max-completion-length max-completion}
-         (when-let [s (env "SEED")] {:seed (js/parseInt s)})))
+         (when-let [s (env "SEED")] {:seed (js/parseInt s)})
+         ;; OPTIMIZER=sgd matches the proven 35B frozen-experts arm
+         ;; (armc: SGD lr 1e-3); default stays the engine's AdamW
+         (when-let [o (env "OPTIMIZER")] {:raw {:optimizerType o}})))
 
 (defn- session-files
-  "Leaf dir of *.jsonl, or one level of subdirs of such files."
+  "Leaf dir of *.jsonl, or one level of subdirs of such files. SESSIONS_DIR
+   accepts a COLON-SEPARATED list of roots (the overnight set names its
+   project dirs explicitly so scratch-session dirs never leak in)."
   [root]
-  (let [names  (vec (.readdirSync fs root))
-        direct (filterv #(str/ends-with? % ".jsonl") names)]
-    (if (seq direct)
-      (mapv #(path/join root %) (sort direct))
-      (->> names
-           (map #(path/join root %))
-           (filter #(.isDirectory (.statSync fs %)))
-           (mapcat (fn [d] (->> (.readdirSync fs d)
-                                (filter (fn [f] (str/ends-with? f ".jsonl")))
-                                (map (fn [f] (path/join d f))))))
-           sort
-           vec))))
+  (if (str/includes? root ":")
+    (into [] (mapcat session-files) (str/split root #":"))
+    (let [names  (vec (.readdirSync fs root))
+          direct (filterv #(str/ends-with? % ".jsonl") names)]
+      (if (seq direct)
+        (mapv #(path/join root %) (sort direct))
+        (->> names
+             (map #(path/join root %))
+             (filter #(.isDirectory (.statSync fs %)))
+             (mapcat (fn [d] (->> (.readdirSync fs d)
+                                  (filter (fn [f] (str/ends-with? f ".jsonl")))
+                                  (map (fn [f] (path/join d f))))))
+             sort
+             vec)))))
+
+;; ---------------------------------------------------------------------------
+;; Tool-declaration injection (genmlx-qhy4 follow-up): the training engine
+;; renders prompts WITHOUT tool declarations, but the sessions were
+;; administered WITH them — on tool-turns the policy then never emits a
+;; call and every group scores flat (zero advantage, loss 0). Fix: render
+;; the declarations through the SAME Rust chat template (with/without
+;; diff -> the byte-exact tools block) and inject the block into each
+;; prompt's system message. INJECT_TOOLS=0 disables.
+;; ---------------------------------------------------------------------------
+
+(def inject-tools? (not= "0" (env "INJECT_TOOLS" "1")))
+
+(defn- toolset->tool-defs
+  "Observed toolset -> native ToolDefinition[] (properties as a JSON
+   string — the provider wire shape). Descriptions are honest stubs; the
+   NAMES and parameter names are what the template renders and the policy
+   needs to see."
+  [toolset]
+  (clj->js
+   (mapv (fn [{:keys [name params]}]
+           {:type "function"
+            :function {:name name
+                       :description (str "The " name " tool (as administered).")
+                       :parameters {:type "object"
+                                    :properties (js/JSON.stringify
+                                                 (clj->js
+                                                  (into {}
+                                                        (map (fn [p] [(:name p) {:type "string"}]))
+                                                        params)))
+                                    :required (mapv :name params)}}})
+         toolset)))
+
+(defn- diff-region
+  "The middle of `a` absent from `b` (common prefix/suffix trimmed)."
+  [a b]
+  (let [n (min (count a) (count b))
+        p (loop [i 0]
+            (if (and (< i n) (= (.charAt a i) (.charAt b i))) (recur (inc i)) i))
+        s (loop [j 0]
+            (if (and (< j (- n p))
+                     (= (.charAt a (- (count a) 1 j))
+                        (.charAt b (- (count b) 1 j))))
+              (recur (inc j)) j))]
+    (subs a p (- (count a) s))))
+
+(defn- tools-block!
+  "Byte-exact tools declaration text: render a minimal chat with and
+   without `tool-defs` through the SAME Rust template and diff."
+  [tokenizer tool-defs]
+  (let [msgs #js [#js {:role "system" :content "S"}
+                  #js {:role "user" :content "U"}]]
+    (p/let [with-ids    (.applyChatTemplate tokenizer msgs false tool-defs false)
+            without-ids (.applyChatTemplate tokenizer msgs false js/undefined false)
+            with-text    (llm/decode tokenizer with-ids)
+            without-text (llm/decode tokenizer without-ids)]
+      (diff-region with-text without-text))))
+
+(defn- inject-tools
+  "Append the tools block to each prompt's system message (or prepend a
+   system message), PRESERVING the prompt's provenance metadata (the
+   reward seam rides CLJS meta)."
+  [prompts tools-text]
+  (mapv (fn [prompt]
+          (let [m  (meta prompt)
+                p' (if (= "system" (:role (first prompt)))
+                     (assoc prompt 0
+                            (update (first prompt) :content str "\n" tools-text))
+                     (into [{:role "system" :content tools-text}] prompt))]
+            (with-meta p' m)))
+        prompts))
 
 (def aux-files ["config.json" "tokenizer.json" "tokenizer_config.json"
                 "special_tokens_map.json" "vocab.json" "merges.txt"
@@ -196,15 +274,41 @@
                             {:genmlx/error :serve-check-empty})))
           text)))))
 
+(def gcore (js/require "@genmlx/core"))
+
+(defn- model-family
+  "Training family from config.json model_type (the grpo_student pattern,
+   genmlx-n32r): qwen3_5_moe -> Qwen35MoeModel + :qwen35-moe (packed
+   experts stay frozen behind gather_qmm automatically); everything else
+   the dense Qwen35Model + :qwen35. MODEL_FAMILY overrides detection."
+  [dir]
+  (let [mt (or (env "MODEL_FAMILY")
+               (.-model_type (js/JSON.parse
+                              (.readFileSync fs (path/join dir "config.json")
+                                             "utf8"))))]
+    (if (= mt "qwen3_5_moe")
+      {:loader (.-Qwen35MoeModel gcore) :family :qwen35-moe :model-type mt}
+      {:loader (.-Qwen35Model gcore) :family :qwen35 :model-type mt})))
+
+(def fam (model-family model-dir))
+
+;; A frozen-experts MoE save writes only the non-expert stack — the owned
+;; loader's keyset parity and serve check cannot pass on a PARTIAL save
+;; (reconstitution or the loader-overlay follow-up serves it), so both are
+;; skipped for MoE with a printed reason.
+(def moe? (= :qwen35-moe (:family fam)))
+(def serve-check?* (and serve-check? (not moe?)))
+
 (println (str "### GRPO on sessions  model=" (path/basename model-dir)))
+(println (str "  family: " (name (:family fam)) " (model_type "
+              (:model-type fam) ")"
+              (when moe? " — experts frozen; serve check/parity skipped (partial save)")))
 (println (str "  sessions: " sessions-dir))
 (println (str "  reward=" reward-spec "  mode=" (name mode)
               "  steps=" steps "  group=" group-size
               "  max-completion=" max-completion))
 (println (str "  metrics -> " metrics-out))
 (when save? (println (str "  ckpt -> " ckpt-out)))
-
-(def gcore (js/require "@genmlx/core"))
 
 (->
  (p/let [files (p/resolved (session-files sessions-dir))
@@ -227,17 +331,34 @@
                                       {:points (:points conv)
                                        :toolset toolset
                                        :opts {}})
-         model     (.load (.-Qwen35Model gcore) model-dir)
+         tokenizer (if (and inject-tools? (seq toolset))
+                     (.fromPretrained (.-Qwen3Tokenizer gcore)
+                                      (path/join model-dir "tokenizer.json"))
+                     (p/resolved nil))
+         tools-text (if tokenizer
+                      (tools-block! tokenizer (toolset->tool-defs toolset))
+                      (p/resolved nil))
+         prompts   (p/resolved
+                    (if (seq (str tools-text))
+                      (inject-tools (:prompts conv) tools-text)
+                      (:prompts conv)))
+         _         (p/resolved
+                    (when (seq (str tools-text))
+                      (println (str "  tools injected: " (count toolset)
+                                    " declaration(s), block "
+                                    (count (str tools-text)) " chars — "
+                                    (str/join ", " (map :name toolset))))))
+         model     (.load (:loader fam) model-dir)
          _         (p/resolved (println "  policy model loaded; training ..."))
          history
-         (train/with-trainer model grpo-cfg
+         (train/with-trainer model grpo-cfg {:family (:family fam)}
            (fn [trainer]
              (p/let [hist
                      (p/loop [i 0, hist []]
                        (if (= i steps)
                          hist
-                         (let [pidx   (mod i (count (:prompts conv)))
-                               prompt (nth (:prompts conv) pidx)
+                         (let [pidx   (mod i (count prompts))
+                               prompt (nth prompts pidx)
                                prov   (sg/prompt-meta prompt)]
                            (p/let [r (train/train-step! trainer [prompt] reward-fn)]
                              (println (str "    step " i
@@ -289,7 +410,7 @@
                      (copy-aux! model-dir ckpt-out)
                      (patch-quant-config! ckpt-out)
                      (println "  saved:" ckpt-out)))
-               _ (when (and save? serve-check?)
+               _ (when (and save? serve-check?*)
                    (p/let [_ (p/resolved (keyset-parity!))]
                      (serve-check!)))]
          (println "OK")))))
