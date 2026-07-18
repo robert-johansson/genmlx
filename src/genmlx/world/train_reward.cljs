@@ -78,6 +78,22 @@
   [floor x]
   (if (finite? x) (max x floor) floor))
 
+(defn- err-msg
+  "Best-effort one-line message from any thrown value."
+  [e]
+  (or (ex-message e) (pr-str e)))
+
+(defn report-reward-error!
+  "Default :on-error hook for the reward builders: one stderr line per swallowed
+   reward-path exception. Expected bad candidates floor WITHOUT throwing (nil gf,
+   coverage guard, verify's :error), so exception-floors are rare — a burst of
+   identical lines here means a scorer/infrastructure fault, which would otherwise
+   be indistinguishable from reward saturation (every candidate at the floor, flat
+   groups, zero GRPO signal — the genmlx-li1p failure class)."
+  [reward-kind e]
+  (js/console.warn (str "[train-reward] " (name reward-kind)
+                        " exception -> floor: " (err-msg e))))
+
 ;; ===========================================================================
 ;; 2. Program extraction — completion text -> a clean (fn [trace] ...) string
 ;;
@@ -191,15 +207,20 @@
      :require-coverage? require every observed addr be a trace site (default true)
      :lambda-c          weight on the compilation bonus (default 0.0, off)
      :lambda-k          weight on the form-size complexity penalty (default 0.0, off)
+     :on-error          (fn [reward-kind error]) called before flooring a THROWN
+                        exception (default report-reward-error!, one stderr line;
+                        pass nil to silence)
 
    Pure, deterministic given a completion, and never forward-passes the policy model
    (it scores the *generated* GF). Eval errors are caught and mapped to the floor —
-   the reward-fn never throws into the training step."
+   the reward-fn never throws into the training step; swallowed exceptions are
+   reported via :on-error so an infrastructure fault stays visible in the run log."
   ([task] (model-evidence-reward task {}))
   ([{:keys [observations]}
-    {:keys [reward-floor n-particles require-coverage? lambda-c lambda-k]
+    {:keys [reward-floor n-particles require-coverage? lambda-c lambda-k on-error]
      :or   {reward-floor default-reward-floor n-particles 50
-            require-coverage? true lambda-c 0.0 lambda-k 0.0}}]
+            require-coverage? true lambda-c 0.0 lambda-k 0.0
+            on-error report-reward-error!}}]
    (fn [_prompt completion]
      (try
        (let [code (extract-program completion)
@@ -214,7 +235,9 @@
                               (pos? lambda-c) (+ (* lambda-c (compilation-bonus gf)))
                               (pos? lambda-k) (- (* lambda-k (form-size (or (ce/parse-form code) code))))))
                reward-floor))))
-       (catch :default _ reward-floor)))))
+       (catch :default e
+         (when on-error (on-error :model-evidence e))
+         reward-floor)))))
 
 (defn transition-fn-reward
   "Build the program-CORRECTNESS reward (implemented per the spec but exercised only
@@ -226,14 +249,17 @@
    `task` = {:transitions [{:state map :action kw :expected map} ...]}. opts:
      :reward-floor   finite floor for an un-parseable / un-evaluable program (default -100.0)
      :lambda-s       weight on the (idiomaticity) structural score (default 0.0, off)
+     :on-error       (fn [reward-kind error]) called before flooring a THROWN
+                     exception (default report-reward-error!; pass nil to silence)
 
    A program that evals but is simply WRONG scores its accuracy (>= 0.0, finite);
    only a program that fails to eval at all (verify's :error) scores the floor, so
    GRPO sees a gradient between garbage, runnable-but-wrong, and correct."
   ([task] (transition-fn-reward task {}))
   ([{:keys [transitions]}
-    {:keys [reward-floor lambda-s]
-     :or   {reward-floor default-reward-floor lambda-s 0.0}}]
+    {:keys [reward-floor lambda-s on-error]
+     :or   {reward-floor default-reward-floor lambda-s 0.0
+            on-error report-reward-error!}}]
    (fn [_prompt completion]
      (try
        (let [code (extract-program completion)
@@ -246,7 +272,9 @@
                           (+ (* lambda-s (if-let [f (ce/parse-form code)]
                                            (ce/score-structure f)
                                            -10)))))))
-       (catch :default _ reward-floor)))))
+       (catch :default e
+         (when on-error (on-error :transition-fn e))
+         reward-floor)))))
 
 ;; ===========================================================================
 ;; 5. The Phase-1 demo task — Bayesian model synthesis (gaussian mean)

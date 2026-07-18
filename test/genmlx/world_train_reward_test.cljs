@@ -180,6 +180,24 @@
     (assert-true "reward-fn is a 2-arg pure fn (no model handle in its closure)"
                  (fn? reward)))
 
+  ;; ---- on-error observability (genmlx-oi07) ----
+  ;; A THROWN exception inside the reward path (as opposed to an expected bad
+  ;; candidate, which floors via nil-gf/coverage WITHOUT throwing) must floor
+  ;; AND be reported, so a systematic scorer fault is distinguishable from
+  ;; reward saturation in a training run log.
+  (let [seen   (atom [])
+        hooked (tr/model-evidence-reward tr/gaussian-mean-task
+                                         {:on-error (fn [kind e]
+                                                      (swap! seen conj [kind (ex-message e)]))})
+        silent (tr/model-evidence-reward tr/gaussian-mean-task {:on-error nil})]
+    (with-redefs [msa/score-model (fn [& _] (throw (ex-info "injected scorer fault" {})))]
+      (assert-true "a thrown scorer fault still floors (never throws into the training step)"
+                   (= -100.0 (hooked "p" noisy-valid-completion)))
+      (assert-true "the :on-error hook saw the swallowed fault (kind + message)"
+                   (= [[:model-evidence "injected scorer fault"]] @seen))
+      (assert-true ":on-error nil silences reporting without changing the floor"
+                   (= -100.0 (silent "p" noisy-valid-completion)))))
+
   ;; ---- shaping knobs ----
   (let [gf (tr/completion->gf valid-model-code)]
     (assert-true "compilation-level reports a keyword for a valid model"

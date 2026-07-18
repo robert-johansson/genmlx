@@ -270,16 +270,25 @@
   ([gf transitions var-names opts]
    (let [{:keys [n-particles] :or {n-particles 50}} opts
          constraints (build-constraints transitions var-names)
-         weights (loop [i 0, ws []]
-                   (if (>= i n-particles)
-                     ws
-                     (let [w (try
-                               (mx/item (:weight (p/generate gf [transitions] constraints)))
-                               (catch :default _ ##-Inf))]
-                       (when (zero? (mod (inc i) 10))
-                         (mx/force-gc!))
-                       (recur (inc i) (conj ws w)))))]
+         [weights first-err]
+         (loop [i 0, ws [], err nil]
+           (if (>= i n-particles)
+             [ws err]
+             (let [[w err] (try
+                             [(mx/item (:weight (p/generate gf [transitions] constraints)))
+                              err]
+                             (catch :default e [##-Inf (or err e)]))]
+               (when (zero? (mod (inc i) 10))
+                 (mx/force-gc!))
+               (recur (inc i) (conj ws w) err))))]
      (mx/force-gc!)
+     ;; Every particle throwing means the MODEL is broken (shape mismatch, bad
+     ;; body), not merely improbable — without a diagnostic the caller only sees
+     ;; a bare -Inf and cannot tell why.
+     (when (and first-err (every? #(= ##-Inf %) weights))
+       (js/console.warn (str "[program/score-model] all " n-particles
+                             " particles threw; first error: "
+                             (or (ex-message first-err) (pr-str first-err)))))
      (log-mean-exp weights))))
 
 ;; ============================================================
