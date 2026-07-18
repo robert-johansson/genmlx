@@ -510,13 +510,21 @@
                  (conj step-scores step-score)))))))
 
 (defn- extras-match?
-  "Check if cached extra args match current extra args."
+  "Check if cached extra args match current extra args. Shape-safe: scalar
+   AND multi-element extras compare via an all(equal) reduction — the old
+   per-extra mx/item errored on any non-scalar extra reaching a second
+   simulate at the same T (fusable-kernel? constrains the KERNEL schema, not
+   the extras, so they are reachable — genmlx-st04). Perf note: still one
+   eager host read per extra on a cache hit; the identical? fast path covers
+   the common same-objects case."
   [cached-extras current-extras]
   (or (identical? cached-extras current-extras)
       (and (= (count cached-extras) (count current-extras))
            (every? (fn [[a b]]
-                     (== (mx/item (mx/ensure-array a))
-                         (mx/item (mx/ensure-array b))))
+                     (let [a (mx/ensure-array a)
+                           b (mx/ensure-array b)]
+                       (and (= (mx/shape a) (mx/shape b))
+                            (pos? (mx/item (mx/all (mx/equal a b)))))))
                    (map vector cached-extras current-extras)))))
 
 (defn- get-or-build-fused-unfold

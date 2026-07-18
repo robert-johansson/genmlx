@@ -117,9 +117,14 @@
     ;; Don't eliminate the prior — replace its handler so conjugate obs
     ;; contribute marginal LL and update the prior's value to posterior mean.
     ;; NOTE: Currently returns posterior MEAN (deterministic), not a sample
-    ;; from the posterior distribution. Weights are correct via marginal LL,
-    ;; but true posterior sampling (full Rao-Blackwell variance reduction)
-    ;; requires deferred execution (Level 4 enhancement).
+    ;; from the posterior distribution. Weights are exact via marginal LL only
+    ;; when every CONSTRAINED child is conjugate; with constrained
+    ;; NON-conjugate children the generate weight is a plug-in approximation —
+    ;; those children are scored at the deterministic posterior mean with no
+    ;; correction term (genmlx-vluz). Particle/MCMC drivers strip the
+    ;; analytical path (genmlx-540f), so this reaches direct p/generate
+    ;; consumers only. True posterior sampling (full Rao-Blackwell variance
+    ;; reduction) requires deferred execution (Level 4 enhancement).
     (let [factory (get auto/family->handler-factory family)
           ;; Build handlers for the conjugate obs subset
           handlers (factory prior-addr conjugate-obs-addrs)]

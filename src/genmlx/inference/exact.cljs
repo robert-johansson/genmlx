@@ -221,18 +221,22 @@
     (dist/categorical logits)))
 
 (defn with-cache
-  "Wrap a function with atom-based memoization. Cache key = args (JS primitives).
-   Results materialized before caching."
+  "Wrap a function with atom-based memoization. Cache key = args (JS
+   primitives — MLX-array args hit only by identity, per the key contract).
+   Results materialized before caching. Falsy results are cached too
+   (contains?-based lookup, genmlx-vluz)."
   [f]
   (let [cache (atom {})]
     (with-meta
       (fn [& args]
-        (let [key (vec args)]
-          (or (get @cache key)
-              (let [result (apply f args)]
-                (when (mx/array? result) (mx/eval! result))
-                (swap! cache assoc key result)
-                result))))
+        (let [key (vec args)
+              c @cache]
+          (if (contains? c key)
+            (get c key)
+            (let [result (apply f args)]
+              (when (mx/array? result) (mx/eval! result))
+              (swap! cache assoc key result)
+              result))))
       {::cache cache})))
 
 (defn clear-cache!

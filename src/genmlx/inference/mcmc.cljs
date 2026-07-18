@@ -375,7 +375,11 @@
                     log-u (mx/log (mx/index uniforms i))
                     accept? (mx/greater log-alpha log-u)
                     new-p (mx/where accept? proposal p)
-                    ;; Record every thin steps (host-side decision)
+                    ;; Record every thin steps (host-side decision). Records at
+                    ;; i=0 of the phase, so the first kept sample sits 1 step
+                    ;; past burn-in — a spacing off-by-one at the boundary
+                    ;; only, no stationarity bias; declined as cosmetic
+                    ;; (genmlx-vluz).
                     record? (zero? (mod i thin))
                     new-samples (if record?
                                   (write-sample-row samples new-p sample-count
