@@ -599,7 +599,9 @@
         k (last (mx/shape logits))
         ;; Gumbel-max trick: argmax(logits + Gumbel_noise) ~ Categorical(softmax(logits))
         ;; Gumbel noise = -log(-log(U)), U ~ Uniform(0,1)
-        u (rng/uniform key [n k])
+        ;; U is sampled on [0,1): clamp away from 0 or u=0 gives -Inf noise and
+        ;; makes that category unselectable for the draw (genmlx-31t9).
+        u (mx/maximum (rng/uniform key [n k]) (mx/scalar 1e-12))
         gumbel (mx/negative (mx/log (mx/negative (mx/log u))))
         ;; Broadcast logits [K] + gumbel [N,K] → [N,K], then argmax over axis 1
         perturbed (mx/add logits gumbel)]

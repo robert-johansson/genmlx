@@ -160,10 +160,22 @@
    project-based and NOT linear in the element :score, so without the inner
    metadata a nested (vmap-of-vmap / combinator-of-combinator) general-path
    regenerate mis-weights by the whole inner old score (genmlx-nt0c). Selecting
-   ::nested-element-meta too makes the propagation recursive (3+ levels)."
+   ::nested-element-meta too makes the propagation recursive (3+ levels).
+
+   The combinators.cljs state keys (element/step scores, step carries, switch
+   idx) are part of the contract too: without them a Vmap over a combinator
+   kernel lost the inner metadata and correctness was rescued only by
+   rehydrate-element-meta's full re-generate per element — a hidden O(model)
+   cost per op (genmlx-31t9). Provenance flags (compiled-path/fused) are
+   deliberately NOT carried: they describe how the ORIGINAL trace was built,
+   and nothing reads them off a reconstructed element trace."
   [traces]
   (let [v (mapv #(not-empty (select-keys (meta %)
-                              [::element-scores ::n ::nested-element-meta ::batched?]))
+                              [::element-scores ::n ::nested-element-meta ::batched?
+                               :genmlx.combinators/element-scores
+                               :genmlx.combinators/step-scores
+                               :genmlx.combinators/step-carries
+                               :genmlx.combinators/switch-idx]))
                 traces)]
     (when (some some? v) v)))
 

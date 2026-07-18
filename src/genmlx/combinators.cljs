@@ -1535,15 +1535,34 @@
                             (mx/where (idx-mask index i) (:score bd) acc)))
                         ZERO
                         (vec branch-data))
-        ;; Combine retvals
+        ;; Combine retvals. Each branch's :retval from stack-branch-traces is
+        ;; either a stacked [N] array or a length-N vector of per-particle
+        ;; values — branch 0's values are NOT a valid stand-in for particles
+        ;; on other branches (genmlx-31t9), so the non-array case selects per
+        ;; particle from a host read of the index (this path already runs N
+        ;; scalar simulates per branch, so the sync is in profile).
         combined-retval (let [rvs (mapv :retval branch-data)]
-                          (if (and (mx/array? (first rvs)) (> n-branches 1))
-                            (reduce-kv
-                             (fn [acc i rv]
-                               (if (or (zero? i) (nil? rv)) acc
-                                   (mx/where (idx-mask index i) rv acc)))
-                             (first rvs) rvs)
-                            (first rvs)))]
+                          (cond
+                            (every? mx/array? rvs)
+                            (if (> n-branches 1)
+                              (reduce-kv
+                               (fn [acc i rv]
+                                 (if (zero? i) acc
+                                     (mx/where (idx-mask index i) rv acc)))
+                               (first rvs) rvs)
+                              (first rvs))
+                            (every? vector? rvs)
+                            (let [idxs (mx/->clj index)]
+                              (mapv (fn [i] (nth (nth rvs (int (nth idxs i))) i))
+                                    (range n-val)))
+                            :else
+                            (throw (ex-info
+                                    (str "vectorized-switch: branch retvals must "
+                                         "be uniformly stacked arrays or "
+                                         "per-particle vectors")
+                                    {:retval-types
+                                     (mapv #(if (mx/array? %) :array (type %))
+                                           rvs)}))))]
     {:choices combined-choices
      :score combined-score
      :retval combined-retval}))

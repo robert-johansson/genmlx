@@ -1542,10 +1542,14 @@
      :else (scalar x dtype))))
 
 (defn async-eval!
-  "Asynchronously evaluate arrays. EFFECTFUL: dispatches to GPU."
+  "Asynchronously evaluate arrays. EFFECTFUL: dispatches to GPU.
+   Keeps only MxArrays (matching eval!/materialize! — the binary rejects
+   non-arrays) and counts toward the forced-eval cost counter."
   [& arrays]
-  (let [promises (mapv #(.evalAsync %) (filter some? arrays))]
-    (js/Promise.all (to-array promises))))
+  (let [valid (filterv array? arrays)]
+    (when (seq valid)
+      (set! forced-eval-count (inc forced-eval-count)))
+    (js/Promise.all (to-array (mapv #(.evalAsync %) valid)))))
 
 ;; =========================================================================
 ;; CONFIGURATION — device, constants
