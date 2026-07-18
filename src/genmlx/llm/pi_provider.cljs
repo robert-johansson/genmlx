@@ -684,7 +684,12 @@
                                         :cached cached :sid sid
                                         :extra {:bestOfK k :winnerIndex widx
                                                 :candidateCount (count candidates)}})))))))
-                          (p/finally (fn [_ _] (llm/dispose-branch! model fork))))))]
+                          ;; p/handle, not p/finally: a downstream p/catch (line
+                          ;; ~698) after a p/finally teardown double-settles under
+                          ;; nbb (genmlx-tb5f) — dispose on both arms, re-raise once.
+                          (p/handle (fn [r e]
+                                      (llm/dispose-branch! model fork)
+                                      (if e (throw e) r))))))]
             (p/let [result (if k-mode?
                              (k-turn!)
                              (step {:i 0 :logits logits0 :key (:key session)

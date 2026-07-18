@@ -96,7 +96,7 @@
 ;;
 ;; The ONE mutable boundary of this face: a live Bun.serve listener (a process-level
 ;; OS resource). It is created, used within a scope, and torn down — never escaping
-;; pure flow. `with-server` is the blessed scope (try/finally teardown); `serve!` is
+;; pure flow. `with-server` is the blessed scope (p/handle teardown); `serve!` is
 ;; the escape hatch. A leaked listener never lets the process exit, so teardown is a
 ;; first-class requirement (a leak would wedge the slow-tier test cap like a hang).
 
@@ -139,12 +139,15 @@
 
 (defn with-server
   "[blessed scope] Stand up `handler`, call `(f url)` — which MUST return a promise —
-   and GUARANTEE the listener is stopped afterwards, on success OR failure (the
-   p/finally runs even when f's promise rejects). Returns the promise of `(f url)`'s
-   result. This is the only place a server lifecycle should exist in tests/examples:
-   no leaked listener (a leaked Bun.serve never exits)."
+   and GUARANTEE the listener is stopped afterwards, on success OR failure. Returns
+   the promise of `(f url)`'s result. This is the only place a server lifecycle
+   should exist in tests/examples: no leaked listener (a leaked Bun.serve never
+   exits)."
   ([handler f] (with-server handler {} f))
   ([handler opts f]
    (let [{:keys [url stop]} (serve! handler opts)]
+     ;; p/handle (not p/finally): under nbb a `p/finally` teardown followed by a
+     ;; downstream `p/catch` double-settles — the catch handler runs yet the promise
+     ;; stays rejected (genmlx-tb5f). p/handle stops on BOTH arms, re-raises once.
      (-> (p/let [r (f url)] r)
-         (p/finally (fn [& _] (stop)))))))
+         (p/handle (fn [r e] (stop) (if e (throw e) r)))))))

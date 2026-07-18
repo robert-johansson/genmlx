@@ -246,7 +246,7 @@ direct import of dynamic.cljs).
      by branch id; fenced by `with-llm-branches*` / token-SMC disposal scopes)
    - The live `Bun.serve` listener (an OS resource, not pure state) in the network
      face of the Bun world membrane (`world/net.cljs`): created by `serve!`, scoped
-     and torn down by `with-server`'s `p/finally` (the blessed path) — analogous to
+     and torn down by `with-server`'s `p/handle` (the blessed path) — analogous to
      the KV-cache try/finally. A bare `serve!` hands the lifecycle to the caller.
    - The native `GrpoTrainingEngine` handle in the TRAINING face of the world
      membrane (`world/train.cljs`, genmlx-zftr): an externally-mutating native engine

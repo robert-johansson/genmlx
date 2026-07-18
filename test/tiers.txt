@@ -464,6 +464,7 @@ fast test/genmlx/vupdate_test.cljs
 fast test/genmlx/well_formedness_test.cljs
 fast test/genmlx/wishart_gradient_test.cljs
 fast test/genmlx/world_memory_test.cljs
+fast test/genmlx/world_net_test.cljs
 medium test/genmlx/world_proc_test.cljs
 slow test/genmlx/world_train_reward_test.cljs
 slow test/genmlx/world_train_test.cljs
