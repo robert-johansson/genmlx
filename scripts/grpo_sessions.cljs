@@ -212,6 +212,31 @@
   (.mkdirSync fs (path/dirname metrics-out) #js {:recursive true})
   (fs/appendFileSync metrics-out (str (js/JSON.stringify (clj->js m)) "\n")))
 
+(def gcore (js/require "@genmlx/core"))
+
+(defn- model-family
+  "Training family from config.json model_type (the grpo_student pattern,
+   genmlx-n32r): qwen3_5_moe -> Qwen35MoeModel + :qwen35-moe (packed
+   experts stay frozen behind gather_qmm automatically); everything else
+   the dense Qwen35Model + :qwen35. MODEL_FAMILY overrides detection."
+  [dir]
+  (let [mt (or (env "MODEL_FAMILY")
+               (.-model_type (js/JSON.parse
+                              (.readFileSync fs (path/join dir "config.json")
+                                             "utf8"))))]
+    (if (= mt "qwen3_5_moe")
+      {:loader (.-Qwen35MoeModel gcore) :family :qwen35-moe :model-type mt}
+      {:loader (.-Qwen35Model gcore) :family :qwen35 :model-type mt})))
+
+(def fam (model-family model-dir))
+
+;; A frozen-experts MoE save writes only the non-expert stack — a PARTIAL
+;; save. Since genmlx-vjsp the owned loader serves it via {:overlay ...}
+;; (base experts + trained non-expert stack), so the serve check runs for
+;; MoE too; keyset parity becomes a subset check (trained ⊆ base).
+(def moe? (= :qwen35-moe (:family fam)))
+(def serve-check?* serve-check?)
+
 (defn- wait-for-save!
   "Loud post-save assert (genmlx-sm9w). The native save path is a synchronous
    send->save->reply chain and (since the sm9w fix) fsyncs weights.safetensors
@@ -283,30 +308,6 @@
                             {:genmlx/error :serve-check-empty})))
           text)))))
 
-(def gcore (js/require "@genmlx/core"))
-
-(defn- model-family
-  "Training family from config.json model_type (the grpo_student pattern,
-   genmlx-n32r): qwen3_5_moe -> Qwen35MoeModel + :qwen35-moe (packed
-   experts stay frozen behind gather_qmm automatically); everything else
-   the dense Qwen35Model + :qwen35. MODEL_FAMILY overrides detection."
-  [dir]
-  (let [mt (or (env "MODEL_FAMILY")
-               (.-model_type (js/JSON.parse
-                              (.readFileSync fs (path/join dir "config.json")
-                                             "utf8"))))]
-    (if (= mt "qwen3_5_moe")
-      {:loader (.-Qwen35MoeModel gcore) :family :qwen35-moe :model-type mt}
-      {:loader (.-Qwen35Model gcore) :family :qwen35 :model-type mt})))
-
-(def fam (model-family model-dir))
-
-;; A frozen-experts MoE save writes only the non-expert stack — a PARTIAL
-;; save. Since genmlx-vjsp the owned loader serves it via {:overlay ...}
-;; (base experts + trained non-expert stack), so the serve check runs for
-;; MoE too; keyset parity becomes a subset check (trained ⊆ base).
-(def moe? (= :qwen35-moe (:family fam)))
-(def serve-check?* serve-check?)
 
 (println (str "### GRPO on sessions  model=" (path/basename model-dir)))
 (println (str "  family: " (name (:family fam)) " (model_type "
