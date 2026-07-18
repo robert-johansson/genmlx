@@ -201,7 +201,7 @@
 
 (defn- map-simulate-fused
   "Fused Map simulate: all N elements in one call via broadcasting."
-  [this args kernel fused-fn addr-order]
+  [this args _kernel fused-fn addr-order]
   (let [n (count (first args))
         key (splice-key this)
         stacked-args (mapv (fn [arg-col]
@@ -223,7 +223,7 @@
 
 (defn- map-simulate-compiled
   "Compiled Map simulate: call compiled-simulate per element."
-  [this args kernel csim]
+  [this args _kernel csim]
   (let [n (count (first args))
         init-key (splice-key this)
         results (loop [i 0 key init-key acc []]
@@ -566,7 +566,7 @@
 
 (defn- unfold-simulate-compiled
   "Compiled Unfold simulate: call compiled-simulate per step."
-  [this args kernel n init-state extra csim]
+  [this args _kernel n init-state extra csim]
   (let [init-key (splice-key this)]
     (loop [t 0 state init-state key init-key
            choices cm/EMPTY score ZERO
@@ -2409,9 +2409,13 @@
         ;; proposal); add the new index score and charge the removed old
         ;; component via the recorded old total. Using (:score new-inner-trace)
         ;; here would double-count the new component's fresh latents
-        ;; (genmlx-zek9). The new component is keyed so its unconstrained
-        ;; latents can be sampled (else p/generate throws 'No PRNG key').
-        (let [new-component (ensure-kernel-key (nth (:components this) new-idx))
+        ;; (genmlx-zek9). The new component is keyed from (splice-key this)
+        ;; (genmlx-gxrq, completing the 175y treatment): a threaded key makes
+        ;; the flip's fresh latents deterministic; with no threaded key
+        ;; splice-key self-seeds, preserving the old stochastic behavior.
+        (let [k-comp (second (rng/split (splice-key this)))
+              new-component (vary-meta (nth (:components this) new-idx)
+                                       assoc :genmlx.dynamic/key k-comp)
               new-idx-score (dc/dist-log-prob idx-dist (mx/scalar new-idx mx/int32))
               gen-result (p/generate new-component args inner-constraints)
               new-inner-trace (:trace gen-result)
@@ -3259,8 +3263,14 @@
           idx-weight (if (sel/selected? selection :component-idx)
                        (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
                        ZERO)
-          ;; Project the inner component
-          component (nth (:components this) old-idx)
+          ;; Project the inner component. Keyed from (splice-key this) like
+          ;; every other Mix path (genmlx-gxrq): projection never samples, so
+          ;; the key is numerically inert — but the handler splits one
+          ;; unconditionally, and a keyless component used to throw the
+          ;; pre-existing 'No PRNG key' sharp edge here.
+          component (vary-meta (nth (:components this) old-idx)
+                               assoc :genmlx.dynamic/key
+                               (second (rng/split (splice-key this))))
           old-idx-score (dc/dist-log-prob idx-dist (mx/scalar old-idx mx/int32))
           inner-old-choices (without-component-idx old-choices)
           inner-old-score (mx/subtract (:score trace) old-idx-score)

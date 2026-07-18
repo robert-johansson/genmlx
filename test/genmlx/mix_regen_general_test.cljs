@@ -143,5 +143,31 @@
   (assert-true "stay moves have weight ~0"
                (every? :stay-zero? results)))
 
+;; --------------------------------------------------------------------------
+;; genmlx-gxrq pins (Mix follow-ups from 175y)
+;; --------------------------------------------------------------------------
+;; (2) IProject on KEYLESS components: projection never samples, so a Mix over
+;; unkeyed kernels must project without the old 'No PRNG key' throw (the Mix
+;; now keys the replayed component from its splice key).
+(let [k1  (gen [] (trace :z (dist/gaussian -2 0.5)))
+      k2  (gen [] (trace :z (dist/gaussian 2 0.5)))
+      m   (comb/mix-combinator [k1 k2] (mx/array [-0.7 -0.7]))
+      tr* (p/simulate (dyn/with-key m (rng/fresh-key 77)) [])]
+  (assert-true "gxrq(2): project over keyless components does not throw"
+               (number? (mx/item (p/project m tr* (sel/from-paths [[:component-idx]]))))))
+
+;; (3) PINNED SEMANTICS: the splice-derived k-comp OVERRIDES a component's
+;; construction-time fixed key (the unfold-extend convention) — a fixed-key
+;; component does NOT repeat its draws across simulates of an unkeyed Mix;
+;; determinism is obtained by keying the MIX (covered above).
+(let [fixed (vary-meta (gen [] (trace :z (dist/gaussian 0 1)))
+                       assoc :genmlx.dynamic/key (rng/fresh-key 123))
+      m     (comb/mix-combinator [fixed] (mx/array [0.0]))
+      zs    (mapv (fn [_] (mx/item (cm/get-choice (:choices (p/simulate m []))
+                                                  [:z])))
+                  (range 5))]
+  (assert-true "gxrq(3): splice-derived key overrides the component's fixed key"
+               (> (count (distinct zs)) 1)))
+
 (println (str "\n== mix-regen-general: " @passes " passed, " @fails " failed =="))
 (when (pos? @fails) (set! (.-exitCode js/process) 1))
