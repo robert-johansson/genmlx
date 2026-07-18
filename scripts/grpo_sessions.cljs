@@ -229,27 +229,36 @@
 (defn- keyset-parity!
   "The trained checkpoint (engine layout, remapped by the owned loader)
    must expose EXACTLY the base checkpoint's dequantized weight names —
-   a wrong remap surfaces here by name, not as garbage generation."
+   a wrong remap surfaces here by name, not as garbage generation.
+   MoE (genmlx-vjsp): a frozen-experts save is PARTIAL by design, so the
+   contract is trained ⊆ base (no extra keys); the overlay loader enforces
+   the same bound at serve time."
   []
   (let [base-keys (set (keys (q3f/load-weights model-dir)))
         ckpt-keys (set (keys (q3f/load-weights ckpt-out)))
         missing   (sort (cset/difference base-keys ckpt-keys))
         extra     (sort (cset/difference ckpt-keys base-keys))]
-    (println (str "  keyset parity: base " (count base-keys)
+    (println (str "  keyset " (if moe? "subset (partial save)" "parity")
+                  ": base " (count base-keys)
                   " / trained " (count ckpt-keys)
                   "  missing " (count missing) "  extra " (count extra)))
     (doseq [k (take 6 missing)] (println "    missing:" k))
     (doseq [k (take 6 extra)]   (println "    extra:  " k))
-    (when (or (seq missing) (seq extra))
-      (throw (ex-info "trained checkpoint keyset diverges from the base"
+    (when (or (seq extra) (and (not moe?) (seq missing)))
+      (throw (ex-info (if moe?
+                        "trained partial save carries keys absent from the base"
+                        "trained checkpoint keyset diverges from the base")
                       {:genmlx/error :keyset-mismatch
                        :missing (count missing) :extra (count extra)})))))
 
 (defn- serve-check!
   "Load the SAVED checkpoint through the owned forward and decode a short
-   greedy reply — the trained artifact serves."
+   greedy reply — the trained artifact serves. A dense save loads directly;
+   an MoE partial save serves as base + overlay (genmlx-vjsp)."
   []
-  (p/let [mm  (llm/load-model ckpt-out {:cljs-forward? true})
+  (p/let [mm  (if moe?
+                (llm/load-model model-dir {:cljs-forward? true :overlay ckpt-out})
+                (llm/load-model ckpt-out {:cljs-forward? true}))
           ids (.applyChatTemplate (:tokenizer mm)
                                   (ps/messages->js [{:role "user" :content "Say ok."}])
                                   true js/undefined false)]
@@ -292,17 +301,17 @@
 
 (def fam (model-family model-dir))
 
-;; A frozen-experts MoE save writes only the non-expert stack — the owned
-;; loader's keyset parity and serve check cannot pass on a PARTIAL save
-;; (reconstitution or the loader-overlay follow-up serves it), so both are
-;; skipped for MoE with a printed reason.
+;; A frozen-experts MoE save writes only the non-expert stack — a PARTIAL
+;; save. Since genmlx-vjsp the owned loader serves it via {:overlay ...}
+;; (base experts + trained non-expert stack), so the serve check runs for
+;; MoE too; keyset parity becomes a subset check (trained ⊆ base).
 (def moe? (= :qwen35-moe (:family fam)))
-(def serve-check?* (and serve-check? (not moe?)))
+(def serve-check?* serve-check?)
 
 (println (str "### GRPO on sessions  model=" (path/basename model-dir)))
 (println (str "  family: " (name (:family fam)) " (model_type "
               (:model-type fam) ")"
-              (when moe? " — experts frozen; serve check/parity skipped (partial save)")))
+              (when moe? " — experts frozen; partial save serves via overlay")))
 (println (str "  sessions: " sessions-dir))
 (println (str "  reward=" reward-spec "  mode=" (name mode)
               "  steps=" steps "  group=" group-size

@@ -268,8 +268,12 @@
            (do
              ;; Tier-B (owned path): assert the owned forward surface before use.
              (assert-owned-forward!)
-             {:model (->CljsForwardModel (fwd/load-model model-path) (atom nil)
-                                         (atom {:next-id 1 :branches {}}))
+             {:model (->CljsForwardModel
+                      (fwd/load-model model-path
+                                      (when (:overlay opts)
+                                        {:overlay (:overlay opts)}))
+                      (atom nil)
+                      (atom {:next-id 1 :branches {}}))
               :tokenizer tokenizer
               :type (keyword model-type)})
            (p/let [model (load-upstream-model model-type model-path)]
@@ -361,6 +365,21 @@
              (zero? (mod (inc i) sweep-every)))
     (mx/jsc-cleanup!)))
 
+(defn- require-low-level!
+  "Throw a clear error when a native model lacks the low-level forward surface
+   the LLM-as-GF path drives (.forward/.forwardWithCache/.initCaches). Gemma4
+   exposes only the high-level chat API (no initCaches/forward on the current
+   build — genmlx-uteq), so without this guard the failure is a bare JS
+   TypeError deep in the token loop instead of an actionable message."
+  [model op]
+  (when-not (or (cljs-forward-model? model)
+                (some? (.-initCaches model)))
+    (throw (ex-info (str op ": this model family exposes no low-level forward "
+                         "surface (e.g. Gemma4 has no initCaches/forward/"
+                         "forwardWithCache) — the LLM-as-GF path requires the "
+                         "Qwen3/Qwen3.5 families")
+                    {:genmlx/error :no-low-level-forward :op op}))))
+
 (defn forward-pass
   "Run a forward pass through the model.
 
@@ -371,7 +390,8 @@
   [model token-ids]
   (if (cljs-forward-model? model)
     (fwd/next-token-logits (:fwd model) (->id-vec token-ids))
-    (let [ids (->id-vec token-ids)
+    (let [_ (require-low-level! model "forward-pass")
+          ids (->id-vec token-ids)
           input (ids->input ids)
           logits (.forward model input)
           ;; Index the LAST position from the logits' ACTUAL time dimension, not
@@ -408,7 +428,8 @@
   [model]
   (if (cljs-forward-model? model)
     (reset! (:cache model) nil)
-    (.initCaches model)))
+    (do (require-low-level! model "init-cache!")
+        (.initCaches model))))
 
 (defn reset-cache!
   "Clear KV caches after generation. Mutates model state."

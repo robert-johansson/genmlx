@@ -122,6 +122,24 @@
                                                    [conv-dim conv-k])
                                        [1 0])}]))))
 
+(defn overlay-weights
+  "Merge a trained PARTIAL save's tensors over the base checkpoint's weight
+   map (genmlx-vjsp): a frozen-experts MoE GRPO save writes only the
+   non-expert stack, so serving it means base weights + trained overrides.
+   Every overlay key must already exist in `base` — an unknown key is a
+   remap bug surfaced by name, not silently-ignored garbage."
+  [base overlay-dir]
+  (let [over  (q3/load-weights overlay-dir)
+        extra (remove #(contains? base %) (keys over))]
+    (when (seq extra)
+      (throw (ex-info (str "overlay-weights: trained save at " overlay-dir
+                           " carries " (count extra) " tensor(s) absent from "
+                           "the base checkpoint — remap bug, refusing to serve")
+                      {:genmlx/error :overlay-key-mismatch
+                       :extra (vec (take 8 extra))
+                       :n-extra (count extra)})))
+    (merge base over)))
+
 (defn load-model
   "Load a Qwen3.5 / qwen3_5_moe checkpoint as {:config .. :weights ..}.
    Affine-quantized checkpoints are dequantized at load (q3/load-weights —
@@ -134,8 +152,14 @@
    to ~64 GB. Everything else dequantizes as usual. The experts' (bits,
    group-size) land in config :expert-qz; per-tensor overrides on switch_mlp
    tensors are rejected (none exist in any known checkpoint — the overrides
-   cover routers/gates only)."
-  [dir]
+   cover routers/gates only).
+
+   opts {:overlay <dir>} (genmlx-vjsp): merge a trained partial save's
+   tensors over the base weights before the transpose pass — how a
+   frozen-experts MoE GRPO checkpoint serves (base experts + trained
+   non-expert stack)."
+  ([dir] (load-model dir nil))
+  ([dir {:keys [overlay]}]
   (let [cfg  (load-config dir)
         moe? (and (:n-experts cfg) (pos? (:n-experts cfg)))
         qz   (q3/load-quantization dir)]
@@ -148,14 +172,15 @@
                                "(bits, group-size); this checkpoint needs "
                                "per-projection expert quantization support.")
                           {:base base :quantization qz})))))
-    (let [weights (q3/prepare-weight-transposes!
-                   (q3/load-weights dir (when (and moe? qz)
-                                          {:skip? #(.includes % ".switch_mlp.")})))
+    (let [raw     (q3/load-weights dir (when (and moe? qz)
+                                         {:skip? #(.includes % ".switch_mlp.")}))
+          raw     (if overlay (overlay-weights raw overlay) raw)
+          weights (q3/prepare-weight-transposes! raw)
           cfg     (cond-> cfg
                     (and moe? qz) (assoc :expert-qz {:bits       (:bits qz)
                                                      :group-size (:group-size qz)}))]
       {:config  (assoc cfg :derived (gdn-derived cfg weights))
-       :weights weights})))
+       :weights weights}))))
 
 ;; ----------------------------------------------------------------------------
 ;; Small composed primitives

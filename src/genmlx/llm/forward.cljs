@@ -60,19 +60,28 @@
    image-bearing forward-prefill to the owned VLM prefill (genmlx-jq6l; the
    tower weights are in :weights already — the loader reads every tensor).
    Throws on a model_type the owned forward does not implement, instead of
-   silently mis-routing it to the vanilla-Qwen3 forward."
-  [dir]
-  (let [mt (detect-model-type dir)]
-    (case mt
-      "qwen3_5"     (assoc (q35/load-model dir) :impl :qwen3_5 :dir dir
-                           :vcfg (vis/load-vision-config dir))
-      "qwen3_5_moe" (assoc (q35/load-model dir) :impl :qwen3_5 :dir dir
-                           :vcfg (vis/load-vision-config dir))
-      "qwen3"       (assoc (q3/load-model dir)  :impl :qwen3 :dir dir)
-      (throw (ex-info (str "genmlx.llm.forward: the GenMLX-owned forward does not "
-                           "implement model_type " (pr-str mt) "; load with "
-                           "{:cljs-forward? false} to use the upstream forward.")
-                      {:model-type mt :dir dir :supported supported-model-types})))))
+   silently mis-routing it to the vanilla-Qwen3 forward.
+
+   opts {:overlay <dir>} (genmlx-vjsp, qwen3.5 families only): serve a
+   trained partial save by merging its tensors over this base checkpoint."
+  ([dir] (load-model dir nil))
+  ([dir {:keys [overlay] :as opts}]
+   (let [mt (detect-model-type dir)]
+     (case mt
+       "qwen3_5"     (assoc (q35/load-model dir opts) :impl :qwen3_5 :dir dir
+                            :vcfg (vis/load-vision-config dir))
+       "qwen3_5_moe" (assoc (q35/load-model dir opts) :impl :qwen3_5 :dir dir
+                            :vcfg (vis/load-vision-config dir))
+       "qwen3"       (do (when overlay
+                           (throw (ex-info (str "genmlx.llm.forward: :overlay is not "
+                                                "supported for dense qwen3 — dense "
+                                                "training saves load directly")
+                                           {:model-type mt :dir dir})))
+                         (assoc (q3/load-model dir) :impl :qwen3 :dir dir))
+       (throw (ex-info (str "genmlx.llm.forward: the GenMLX-owned forward does not "
+                            "implement model_type " (pr-str mt) "; load with "
+                            "{:cljs-forward? false} to use the upstream forward.")
+                       {:model-type mt :dir dir :supported supported-model-types}))))))
 
 (defn- q35? [m] (= :qwen3_5 (:impl m)))
 
