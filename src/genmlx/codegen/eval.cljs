@@ -40,6 +40,27 @@
   [code-str]
   (and (seq code-str) (= :complete (prefix-status code-str))))
 
+(defn cljs-arg-status
+  "Classify a string as EXACTLY-ONE-CLJS-form progress (the tool-argument
+   grammar contract, genmlx-3g0t): :complete (one form, at most trailing
+   whitespace), :incomplete (a valid prefix of one form), :invalid (cannot
+   extend to exactly one form). Differs from prefix-status, which reads only
+   the FIRST form and never sees trailing content — here a second form (or
+   trailing junk) is :invalid, so a masker can keep 'one argument = one
+   form' representable-only."
+  [s]
+  (if (str/blank? s)
+    :incomplete
+    (try (let [forms (eda/parse-string-all s eda-opts)]
+           (case (count forms)
+             0 :incomplete
+             1 :complete
+             :invalid))
+         (catch :default e
+           (if (re-find #"EOF" (.-message e))
+             :incomplete
+             :invalid)))))
+
 (defn eval-cljs
   "Evaluate a ClojureScript string in SCI. Returns {:result val} or {:error string}."
   [code-str]

@@ -236,9 +236,11 @@
 ;;   - `pattern` (standard JSON Schema): a grammar.cljs regex for the
 ;;     argument VALUE — malformed argument text becomes UNREPRESENTABLE at
 ;;     sampling time.
-;;   - `x-genmlx-grammar: "cljs"`: reserved for the reader-level (edamame)
-;;     constraint; declaring it today is a typed error, never a silent
-;;     ignore.
+;;   - `x-genmlx-grammar: "cljs"`: the reader-level (edamame) constraint
+;;     (genmlx-3g0t): the argument value is exactly one complete,
+;;     delimiter-opened ClojureScript form, enforced byte-granularly by
+;;     toolcall/hybrid-masker. Any other x-genmlx-grammar value is a typed
+;;     error, never a silent ignore.
 ;; Grammar activation is annotation-presence — a toolset with no annotated
 ;; params runs unconstrained (v1-parity decoding).
 ;; ---------------------------------------------------------------------------
@@ -263,19 +265,19 @@
                              (let [prop (aget props k)
                                    xg   (aget prop "x-genmlx-grammar")
                                    pat  (.-pattern prop)]
-                               (when (= xg "cljs")
+                               (when (and (some? xg) (not= xg "cljs"))
                                  (throw (ex-info (str "pi-provider: parameter " k " of tool "
-                                                      (.-name f) " declares x-genmlx-grammar "
-                                                      "\"cljs\" — the reader-level constraint is "
-                                                      "not wired yet (genmlx-3g0t follow-up); "
-                                                      "use a JSON-Schema `pattern` regex.")
-                                                 {:genmlx/error :cljs-grammar-not-implemented
-                                                  :tool (.-name f) :param k})))
+                                                      (.-name f) " declares unknown "
+                                                      "x-genmlx-grammar " (pr-str xg)
+                                                      " — supported: \"cljs\".")
+                                                 {:genmlx/error :unknown-grammar-annotation
+                                                  :tool (.-name f) :param k :value xg})))
                                (cond-> {:name k}
-                                 (string? pat) (assoc :pattern pat))))
+                                 (string? pat) (assoc :pattern pat)
+                                 (= xg "cljs") (assoc :cljs true))))
                            names)}))
                 (array-seq tools))]
-      (when (some #(some :pattern (:params %)) specs)
+      (when (some #(some (fn [p] (or (:pattern p) (:cljs p))) (:params %)) specs)
         specs))))
 
 (defn- toolcall-constraint!
@@ -494,9 +496,14 @@
               max-new     (or (.-maxNewTokens config) 512)
               scfg        (sampling-cfg config)
               ;; 3g0t: annotated tool params -> the tool-call DFA, applied
-              ;; per decode step (compiled once per toolset, cached)
+              ;; per decode step (compiled once per toolset, cached). A
+              ;; toolset with :cljs params gets the hybrid (DFA + reader)
+              ;; masker; pattern-only toolsets keep the plain DFA masker.
               gmask       (when-let [specs (tool-grammar-spec tools)]
-                            (grammar-masker (toolcall-constraint! tokenizer specs)))
+                            (let [c (toolcall-constraint! tokenizer specs)]
+                              (if (:cljs-support c)
+                                (tc/hybrid-masker c)
+                                (grammar-masker c))))
               _ (when (and k-mode? gmask)
                   (throw (ex-info (str "pi-provider: bestOfK=" best-of-k " does not "
                                        "compose with per-argument grammar constraints "

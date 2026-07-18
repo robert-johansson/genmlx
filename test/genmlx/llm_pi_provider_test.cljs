@@ -33,10 +33,12 @@
         tool parameter compiles the toolset into the tool-call DFA — the
         constrained arm's argument MUST match where the unconstrained
         control overflows; hot-temperature emissions never produce an
-        unparseable call; x-genmlx-grammar \"cljs\" is a typed error
+        unparseable call; x-genmlx-grammar \"cljs\" (the reader leg) emits
+        exactly one complete delimiter-opened CLJS form per argument
 
    Run: bunx --bun nbb@1.4.208 test/genmlx/llm_pi_provider_test.cljs"
-  (:require [genmlx.llm.pi-provider :as pp]
+  (:require [genmlx.codegen.eval :as ceval]
+            [genmlx.llm.pi-provider :as pp]
             [genmlx.mlx :as mx]
             [promesa.core :as pr]
             ["fs" :as fs]
@@ -116,8 +118,6 @@
 (def xy-plain {:xy {:type "string" :description "coordinates ROW,COL"}})
 (def xy-pattern
   (assoc-in xy-plain [:xy :pattern] "-?[0-9]{1,3},-?[0-9]{1,3}"))
-(def xy-cljs
-  (assoc-in xy-plain [:xy :x-genmlx-grammar] "cljs"))
 
 (def msgs-point
   [{:role "system" :content "You are a function-calling assistant."}
@@ -297,16 +297,51 @@
                      (every? #(empty? (:errors %)) pat-runs))
         (assert-true "P10: every constrained xy stays on-pattern"
                      (every? #(re-matches xy-re %) pat-xys))
-        ;; reserved reader-level annotation: typed error, not silence
-        (let [sid-c (.newSession engine "{}")]
-          (pr/let [{fe :final} (run-turn sid-c msgs-point
-                                         (assoc cfg-greedy :tools [(point-tool xy-cljs)]))]
-            (.dispose engine sid-c)
-            (assert-true "P10: x-genmlx-grammar cljs -> typed error"
-                         (and (= "error" (:finishReason fe))
-                              (boolean (re-find #"reader-level|cljs"
-                                                (str (:errorMessage fe))))))
-            (k-verifier-tests)))))))
+        ;; reader-level :cljs leg (genmlx-3g0t): the argument is exactly one
+        ;; delimiter-opened CLJS form, enforced byte-granularly at hot temp
+        (let [filter-tool
+              {:type "function"
+               :function {:name "set_filter"
+                          :description "Install a scene filter predicate."
+                          :parameters {:type "object"
+                                       :properties
+                                       (js/JSON.stringify
+                                        (clj->js {:code {:type "string"
+                                                         :description "A ClojureScript predicate like (fn [scene] ...)"
+                                                         :x-genmlx-grammar "cljs"}}))
+                                       :required ["code"]}}}
+              msgs-f [{:role "system" :content "You are a terse assistant."}
+                      {:role "user" :content "Call the set_filter tool with a ClojureScript predicate that keeps scenes whose :x is under 10."}]
+              cfg-cljs (assoc cfg-greedy :temperature 1.0 :maxNewTokens 320
+                              :tools [filter-tool])]
+          (pr/let [runs (pr/loop [i 0 acc []]
+                          (if (= i 4)
+                            acc
+                            (let [sid (.newSession engine "{}")]
+                              (pr/let [{f :final} (run-turn sid msgs-f cfg-cljs)]
+                                (.dispose engine sid)
+                                (pr/recur (inc i)
+                                          (conj acc {:calls (:toolCalls f)
+                                                     :errors (:toolCallErrors f)
+                                                     :finish (:finishReason f)}))))))]
+            (let [codes (keep #(get-in % [:arguments :code]) (mapcat :calls runs))
+                  ;; a "length" turn can truncate a block mid-tag — that is the
+                  ;; documented token-budget sampling artifact, not a grammar
+                  ;; failure; completed turns must have zero errors
+                  hard-errs (mapcat :errors (filter #(not= "length" (:finish %)) runs))]
+              (println "    cljs codes:" (pr-str (vec codes)))
+              (when (seq hard-errs)
+                (println "    cljs HARD ERRORS:" (pr-str (vec hard-errs))
+                         "finishes:" (pr-str (mapv :finish runs))))
+              (assert-true "P10cljs: constrained turns produced calls (non-vacuous)"
+                           (pos? (count codes)))
+              (assert-true "P10cljs: zero unparseable calls on completed turns"
+                           (empty? hard-errs))
+              (assert-true "P10cljs: every emitted argument is exactly one complete CLJS form"
+                           (every? #(= :complete (ceval/cljs-arg-status %)) codes))
+              (assert-true "P10cljs: every argument opens with a delimiter"
+                           (every? #(contains? #{"(" "[" "{"} (subs % 0 1)) codes))
+              (k-verifier-tests))))))))
 
 (defn- k-verifier-tests
   "P11: the maww verifier-callback seam on the 0.8b (hot lanes, K=4)."

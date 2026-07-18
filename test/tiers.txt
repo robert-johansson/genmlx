@@ -286,6 +286,7 @@ fast test/genmlx/llm_schema_grammar_test.cljs
 slow test/genmlx/llm_sharded_load_test.cljs
 slow test/genmlx/llm_structured_test.cljs
 fast test/genmlx/llm_token_mcmc_test.cljs
+fast test/genmlx/llm_toolcall_cljs_test.cljs
 slow test/genmlx/llm_toolcall_test.cljs
 exclude test/genmlx/llm_vlm_batched_smoke_test.cljs
 exclude test/genmlx/llm_vlm_flat_branch_test.cljs
