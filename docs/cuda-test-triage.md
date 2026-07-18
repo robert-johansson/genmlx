@@ -7,7 +7,8 @@
 > set changes.
 >
 > **Pins for the numbers below:** genmlx `b579201` → mlx-node `6aabbd9`
-> (thor/d58a-up-sync) → mlx `102a90cb` (thor/mlx-sync-d58a), 2026-07-18.
+> (fork `main`, tag `genmlx-v0`) → mlx `102a90cb` (fork `main`, tag
+> `genmlx-v0`), 2026-07-18.
 
 ## How to run the suite on this host
 
