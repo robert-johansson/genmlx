@@ -29,6 +29,19 @@
         (every? true? (map #(close? %1 %2 tol) expected actual)))))
 
 ;; ---------------------------------------------------------------------------
+;; Host-speed scaling
+;; ---------------------------------------------------------------------------
+
+(def time-scale
+  "Host-speed multiplier for absolute wall-clock assertions. Ms budgets are
+   tuned on Apple Silicon; slower hosts (Thor/CUDA aarch64) export
+   TEST_TIME_SCALE=N — the same knob test/run.sh uses to scale tier caps
+   (genmlx-9ox0) — and every timing assertion multiplies its budget by this
+   (genmlx-y8zt). Default 1 keeps the Apple baselines intact."
+  (let [s (js/parseFloat (or (.. js/process -env -TEST_TIME_SCALE) "1"))]
+    (if (and (js/isFinite s) (pos? s)) s 1)))
+
+;; ---------------------------------------------------------------------------
 ;; MLX helpers
 ;; ---------------------------------------------------------------------------
 

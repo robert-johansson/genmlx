@@ -9,6 +9,7 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
+            [genmlx.test-helpers :as h]
             [clojure.string :as str]))
 
 ;; ============================================================
@@ -662,7 +663,7 @@
   (assert-true "P(mood->exercise) < 0.1" (< (get m [:mood :exercise]) 0.1))
   (assert-true "P(mood->sleep) < 0.1" (< (get m [:mood :sleep]) 0.1))
   (assert-true "per-variable has all 3 vars" (= 3 (count (:per-variable result))))
-  (assert-true "elapsed under 100ms" (< (:elapsed-ms result) 100))
+  (assert-true "elapsed under 100ms x time-scale" (< (:elapsed-ms result) (* 100 h/time-scale)))
   (println (str "    elapsed: " (:elapsed-ms result) "ms")))
 
 ;; ============================================================
@@ -719,7 +720,7 @@
                (> (get m [:rumination :avoidance]) 0.9))
   (assert-true "no false edge depression->social"
                (< (get m [:depression :social]) 0.1))
-  (assert-true "elapsed under 200ms" (< (:elapsed-ms result) 200))
+  (assert-true "elapsed under 200ms x time-scale" (< (:elapsed-ms result) (* 200 h/time-scale)))
   (println (str "    elapsed: " (:elapsed-ms result) "ms, "
                 (count trans) " transitions")))
 

@@ -53,7 +53,7 @@
                     static-linreg [2.0] obs)
           t1 (js/Date.now)]
       (is (= [200 2] (mx/shape (:samples result2))) "reuse returns samples")
-      (is (< (- t1 t0) 500) "reuse is fast (<500ms)"))))
+      (is (< (- t1 t0) (* 500 h/time-scale)) "reuse is fast (<500ms x time-scale)"))))
 
 (deftest fused-mh-thinning-test
   (testing "thinning"

@@ -158,6 +158,6 @@
           t0 (.now js/Date)
           _ (dyn/vgenerate model [50] obs 10000 key)
           t1 (.now js/Date)]
-      (is (< (- t1 t0) 100) "vgenerate < 100ms"))))
+      (is (< (- t1 t0) (* 100 h/time-scale)) "vgenerate < 100ms x time-scale"))))
 
 (cljs.test/run-tests)

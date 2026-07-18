@@ -261,6 +261,6 @@
           _ (dyn/vgenerate gf [t] obs n key)
           t1 (js/Date.now)
           ms (- t1 t0)]
-      (is (< ms 200) "VIS T=100 N=10K < 200ms"))))
+      (is (< ms (* 200 h/time-scale)) "VIS T=100 N=10K < 200ms x time-scale"))))
 
 (cljs.test/run-tests)

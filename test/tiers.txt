@@ -102,6 +102,7 @@ medium test/genmlx/conjugate_bb_test.cljs
 medium test/genmlx/conjugate_gp_test.cljs
 slow test/genmlx/conjugate_posterior_test.cljs
 medium test/genmlx/conjugate_test.cljs
+fast test/genmlx/constants_test.cljs core
 fast test/genmlx/contract_verification_test.cljs
 medium test/genmlx/control_cybernetic_test.cljs
 medium test/genmlx/control_metareasoner_test.cljs

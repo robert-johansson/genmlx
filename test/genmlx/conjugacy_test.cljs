@@ -436,6 +436,7 @@
           pairs (conj/detect-conjugate-pairs big-schema)
           elapsed (- (js/Date.now) start)]
       (is (= 49 (count pairs)) "50-site: 49 pairs detected")
-      (is (< elapsed 10) (str "50-site: detection < 10ms (took " elapsed "ms)")))))
+      (is (< elapsed (* 10 h/time-scale))
+          (str "50-site: detection < " (* 10 h/time-scale) "ms (took " elapsed "ms)")))))
 
 (cljs.test/run-tests)
