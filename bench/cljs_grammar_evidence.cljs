@@ -56,8 +56,17 @@
                    (fn [_]))
       (pr/then (fn [fj] (js->clj (js/JSON.parse fj) :keywordize-keys true)))))
 
+(def force-call?
+  "GENMLX_EV_FORCE=1: a system prompt that pushes the model to always call —
+   raises the call rate (model BEHAVIOR, orthogonal to what the grammar
+   guarantees about emitted calls)."
+  (= "1" (aget js/process.env "GENMLX_EV_FORCE")))
+
 (defn- msgs [i]
-  [{:role "system" :content "You are a terse assistant."}
+  [{:role "system"
+    :content (if force-call?
+               "You are a terse assistant. Always respond by calling the provided tool. Never answer in prose."
+               "You are a terse assistant.")}
    {:role "user" :content (nth prompts (mod i (count prompts)))}])
 
 (pr/let [_ (.loadModel engine model-dir)]
@@ -99,7 +108,11 @@
                          (empty? codes) (update :no-call inc))]
             (when (seq errs)
               (println (str "  [" i "] finish=" (:finishReason f)
-                            " toolCallErrors: " (pr-str errs))))
+                            " toolCallErrors: " (pr-str errs)))
+              ;; full dump for diagnosis: what did the masker actually see?
+              (println (str "  [" i "] RAW: " (pr-str (:rawText f))))
+              (println (str "  [" i "] THINK: " (pr-str (:thinking f))))
+              (println (str "  [" i "] TEXT: " (pr-str (:text f)))))
             (when (empty? codes)
               (let [txt (str (:text f))
                     head (subs txt 0 (min 80 (count txt)))]

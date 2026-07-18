@@ -245,8 +245,18 @@
    are what keep emission on natural BPE tokenization — a pure single-byte
    mask samples near-noise; testing the whole vocab against the reader
    (~84us/parse) is intractable, so candidates come from the model's own
-   top-K (`cand-ids`)."
-  [{:keys [byte-ids]} token-index v cand-ids]
+   top-K (`cand-ids`).
+
+   ENGINE-SPECIAL EXCLUSION (the eos-as-symbol bug): special tokens decode
+   to printable text (`<|im_end|>`, `<think>`, …) that the READER happily
+   accepts as symbol characters — without this guard the top-K path admits
+   the EOS ID ITSELF mid-form (the engine then ends the turn with the block
+   unclosed, observed live) and the think markers (which would flip think
+   mode and bypass the mask entirely). Multi-byte candidates equal to
+   eos-id or containing '<' AT ALL are rejected — every angle-special is
+   covered, and '<' itself (comparisons!) stays expressible through the
+   single-byte floor, whose plain char token carries no engine semantics."
+  [{:keys [byte-ids]} token-index v cand-ids eos-id]
   (let [out (array)
         seen (js/Set.)
         blank? (str/blank? v)]
@@ -258,7 +268,10 @@
     (doseq [i cand-ids]
       (when-not (.has seen i)
         (let [t (nth token-index i nil)]
-          (when (and t (> (count t) 1) (admissible-token-text? v t blank?))
+          (when (and t (> (count t) 1)
+                     (not= i eos-id)
+                     (not (str/includes? t "<"))
+                     (admissible-token-text? v t blank?))
             (.add seen i)
             (.push out i)))))
     out))
@@ -394,7 +407,8 @@
                 cand (mx/->clj (mx/slice (mx/argsort (mx/negative flat))
                                          0 value-top-k))
                 ids (cljs-value-token-ids cljs-support token-index
-                                          (:value st') cand)]
+                                          (:value st') cand
+                                          (:eos-id constraint))]
             (vreset! st* (assoc st' :memo memo))
             (when (zero? (.-length ids))
               (throw (ex-info "toolcall hybrid: no valid continuation for the :cljs value — reader dead-end"

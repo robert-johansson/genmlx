@@ -11,7 +11,8 @@
   (:require [clojure.string :as str]
             [genmlx.codegen.eval :as ceval]
             [genmlx.llm.toolcall :as tc]
-            [genmlx.mlx :as mx]))
+            [genmlx.mlx :as mx]
+            [promesa.core :as pr]))
 
 (def ^:private pass (atom 0))
 (def ^:private fail (atom 0))
@@ -49,7 +50,8 @@
 (def multi-tokens
   ["<tool_call>" "<function=" "set_point" ">\n" "<parameter=" "code"
    "</parameter>" "</function>" "</tool_call>" "\n</parameter>\n"
-   "</parameter>\n" ">\n(fn"])   ; last one = the opener-straddle token
+   "</parameter>\n" ">\n(fn"     ; opener-straddle token
+   "fn" "<|end|>" "<think>"])    ; legit multi-byte + engine-special decoys
 
 (def token-index
   ;; pad to put eos (empty text) at a known id
@@ -146,6 +148,23 @@
                (= :complete (ceval/cljs-arg-status
                              (get-in (first (:calls parsed)) [:args "code"])))))
 
+;; -- 3b. engine-special exclusion (the eos-as-symbol bug) -------------------
+(println "\n-- 3b. engine-special exclusion --")
+(let [cs (:cljs-support constraint)
+      cands [(tid "fn") (tid "<|end|>") (tid "<think>") eos-id]
+      ids (set (js->clj (js/Array.from
+                         (tc/cljs-value-token-ids cs token-index "(f" cands eos-id))))]
+  (assert-true "legit multi-byte token ('fn') admitted mid-symbol"
+               (contains? ids (tid "fn")))
+  (assert-true "printable special text ('<|end|>') NOT admitted as multi-byte"
+               (not (contains? ids (tid "<|end|>"))))
+  (assert-true "think marker text ('<think>') NOT admitted as multi-byte"
+               (not (contains? ids (tid "<think>"))))
+  (assert-true "eos id NOT admitted even as a candidate"
+               (not (contains? ids eos-id)))
+  (assert-true "single-byte '<' still on the floor (comparisons expressible)"
+               (contains? ids (tid "<"))))
+
 ;; -- 4. name-clash guard ----------------------------------------------------
 (println "\n-- 4. clash guard --")
 (assert-true "cljs+plain same name across tools throws typed error"
@@ -157,5 +176,71 @@
                   (catch :default e
                     (= :cljs-param-name-clash (:genmlx/error (ex-data e))))))
 
-(println (str "\n== llm-toolcall-cljs: " @pass " pass, " @fail " fail =="))
-(when (pos? @fail) (js/process.exit 1))
+;; -- 5. real-tokenizer eos replay (regression for the observed live bug) ----
+;; The evidence run caught finish=stop turns with unclosed blocks: the eos
+;; token's text ("<|im_end|>") is reader-valid symbol text, so the top-K
+;; path admitted the eos ID mid-form. Replay an observed failing text
+;; char-by-char over the REAL tokenizer: eos must be masked at EVERY value
+;; position. Checkpoint-gated (skips cleanly when the 0.8b is absent).
+(def ^:private qwen-dir
+  (str (.-HOME js/process.env) "/.cache/models/qwen3.5-0.8b-mlx-bf16"))
+
+(defn- summary! []
+  (println (str "\n== llm-toolcall-cljs: " @pass " pass, " @fail " fail =="))
+  (when (pos? @fail) (js/process.exit 1)))
+
+(defn- eos-replay! [qtok]
+  (let [bad-text (str "<tool_call>\n<function=set_filter>\n<parameter=code>\n"
+                      "(fn [scene] ;> scene :y)\n{> \"y\"\n}\n```\n```\n")
+        qtools [{:name "set_filter" :params [{:name "code" :cljs true}]}]
+        qc (tc/compile-toolcall qtok qtools {})
+        qtix (:token-index qc)
+        qeos (:eos-id qc)
+        qn (count qtix)
+        qchar-id (let [m (js/Map.)]
+                   (dotimes [i qn]
+                     (let [t (nth qtix i)]
+                       (when (and (= 1 (count t)) (not (.has m t)))
+                         (.set m t i))))
+                   m)
+        ;; eos boosted so it sits in the top-K candidate set — the replay
+        ;; must exercise the admission path, not dodge it by candidate order
+        qlogits (let [buf (js/Float32Array. qn)]
+                  (aset buf qeos 10.0)
+                  (.fromFloat32 mx/core buf #js [qn]))
+        masker (tc/hybrid-masker qc)]
+    (println "\n-- 5. real-tokenizer eos replay --")
+    (loop [j 0 vis [] eos-leaks 0 blocked-at nil]
+      (if (or (>= j (count bad-text)) blocked-at)
+        (do (assert-true "eos masked at every position of the failing text"
+                         (zero? eos-leaks))
+            (assert-true (str "every char of the failing text stays producible "
+                              "via the floor (blocked-at " (pr-str blocked-at) ")")
+                         (nil? blocked-at)))
+        (let [ch (subs bad-text j (inc j))
+              id (.get qchar-id ch)
+              out (masker qlogits vis)
+              ;; j=0 is the empty turn: prose accept state, eos legitimately
+              ;; valid there — the bug class is eos INSIDE an open block
+              eos-leak? (and (pos? j)
+                             (js/isFinite (mx/item (mx/index out qeos))))
+              ch-ok (and id (js/isFinite (mx/item (mx/index out id))))]
+          (when eos-leak?
+            (println (str "    eos LEAK before char " j " " (pr-str ch))))
+          (recur (inc j) (conj vis id)
+                 (if eos-leak? (inc eos-leaks) eos-leaks)
+                 (if ch-ok nil (str j ":" (pr-str ch)))))))))
+
+(def ^:private fs' (js/require "fs"))
+
+(if-not (.existsSync fs' (str qwen-dir "/tokenizer.json"))
+  (do (println "\nSKIP section 5: qwen3.5-0.8b tokenizer absent")
+      (summary!))
+  (-> (pr/let [qtok (.fromPretrained (.-Qwen3Tokenizer (js/require "@genmlx/core"))
+                                     (str qwen-dir "/tokenizer.json"))]
+        (eos-replay! qtok))
+      (pr/then (fn [_] (summary!)))
+      (pr/catch (fn [e]
+                  (println "FAIL section 5 threw:" (ex-message e))
+                  (swap! fail inc)
+                  (summary!)))))
