@@ -708,6 +708,87 @@
                  (mx/jsc-cleanup!))
                (recur (rest bs) cache' (+ off (count block)) lg-last)))))))))
 
+(defn forward-branch-scores
+  "Advance branch `id` by MULTIPLE tokens exactly like forward-branch-tokens
+   (same cache/offset/rope-delta advance, same chunk discipline, same
+   refusals), but return the per-position TEACHER-FORCING log-probabilities
+   instead of the last logits: a float32 [n-1] array whose entry i-1 is
+   log P(token-ids[i] | branch-prefix ++ token-ids[0..i-1]) — the
+   one-forward scoring primitive for replaying administered agent turns
+   (genmlx-opwh, L3-C1). The first fed token is conditioned on state this
+   call cannot see (the branch's pre-existing last logits), so it is fed
+   but never scored; a 1-token input returns a [0]-shaped array.
+
+   opts :chunk defaults to 512 — scoring holds a [chunk vocab] log-softmax
+   transient per block, heavier than plain prefill, so the default is
+   tighter than the provider's 2048; <=0 runs one slab. The last row of
+   each block carries across the boundary to score the next block's first
+   token. Per-block score slices and the carry row are materialized so no
+   block's [T vocab] graph outlives its iteration. Owned branches only."
+  ([model id token-ids] (forward-branch-scores model id token-ids nil))
+  ([model id token-ids {:keys [chunk] :or {chunk 512}}]
+   (when-not (cljs-forward-model? model)
+     (throw (ex-info "forward-branch-scores drives the OWNED branch ledger; native branches have no all-positions surface."
+                     {:genmlx/error :branch-scores-owned-only
+                      :model-type (type model)})))
+   (let [ids (vec token-ids)
+         n   (count ids)]
+     (when (zero? n)
+       (throw (ex-info "forward-branch-scores: empty token-ids"
+                       {:genmlx/error :empty-branch-tokens :id id})))
+     (let [{:keys [cache offset rope-delta batch]} (owned-branch-state model id)]
+       (when batch
+         (throw (ex-info (str "forward-branch-scores: branch " id " is [K=" batch
+                              "]-batched — score scalar branches only.")
+                         {:genmlx/error :batched-branch-scalar-step
+                          :id id :batch batch})))
+       (let [cache  (or cache (fwd/init-cache (:fwd model)))
+             blocks (if (or (nil? chunk) (<= chunk 0) (>= chunk n))
+                      [ids]
+                      (mapv vec (partition-all chunk ids)))
+             many?  (> (count blocks) 1)]
+         (loop [bs blocks, cache cache, off offset, carry nil, acc []]
+           (if (empty? bs)
+             (do (swap! (:branches model) assoc-in [:branches id]
+                        {:cache cache :offset (+ offset n) :rope-delta rope-delta})
+                 (cond
+                   (empty? acc)        (mx/zeros [0])
+                   (= 1 (count acc))   (first acc)
+                   :else               (mx/concatenate acc 0)))
+             (let [block (first bs)
+                   t     (count block)
+                   [lg cache'] (fwd/forward-cached (:fwd model) block cache
+                                                   (+ off (or rope-delta 0)) off)
+                   ;; upcast before the softmax: bf16 logprobs quantize to
+                   ;; 1/4-nat steps at typical magnitudes, and the scores
+                   ;; contract is float32
+                   lp    (mx/log-softmax (mx/astype lg mx/float32) -1)
+                   ;; the carried last row of the previous block scores this
+                   ;; block's FIRST token
+                   head  (when carry
+                           (mx/reshape (mx/index carry (first block)) [1]))
+                   ;; rows 0..t-2 score tokens 1..t-1 of this block
+                   body  (when (> t 1)
+                           (let [rows (mx/take-idx
+                                       lp
+                                       (mx/array (vec (range (dec t)))
+                                                 [(dec t)] mx/int32)
+                                       0)
+                                 tgts (mx/reshape (mx/array (subvec block 1)
+                                                            [(dec t)] mx/int32)
+                                                  [(dec t) 1])]
+                             (mx/reshape (mx/take-along-axis rows tgts 1)
+                                         [(dec t)])))
+                   carry' (mx/index lp (dec t))
+                   pieces (into [] (remove nil?) [head body])]
+               ;; break the block's [T vocab] graph before the next iteration
+               (doseq [p pieces] (mx/materialize! p))
+               (mx/materialize! carry')
+               (when many?
+                 (fwd/materialize-cache! cache')
+                 (mx/jsc-cleanup!))
+               (recur (rest bs) cache' (+ off t) carry' (into acc pieces))))))))))
+
 (defn forward-branch-batched
   "Advance a [K]-batched branch `id` by one lockstep token per lane
    (genmlx-lo6e): `tok` is a [K]-shaped int array; returns logits [K vocab].
