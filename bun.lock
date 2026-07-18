@@ -1,19 +1,23 @@
 {
   "lockfileVersion": 1,
-  "configVersion": 0,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "dependencies": {
-        "@genmlx/core": "file:./mlx-node/packages/genmlx-core",
+        "@genmlx/core": "workspace:*",
         "nbb": "1.4.208",
       },
       "devDependencies": {
         "long": "^5.3.2",
       },
     },
+    "mlx-node/packages/genmlx-core": {
+      "name": "@genmlx/core",
+      "version": "0.0.0",
+    },
   },
   "packages": {
-    "@genmlx/core": ["@genmlx/core@file:mlx-node/packages/genmlx-core", {}],
+    "@genmlx/core": ["@genmlx/core@workspace:mlx-node/packages/genmlx-core"],
 
     "import-meta-resolve": ["import-meta-resolve@4.2.0", "", {}, "sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg=="],
 

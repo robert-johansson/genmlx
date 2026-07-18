@@ -28,7 +28,7 @@ Gen implementations exist for Julia and JAX — but nothing for MLX. MLX's unifi
 - **[Rust](https://www.rust-lang.org/) toolchain** — `mlx-node` is a Rust NAPI addon, so `cargo`/`rustc` must be on `PATH` to build it.
   - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` (then restart your shell, or `source "$HOME/.cargo/env"`)
 - **[Node.js](https://nodejs.org/) ≥ 18** — provides `npm` (for installing nbb and yarn). `brew install node` on macOS, or [nodejs.org](https://nodejs.org/).
-- **[Bun](https://bun.sh/)** — `curl -fsSL https://bun.sh/install | bash`. The `bun run --bun nbb …` commands throughout this README use it (recommended — 3-4x faster than Node.js for iterative inference). The installer only updates `~/.bashrc`/`~/.zshrc`; **fish** users must add it to `PATH` themselves: `fish_add_path ~/.bun/bin`. To run on Node.js instead, replace `bun run --bun nbb` with `nbb` and `bun install` with `npm install`.
+- **[Bun](https://bun.sh/)** — `curl -fsSL https://bun.sh/install | bash`. The `bun run --bun nbb …` commands throughout this README use it (recommended — 3-4x faster than Node.js for iterative inference). The installer only updates `~/.bashrc`/`~/.zshrc`; **fish** users must add it to `PATH` themselves: `fish_add_path ~/.bun/bin`. To run on Node.js instead, replace `bun run --bun nbb` with `nbb`; note that `npm install` does **not** understand the `workspace:` protocol used for `@genmlx/core` — on npm, remove that dependency entry and symlink manually instead (`mkdir -p node_modules/@genmlx && ln -s ../../mlx-node/packages/genmlx-core node_modules/@genmlx/core`).
 - **[nbb](https://github.com/babashka/nbb) — `1.4.208`** — `npm install -g nbb@1.4.208`. The repo also pins it via the `nbb` script in `package.json`, so `bun run --bun nbb …` resolves to `1.4.208` regardless of any globally installed nbb. ⚠️ Avoid `1.4.207` specifically: it shipped a short-lived SCI regression that failed to resolve record types across namespaces (`Unable to resolve symbol: cm/Node`), breaking the handler loop and therefore all inference. `1.4.208` fixes that and additionally exposes the `IPrintWithWriter` protocol, which is what lets GenMLX run stock upstream `malli` (no fork needed).
 - **[Yarn](https://yarnpkg.com/)** — needed only to build the `mlx-node` submodule. You don't need a specific version: mlx-node vendors the exact release it wants (`.yarn/releases/yarn-4.13.0.cjs`) and any `yarn` launcher on `PATH` auto-delegates to it via the `yarnPath` setting in `.yarnrc.yml`. Install one with `npm install -g yarn` or `brew install yarn`. (If you prefer Corepack, note it is **no longer bundled** with current Node.js — `npm install -g corepack && corepack enable` — but it's unnecessary here.)
 - **`git`** with submodule support — GenMLX vendors its dependencies as nested submodules (see below).
@@ -65,9 +65,13 @@ node packages/genmlx-core/build.mjs   # REQUIRED: builds the @genmlx/core addon
                        # this regenerates it on every fresh clone.
 cd ..
 
-# Install GenMLX's native dependency. @mlx-node/core and @mlx-node/lm resolve from
-# the local mlx-node submodule via file: paths in package.json, so the build above
-# must have completed first.
+# Install GenMLX's native dependency. @genmlx/core resolves from the local
+# mlx-node submodule as a bun WORKSPACE (a symlink into
+# mlx-node/packages/genmlx-core — never a copy, so the gitignored index.node
+# and the CUDA JIT ../include stay reachable), so the build above must have
+# completed first. Idempotent and fresh-clone-safe; membrane_coverage_test
+# carries a linkage-freshness guard that fails loudly if the addon ever goes
+# stale (genmlx-s8ij).
 bun install
 
 # Verify the install — this test runs real inference through the handler loop AND
@@ -105,6 +109,40 @@ bun run --bun nbb -e '(require (quote [genmlx.mlx :as mx])) (prn (mx/native-core
 >   All three sit directly on the nbb classpath (see `nbb.edn`), so no build step is
 >   needed. malli backs schema validation (`genmlx.schemas`), instaparse the LLM
 >   grammar layer (`genmlx.llm.grammar`), and test.check the property-based tests.
+
+### Known platform warts (Linux/CUDA)
+
+- **Exit-teardown abort after green tests** (`genmlx-gr51`). On CUDA, a
+  process that loaded a model can abort *at process exit*, after every
+  assertion has passed — upstream MLX's CUDA RAII handles are destroyed after
+  the driver has begun shutting down (`Destroy(handle_) failed: driver
+  shutting down` → SIGABRT; rarely a bun exit segfault, ~1/30 training-loop
+  runs). This is a teardown-only artifact, not a compute-correctness issue.
+  **Scripting rule: for model-loading runs, read the printed
+  PASS/FAIL/SKIP output, not the exit code.** The same applies to
+  `cargo test` on mlx-core model-loading tests, which can never exit 0 on
+  CUDA for this reason.
+- **GPU run discipline on unified-memory hosts.** One GPU process at a time;
+  heavy (35B/80B-class) runs go through `scripts/guarded-run.sh`. See
+  `docs/thor-gpu-discipline.md` for the failure mechanism and rules.
+- **Suite triage ledger.** The per-file status of everything that does not
+  pass `test/run.sh all` on CUDA, with its bucket, lives in
+  `docs/cuda-test-triage.md`.
+
+### Running scripts that live outside the repo
+
+nbb resolves `nbb.edn` and `node_modules` from the working directory, so an
+out-of-tree script launched with a bare `-cp` misses the native addon (the
+classic symptom: `Could not find instance method: setCacheLimit` at
+`genmlx.mlx` load). Run from the repo root and pass **both** the classpath
+and the module path:
+
+```bash
+cd /path/to/genmlx
+NODE_PATH=$PWD/node_modules bun run --bun nbb \
+  -cp src:examples:test.check:malli/src:instaparse/src \
+  /elsewhere/my_script.cljs
+```
 
 Run the included examples:
 

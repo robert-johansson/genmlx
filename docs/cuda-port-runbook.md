@@ -199,9 +199,33 @@ yarn workspace @genmlx/core build      # runs build.mjs; on Linux skips metallib
 
 **Optional (parity for the sibling `@mlx-node/core`, not GenMLX's runtime path):** add the Linux napi triple to `packages/core/package.json` (`aarch64-unknown-linux-gnu` / `x86_64-unknown-linux-gnu` + linux npm sub-packages + optionalDependencies), gate `copyMetallibs()` to darwin in `packages/core/build.ts:65`, and make the `.node` name target-derived (`packages/core/build.ts:72-83` hardcodes `mlx-core.darwin-arm64.node`).
 
-### 3d. Wire + run
+### 3d. Wire + run — fresh-clone-safe since 2026-07-18 (genmlx-x9f2)
 
-`@genmlx/core` is an **in-tree symlinked workspace package** (`node_modules/@genmlx/core → packages/genmlx-core`). There is **no** npm platform optionalDependency to fetch — for the dev flow you just rebuild `index.node` in place (§3c) and it is picked up. (v1's "`npm install` picks the linux optionalDependency for `@genmlx/core`" was misleading.)
+`@genmlx/core` is a **bun workspace package** (root `package.json`:
+`"workspaces": ["mlx-node/packages/genmlx-core"]` + a `workspace:*`
+dependency). A plain `bun install` creates
+`node_modules/@genmlx/core → ../../mlx-node/packages/genmlx-core` as a
+SYMLINK — never a copy, so the gitignored `index.node` and the CUDA JIT
+`../include` headers stay reachable — and installs the test devDependencies
+(`long`, needed by every `*_property_test`). **The old "symlink by hand and
+never run `bun install`" dance is dead**, as are the `file:`/`link:`
+protocols (bun COPIES `file:` deps — the genmlx-s8ij 4-day stale-addon
+footgun — and bun's `link:` only accepts globally-registered names, so
+`bun install` errored outright). The setup is idempotent; the
+`membrane_coverage_test` linkage-freshness guard fails loudly if the loaded
+addon ever goes stale. `bun.lock` is the lockfile of record
+(`package-lock.json` was stale — still listing the dropped `@mlx-node/*` —
+and has been removed). There is **no** npm platform optionalDependency to
+fetch — for the dev flow you just rebuild `index.node` in place (§3c) and it
+is picked up.
+
+Fresh-clone sequence on the box (the README Quick Start, condensed):
+```bash
+git clone --recurse-submodules <repo> && cd genmlx
+( cd mlx-node && yarn install && yarn build && node packages/genmlx-core/build.mjs )
+bun install
+bunx --bun nbb test/genmlx/inference_test.cljs   # 0 failures, 0 errors
+```
 ```bash
 # from /Users/robert/code/genmlx/
 node -e "console.log(Object.keys(require('@genmlx/core')).length)"   # addon loads? (link OK)

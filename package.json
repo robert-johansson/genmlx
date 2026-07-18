@@ -10,8 +10,11 @@
     "test:check": "bash test/run.sh check",
     "test:xval-llm": "python3 scripts/llm_forward_xval_mlxlm.py"
   },
+  "workspaces": [
+    "mlx-node/packages/genmlx-core"
+  ],
   "dependencies": {
-    "@genmlx/core": "link:./mlx-node/packages/genmlx-core",
+    "@genmlx/core": "workspace:*",
     "nbb": "1.4.208"
   },
   "devDependencies": {
