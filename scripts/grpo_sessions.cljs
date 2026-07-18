@@ -76,6 +76,10 @@
 ;; encode(concat message contents) + 6/msg template overhead — the same
 ;; formula the 2026-07-19 corpus histogram calibrated against.
 (def max-prompt-tokens (env-int "MAX_PROMPT_TOKENS" 0))
+;; genmlx-pnaw chunked-night mode: offset into the prompt cycle so sequential
+;; short runs (process restart clears the engine's per-step growth) cover the
+;; corpus instead of retraining the same first prompts every chunk.
+(def step-offset (env-int "STEP_OFFSET" 0))
 (def date-tag     (-> (.toISOString (js/Date.)) (subs 0 10) (str/replace "-" "")))
 (def ckpt-out     (env "CKPT_OUT"
                        (home "genmlx-checkpoints"
@@ -400,7 +404,7 @@
                      (p/loop [i 0, hist []]
                        (if (= i steps)
                          hist
-                         (let [pidx   (mod i (count prompts))
+                         (let [pidx   (mod (+ i step-offset) (count prompts))
                                prompt (nth prompts pidx)
                                prov   (sg/prompt-meta prompt)]
                            (p/let [r (train/train-step! trainer [prompt] reward-fn)]
