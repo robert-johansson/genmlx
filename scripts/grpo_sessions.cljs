@@ -213,18 +213,18 @@
   (fs/appendFileSync metrics-out (str (js/JSON.stringify (clj->js m)) "\n")))
 
 (defn- wait-for-save!
-  "The native saveModel promise can resolve before its detached
-   weights.safetensors write lands on disk (observed on Thor) — poll until
-   the file exists with a size stable across a 1s beat."
+  "Loud post-save assert (genmlx-sm9w). The native save path is a synchronous
+   send->save->reply chain and (since the sm9w fix) fsyncs weights.safetensors
+   before the promise resolves, so the file MUST be complete here — the
+   original 'appeared later' observation was never reproducible from the Rust
+   code. If this ever throws, that is the reproduction signal: capture it in
+   genmlx-sm9w rather than re-adding a polling workaround that masks it."
   []
   (let [f (path/join ckpt-out "weights.safetensors")]
-    (p/loop [i 0, prev -1]
-      (let [sz (if (.existsSync fs f) (.-size (.statSync fs f)) -2)]
-        (cond
-          (and (pos? sz) (= sz prev)) true
-          (> i 180) (throw (ex-info "weights.safetensors never stabilized"
-                                    {:genmlx/error :save-timeout}))
-          :else (p/let [_ (p/delay 1000)] (p/recur (inc i) sz)))))))
+    (when-not (and (.existsSync fs f) (pos? (.-size (.statSync fs f))))
+      (throw (ex-info "weights.safetensors missing/empty after saveModel resolved (genmlx-sm9w reproduction!)"
+                      {:genmlx/error :save-torn :path f})))
+    true))
 
 (defn- keyset-parity!
   "The trained checkpoint (engine layout, remapped by the owned loader)
