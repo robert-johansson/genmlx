@@ -163,6 +163,7 @@ medium test/genmlx/gen_clj_compat_test.cljs
 medium test/genmlx/genjax_compat_test.cljs
 bench test/genmlx/genjl_comparison_benchmark.cljs
 medium test/genmlx/gen_jl_speed_test.cljs
+medium test/genmlx/genmlx_tool_worker_test.cljs
 fast test/genmlx/gfi_assess_test.cljs core
 medium test/genmlx/gfi_combinator_invariants_test.cljs
 exclude test/genmlx/gfi_compiler.cljs
