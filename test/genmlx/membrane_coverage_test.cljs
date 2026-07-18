@@ -98,7 +98,11 @@
 
    ;; offline weight/format conversion tooling — not graph ops
    :model-conversion
-   #{"convertForeignWeights" "convertGgufToSafetensors" "convertModel" "convertParquetToJsonl"}
+   #{"convertForeignWeights" "convertGgufToSafetensors" "convertModel" "convertParquetToJsonl"
+     ;; FP8 activation-amax calibration for the nvidia quant recipe (adopted
+     ;; wholesale in the d58a upstream sync; driven by `mlx calibrate` at
+     ;; convert time — an offline tool, never a graph op)
+     "calibrateActivationAmaxRaw"}
 
    ;; OCR / document-pipeline classes — GenMLX does not use these; its VLM path
    ;; (llm/vision.cljs) routes through the Qwen VL model classes below, not the
@@ -215,6 +219,22 @@
 ;; ---------------------------------------------------------------------------
 ;; The drift guard proper — the e3jg/0vwn floor deliverable.
 ;; ---------------------------------------------------------------------------
+(deftest addon-linkage-freshness-test
+  (testing "the LOADED @genmlx/core is the packages build, not a stale copy (genmlx-s8ij)"
+    ;; 2026-07-18 root cause: `bun install` (file: protocol) replaced the
+    ;; node_modules/@genmlx/core directory symlink with a stale COPY — every
+    ;; nbb run loaded a 5-day-old pre-merge addon, silently (the export
+    ;; surface hadn't drifted, so the partition above couldn't catch it),
+    ;; and CUDA JIT include resolution broke (no ../include at the copied
+    ;; path). package.json now uses link:; this asserts the linkage holds.
+    (let [resolved (.realpathSync fs "node_modules/@genmlx/core")]
+      (is (re-find #"mlx-node/packages/genmlx-core$" resolved)
+          (str "node_modules/@genmlx/core resolves to " resolved
+               " — expected a symlink into mlx-node/packages/genmlx-core. "
+               "A bun install with the file: protocol copies the addon and "
+               "FREEZES it (stale binary + broken JIT includes); package.json "
+               "must use link: and the symlink must be restored.")))))
+
 (deftest coverage-partition-test
   (testing "every @genmlx/core export is WRAPPED ∪ INTENTIONAL-OMISSIONS (two-directional)"
     ;; A — nothing unaccounted: an export neither wrapped nor on the allowlist
@@ -238,11 +258,11 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 225 (count exported-fns))
+      (is (= 226 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 225) — the partition test above pinpoints what moved."))
-      (is (= 48 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 48)."))
+               " fns (pinned at 226) — the partition test above pinpoints what moved."))
+      (is (= 49 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 49)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))
