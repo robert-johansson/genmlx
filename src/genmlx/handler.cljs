@@ -125,13 +125,16 @@
       (cm/has-value? constraint)
       (let [new-val (cm/get-value constraint)
             new-lp (dc/dist-log-prob dist new-val)
-            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+            ;; gate the discard on PRESENCE, not value truthiness — a legal
+            ;; falsy choice value must still be discarded (genmlx-a6o5)
+            has-old? (cm/has-value? old-choice)
+            old-val (when has-old? (cm/get-value old-choice))]
         [new-val (-> state
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp)
                      (update :weight mx/add new-lp)
                      (cond->
-                      old-val (update :discard cm/set-value addr old-val)))])
+                      has-old? (update :discard cm/set-value addr old-val)))])
 
       ;; Keep old value
       (cm/has-value? old-choice)
@@ -155,8 +158,11 @@
       (let [[k1 k2] (rng/split (:key state))
             new-val (dc/dist-sample dist k2)
             new-lp (dc/dist-log-prob dist new-val)
-            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            ;; presence, not truthiness: a legal falsy old value must still
+            ;; contribute its log-prob to the proposal ratio (genmlx-a6o5)
+            has-old? (cm/has-value? old-choice)
+            old-val (when has-old? (cm/get-value old-choice))
+            old-lp (if has-old? (dc/dist-log-prob dist old-val) ZERO)]
         [new-val (-> state
                      (assoc :key k1)
                      (update :choices cm/set-value addr new-val)
@@ -303,16 +309,20 @@
     (cond
       ;; New constraint provided
       (cm/has-value? constraint)
-      (let [new-val (cm/get-value constraint)
+      ;; ensure-array like batched-generate-transition: a raw JS number stored
+      ;; in the choices is rejected by the v0.31.2 binary on downstream array
+      ;; ops (genmlx-a6o5). Discard gates on PRESENCE, not value truthiness.
+      (let [new-val (mx/ensure-array (cm/get-value constraint))
             new-lp (dc/dist-log-prob dist new-val)
-            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+            has-old? (cm/has-value? old-choice)
+            old-val (when has-old? (cm/get-value old-choice))]
         (check-batched-lp! addr n new-lp)
         [new-val (-> state
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp)
                      (update :weight mx/add new-lp)
                      (cond->
-                      old-val (update :discard cm/set-value addr old-val)))])
+                      has-old? (update :discard cm/set-value addr old-val)))])
 
       ;; Keep old [N]-shaped values
       (cm/has-value? old-choice)
@@ -338,21 +348,31 @@
       (let [[k1 k2] (rng/split (:key state))
             new-val (dc/dist-sample-n dist k2 n)
             new-lp (dc/dist-log-prob dist new-val)
-            old-val (when (cm/has-value? old-choice) (cm/get-value old-choice))
-            old-lp (if old-val (dc/dist-log-prob dist old-val) ZERO)]
+            ;; presence, not truthiness (genmlx-a6o5) — mirrors the scalar arm
+            has-old? (cm/has-value? old-choice)
+            old-val (when has-old? (cm/get-value old-choice))
+            old-lp (if has-old? (dc/dist-log-prob dist old-val) ZERO)]
         (check-batched-lp! addr n new-lp)
         [new-val (-> state
                      (assoc :key k1)
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp)
                      (update :weight mx/add (mx/subtract new-lp old-lp)))])
-      ;; Not selected: keep old [N]-shaped values
-      (let [val (cm/get-value old-choice)
-            lp (dc/dist-log-prob dist val)]
-        (check-batched-lp! addr n lp)
-        [val (-> state
-                 (update :choices cm/set-value addr val)
-                 (update :score mx/add lp))]))))
+      ;; Not selected: keep old [N]-shaped values — same informative throw as
+      ;; the scalar counterpart on a missing retained address (genmlx-a6o5),
+      ;; instead of nil into dist-log-prob -> opaque native error
+      (let [val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+        (when (nil? val)
+          (throw (ex-info (str "batched regenerate: address " addr
+                               " not found in previous trace choices. Cannot "
+                               "keep old value for an address that was never "
+                               "sampled.")
+                          {:addr addr})))
+        (let [lp (dc/dist-log-prob dist val)]
+          (check-batched-lp! addr n lp)
+          [val (-> state
+                   (update :choices cm/set-value addr val)
+                   (update :score mx/add lp))])))))
 
 (defn batched-project-transition
   "Pure: batched project — replay the [N]-shaped old value, accumulate its
@@ -396,12 +416,21 @@
                      (assoc :key k1)
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp))])
-      (let [val (cm/get-value old-choice)
-            lp (dc/dist-log-prob dist val)]
-        (check-batched-lp! addr n lp)
-        [val (-> state
-                 (update :choices cm/set-value addr val)
-                 (update :score mx/add lp))]))))
+      ;; retained: informative throw on a missing address (genmlx-a6o5),
+      ;; matching the scalar general transition's structure-change contract
+      ;; note — this batched path never sees fresh sites, so absence is a bug
+      (let [val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+        (when (nil? val)
+          (throw (ex-info (str "batched regenerate (general): address " addr
+                               " not found in previous trace choices — the "
+                               "batched general path requires a fixed address "
+                               "set across the batch (no structure change).")
+                          {:addr addr})))
+        (let [lp (dc/dist-log-prob dist val)]
+          (check-batched-lp! addr n lp)
+          [val (-> state
+                   (update :choices cm/set-value addr val)
+                   (update :score mx/add lp))])))))
 
 ;; ---------------------------------------------------------------------------
 ;; Pure helpers used by runtime.cljs

@@ -103,15 +103,20 @@
   (update-vals addr-index #(mx/index values-tensor %)))
 
 (defn tensor-trace->trace
-  "Convert TensorTrace to standard Trace (for interop)."
+  "Convert TensorTrace to standard Trace (for interop). Propagates the
+   score-type tag: a :placeholder tensor trace (0.0 score, genmlx-b2mj) must
+   not convert into a Trace reporting :joint — that would launder the score
+   past the joint-scoring guard (genmlx-a6o5)."
   [tt]
   (let [values-map (unpack-values (:values tt) (:addr-index tt))
         cm (cm/from-flat-map values-map)]
-    (tr/make-trace {:gen-fn (:gen-fn tt)
-                    :args (:args tt)
-                    :choices cm
-                    :retval (:retval tt)
-                    :score (:score tt)})))
+    (tr/with-score-type
+      (tr/make-trace {:gen-fn (:gen-fn tt)
+                      :args (:args tt)
+                      :choices cm
+                      :retval (:retval tt)
+                      :score (:score tt)})
+      (tr/score-type tt))))
 
 (defn trace->tensor-trace
   "Convert standard Trace to TensorTrace given addr-index.

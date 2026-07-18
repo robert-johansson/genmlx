@@ -120,8 +120,14 @@
   (->Node (assoc (:m cm) addr sub-cm)))
 
 (defn set-choice
-  "Set a value at the given path, returning a new choice map."
+  "Set a value at the given path, returning a new choice map. Descending
+   through a Value leaf throws, matching set-value's collision policy —
+   silently rebuilding from the leaf would discard it (genmlx-a6o5)."
   [cm path value]
+  (when (instance? Value cm)
+    (throw (ex-info (str "set-choice: path descends through a Value leaf — "
+                         "refusing to silently drop it")
+                    {:path path :leaf-value (:v cm)})))
   (let [node-m (if (instance? Node cm) (:m cm) {})
         [addr & more] path]
     (if (seq more)

@@ -59,8 +59,12 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private score-type-rank
-  "Propagation order for combine-score-types among the path-unstable tags."
-  {:joint 0 :marginal 1 :beam-marginal 2})
+  "Propagation order for combine-score-types among the path-unstable tags.
+   :placeholder outranks everything: a composite containing a 0.0-placeholder
+   part (genmlx-b2mj) has no real joint score, and folding it to :joint would
+   launder it past the joint-scoring guard (genmlx-a6o5). Only :collapsed
+   deliberately folds to :joint (see combine-score-types)."
+  {:joint 0 :marginal 1 :beam-marginal 2 :placeholder 3})
 
 (defn score-type
   "The score encoding of a trace: its ::score-type metadata, or :joint when
