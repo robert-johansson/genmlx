@@ -16,6 +16,9 @@
      STEPS         train steps (default 3); one prompt per step, cycling
      GROUP_SIZE    completions per step (default 4)
      MAX_COMPLETION completion cap (default 96)
+     MAX_PROMPT_TOKENS skip points whose injected prompt exceeds this
+                   (0 = off; genmlx-pnaw — per-step memory scales with
+                   prompt length, MODE=all prompts grow within a session)
      LR            learning rate (default 2e-6)
      TEMPERATURE   rollout temperature (default 0.9)
      SEED          model-thread RNG seed (optional)
@@ -67,6 +70,12 @@
 (def max-completion (env-int "MAX_COMPLETION" 96))
 (def save?        (not= "0" (env "SAVE" "1")))
 (def serve-check? (not= "0" (env "SERVE_CHECK" "1")))
+;; genmlx-pnaw: skip decision points whose (injected) prompt exceeds this many
+;; tokens — the per-step memory dip scales with prompt length, and MODE=all
+;; prompts grow monotonically within a session. 0 = no cap. Counted as
+;; encode(concat message contents) + 6/msg template overhead — the same
+;; formula the 2026-07-19 corpus histogram calibrated against.
+(def max-prompt-tokens (env-int "MAX_PROMPT_TOKENS" 0))
 (def date-tag     (-> (.toISOString (js/Date.)) (subs 0 10) (str/replace "-" "")))
 (def ckpt-out     (env "CKPT_OUT"
                        (home "genmlx-checkpoints"
@@ -341,11 +350,12 @@
                                       {:points (:points conv)
                                        :toolset toolset
                                        :opts {}})
-         tokenizer (if (and inject-tools? (seq toolset))
+         tokenizer (if (or (and inject-tools? (seq toolset))
+                           (pos? max-prompt-tokens))
                      (.fromPretrained (.-Qwen3Tokenizer gcore)
                                       (path/join model-dir "tokenizer.json"))
                      (p/resolved nil))
-         tools-text (if tokenizer
+         tools-text (if (and tokenizer inject-tools? (seq toolset))
                       (tools-block! tokenizer (toolset->tool-defs toolset))
                       (p/resolved nil))
          prompts   (p/resolved
@@ -358,6 +368,29 @@
                                     " declaration(s), block "
                                     (count (str tools-text)) " chars — "
                                     (str/join ", " (map :name toolset))))))
+         ;; genmlx-pnaw: token-cap filter over the INJECTED prompts. Skip (not
+         ;; truncate) — truncation would change the administered semantics.
+         prompts   (if (pos? max-prompt-tokens)
+                     (p/let [counts (p/all
+                                     (mapv (fn [pr]
+                                             (p/let [ids (.encode tokenizer
+                                                                  (str/join "\n" (map #(str (:content %)) pr))
+                                                                  false)]
+                                               (+ (.-length ids) (* 6 (count pr)))))
+                                           prompts))]
+                       (let [kept (into [] (comp (filter (fn [[_ c]] (<= c max-prompt-tokens)))
+                                                 (map first))
+                                        (map vector prompts counts))]
+                         (println (str "  prompt cap " max-prompt-tokens " tokens: kept "
+                                       (count kept) "/" (count prompts)
+                                       " (skipped " (- (count prompts) (count kept))
+                                       " over-cap)"))
+                         (when (empty? kept)
+                           (throw (ex-info "MAX_PROMPT_TOKENS filtered out every prompt"
+                                           {:genmlx/error :no-prompts-under-cap
+                                            :cap max-prompt-tokens})))
+                         kept))
+                     (p/resolved prompts))
          model     (.load (:loader fam) model-dir)
          _         (p/resolved (println "  policy model loaded; training ..."))
          history
@@ -389,6 +422,15 @@
                                :total-tokens (:total-tokens r)
                                :generation-ms (:generation-ms r)
                                :training-ms (:training-ms r)})
+                             ;; genmlx-pnaw: per-step collection trigger — the
+                             ;; step boundary retained ~21GB at group 4 (qwen
+                             ;; smoke: recovery 68GB vs 89GB baseline) and the
+                             ;; trough marched 47->41->23GB across v3 steps.
+                             ;; Same class and cure as R4's run-filter
+                             ;; :gc-every (genmlx-7f93): native transients
+                             ;; pinned by JS refs with no collection pressure
+                             ;; inside a sync step loop.
+                             (mx/force-gc!)
                              (p/recur (inc i) (conj hist r))))))]
                ;; optimizer moments must be saved INSIDE the trainer scope
                (when (and save? (every? :gradients-applied? hist))
