@@ -537,6 +537,9 @@
   ([arrs]      (.concatenate c (to-array arrs)))
   ([arrs axis] (.concatenate c (to-array arrs) axis)))
 (defn split-arr
+  "Split along an axis into `sections` EQUAL parts — the NAPI binding takes
+   an i32 only (no index-list form; gather rows via take-idx for uneven
+   splits)."
   ([a sections]      (vec (.split c a sections)))
   ([a sections axis] (vec (.split c a sections axis))))
 

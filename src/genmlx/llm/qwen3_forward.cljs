@@ -12,7 +12,8 @@
    Weight layout: HF Linear weights are [out, in] (y = x W^T). Embeddings are
    tied (lm_head = embed_tokens^T). qk-norm (RMSNorm over head_dim) is applied
    after the head reshape, before RoPE — matching mlx-lm's Qwen3 attention."
-  (:require [genmlx.mlx :as mx]
+  (:require [clojure.string :as str]
+            [genmlx.mlx :as mx]
             ["fs" :as fs]))
 
 (defn load-config [dir]
@@ -199,17 +200,96 @@
                            "model.safetensors.index.json exists in " dir)
                       {:dir dir})))))
 
+;; ---------------------------------------------------------------------------
+;; Native-save checkpoints (genmlx-qhy4, L4): the training engine's
+;; `saveModel` writes weights.safetensors in the ENGINE-INTERNAL layout
+;; (mlx-node models/qwen3_5/persistence.rs) — bare keys, fused GDN
+;; projections `in_proj_qkvz`/`in_proj_ba`, lowercase `a_log`,
+;; `embedding`/`final_norm`, `visual.*` — always DENSE (a quantized base is
+;; dequantized at InitTraining). The owned forward loads such a save
+;; DIRECTLY by remapping to the HF names the base snapshot uses
+;; (`language_model.model.*`, `vision_tower.*`, split projections,
+;; `A_log`), so a GRPO-trained checkpoint serves with no Python converter
+;; in the loop. Split points come from the (patched, unquantized)
+;; config.json's text_config GDN dims.
+;; ---------------------------------------------------------------------------
+
+(defn native-save-file
+  "The engine-layout weights file of `dir`, when dir is a native saveModel
+   output and NOT an HF checkpoint (HF layouts win when both exist)."
+  [dir]
+  (let [w (str dir "/weights.safetensors")]
+    (when (and (.existsSync fs w)
+               (not (.existsSync fs (str dir "/model.safetensors")))
+               (not (.existsSync fs (str dir "/model.safetensors.index.json"))))
+      w)))
+
+(defn- take-rows
+  "Lazy row-range gather [s, e) along axis 0 (the NAPI split takes only an
+   equal-parts i32, so uneven splits gather instead)."
+  [v s e]
+  (mx/take-idx v (mx/array (vec (range s e)) [(- e s)] mx/int32) 0))
+
+(defn native->hf-weights
+  "Remap an engine-layout weights map to the HF names the owned forward
+   consumes (pure graph ops: the projection splits are lazy row gathers)."
+  [weights dir]
+  (let [cfg  (js/JSON.parse (.readFileSync fs (str dir "/config.json") "utf8"))
+        tc   (or (.-text_config cfg) cfg)
+        n-v  (.-linear_num_value_heads tc)
+        kdim (* (.-linear_num_key_heads tc) (.-linear_key_head_dim tc))
+        vdim (* n-v (.-linear_value_head_dim tc))
+        qkv-split (+ (* 2 kdim) vdim)
+        pfx  "language_model.model."]
+    (persistent!
+     (reduce-kv
+      (fn [m k v]
+        (cond
+          (str/starts-with? k "visual.")
+          (assoc! m (str "vision_tower." (subs k (count "visual."))) v)
+
+          (= k "embedding.weight")
+          (assoc! m (str pfx "embed_tokens.weight") v)
+
+          (= k "final_norm.weight")
+          (assoc! m (str pfx "norm.weight") v)
+
+          (str/ends-with? k ".in_proj_qkvz.weight")
+          (let [base (subs k 0 (- (count k) (count "qkvz.weight")))
+                n    (first (mx/shape v))]
+            (-> m
+                (assoc! (str pfx base "qkv.weight") (take-rows v 0 qkv-split))
+                (assoc! (str pfx base "z.weight") (take-rows v qkv-split n))))
+
+          (str/ends-with? k ".in_proj_ba.weight")
+          (let [base (subs k 0 (- (count k) (count "ba.weight")))
+                n    (first (mx/shape v))]
+            (-> m
+                (assoc! (str pfx base "b.weight") (take-rows v 0 n-v))
+                (assoc! (str pfx base "a.weight") (take-rows v n-v n))))
+
+          (str/ends-with? k ".a_log")
+          (assoc! m (str pfx (subs k 0 (- (count k) (count "a_log"))) "A_log") v)
+
+          :else
+          (assoc! m (str pfx k) v)))
+      (transient {}) weights))))
+
 (defn load-weights
   "Load a checkpoint's weights as {name -> MxArray} — a single
    model.safetensors or all shards of an HF index.json layout, merged
    (see weight-files) — dequantizing at load when config.json declares a
    quantization (see dequantize-weights; opts {:skip?} selects tensors
-   that stay packed)."
+   that stay packed). A native training save (weights.safetensors, engine
+   layout) loads through native->hf-weights instead — always dense, no
+   dequantize."
   ([dir] (load-weights dir nil))
   ([dir opts]
-   (let [w  (reduce (fn [m f] (into m (mx/load-safetensors f))) {} (weight-files dir))
-         qz (load-quantization dir)]
-     (if qz (dequantize-weights w qz opts) w))))
+   (if-let [nf (native-save-file dir)]
+     (native->hf-weights (mx/load-safetensors nf) dir)
+     (let [w  (reduce (fn [m f] (into m (mx/load-safetensors f))) {} (weight-files dir))
+           qz (load-quantization dir)]
+       (if qz (dequantize-weights w qz opts) w)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Load-time transposed-weight memo (genmlx-t2cz L6)
