@@ -37,7 +37,7 @@ from mlx-node's model files (the kind of change a resync makes). The owned defau
 is unaffected, because:
 
 1. **The owned forward modules never call them** — verified statically by
-   `test/genmlx/llm_forward_seam_test.cljs`
+   `test/genmlx/llm/forward_seam_test.cljs`
    (`owned-forward-modules-have-no-borrowed-calls`).
 2. **`backend.cljs` reaches them only inside `cljs-forward-model?`-gated code** —
    the `{:cljs-forward? false}` fallback — verified by the same test
