@@ -350,6 +350,8 @@ bench test/genmlx/perfbench_large.cljs
 medium test/genmlx/phase_a_test.cljs
 medium test/genmlx/phase_bcd_test.cljs
 slow test/genmlx/pi_assess_test.cljs
+fast test/genmlx/pi_edit_plan_test.cljs
+slow test/genmlx/pi_edit_test.cljs
 fast test/genmlx/pi_session_test.cljs
 medium test/genmlx/plate_generate_test.cljs
 medium test/genmlx/pmcmc_test.cljs

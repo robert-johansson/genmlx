@@ -182,6 +182,15 @@
   (assert-equal "call_2 of the dropped assistant NOT repaired"
                 nil (some #(= "call_2" (:toolCallId %)) msgs))
   (assert-equal "assistant indices" [1 5 8] (ps/assistant-indices msgs))
+  ;; provenance metadata (genmlx-5v23): real messages carry their source
+  ;; entry id; synthetic ones (orphan repair, image hoist) carry none
+  (assert-equal "converted messages carry source entry ids"
+                ["e3" "e4" "e5" "e7" "e8" "e9" "e10"]
+                (into [] (keep ps/message-entry-id) msgs))
+  (assert-equal "synthetic messages carry no entry id"
+                [nil nil]
+                [(ps/message-entry-id (nth msgs 3))    ; image hoist
+                 (ps/message-entry-id (nth msgs 6))])  ; orphan repair
   ;; system prompt option
   (let [msgs' (ps/path->messages path {:system-prompt "SYS"})]
     (assert-equal "system prompt prepended"

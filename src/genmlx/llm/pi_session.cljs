@@ -192,8 +192,12 @@
    (when-let [c (first (filter #(= "compaction" (:type %)) entries))]
      (throw (ex-info "pi-session: compaction entry on the path — re-rendering a compacted context from entries alone is unsupported (follow-up)."
                      {:genmlx/error :compaction-unsupported :id (:id c)})))
-   (let [msgs (keep #(when (= "message" (:type %)) (.-message (:js %)))
+   (let [msgs (keep #(when (= "message" (:type %)) [(:id %) (.-message (:js %))])
                     entries)
+         ;; provenance: converted messages carry their source entry id as
+         ;; metadata (::entry-id) — the editing seam (genmlx-5v23) locates
+         ;; the rejoin point from it; synthetic messages carry none
+         stamp (fn [m eid] (vary-meta m assoc ::entry-id eid))
          flush-orphans (fn [out pending seen]
                          (into out
                                (keep (fn [id]
@@ -211,11 +215,12 @@
             seen    #{}]
        (if-not ms
          (flush-orphans out pending seen)
-         (let [m (first ms)]
+         (let [[eid m] (first ms)]
            (case (.-role m)
              "user"
              (recur (next ms)
-                    (conj (flush-orphans out pending seen) (convert-user m))
+                    (conj (flush-orphans out pending seen)
+                          (stamp (convert-user m) eid))
                     [] #{})
 
              "assistant"
@@ -223,12 +228,12 @@
                (if (contains? #{"error" "aborted"} (.-stopReason m))
                  ;; dropped: not rendered, and its tool calls are NOT tracked
                  (recur (next ms) out' [] #{})
-                 (let [cm  (convert-assistant m)
+                 (let [cm  (stamp (convert-assistant m) eid)
                        ids (into [] (keep :id) (:toolCalls cm))]
                    (recur (next ms) (conj out' cm) ids #{}))))
 
              "toolResult"
-             (let [cm     (convert-tool-result m)
+             (let [cm     (stamp (convert-tool-result m) eid)
                    images (:images (split-parts (.-content m)))
                    out'   (cond-> (conj out cm)
                             ;; hoist WITHOUT flushing orphan state — sibling
@@ -243,6 +248,12 @@
              ;; custom roles (bashExecution, custom, branchSummary,
              ;; compactionSummary): skipped, state untouched
              (recur (next ms) out pending seen))))))))
+
+(defn message-entry-id
+  "The source session-entry id of a converted message, or nil for a
+   synthetic one (system prompt, orphan repair, image hoist)."
+  [m]
+  (::entry-id (meta m)))
 
 (defn assistant-indices
   "Indices of the assistant messages in a path->messages vector."
