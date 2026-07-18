@@ -33,6 +33,11 @@
    - :logit-mask: set-logit-mask! installs a per-session
      (fn [logits gen-tokens] -> logits'|nil) applied before every sampling
      step — the external constraint hook.
+   - newSession opts {\"forkFrom\": <sid>} (genmlx-lin9, L3-C3): mint the
+     new session as an O(1) fork of an existing one — branch-from on the
+     ledger plus the committed tokens/images-key, so the fork's first turn
+     delta-prefills over the shared prefix. Refused mid-turn
+     (:fork-source-busy); unknown source keeps the :unknown-session error.
 
    Best-of-K + verifier (genmlx-maww, LANDED): config.bestOfK > 1 decodes
    K candidate turns in lockstep on a FORK of the session branch — one
@@ -113,16 +118,34 @@
                     :type (name (:type mm))
                     :eosTokenId (llm/eos-token-id (:tokenizer mm))}))))))
 
-(defn- new-session* [_opts-json]
+(defn- new-session* [opts-json]
   (let [{:keys [model]} (resident)
+        opts (when (and (string? opts-json) (seq opts-json))
+               (js/JSON.parse opts-json))
+        fork-from (some-> opts .-forkFrom)
+        ;; genmlx-lin9 (L3-C3): forkFrom clones an existing session's turn
+        ;; state in O(1) — branch-from is reference sharing on the owned
+        ;; ledger's persistent cache VALUES, so neither arm can disturb the
+        ;; other and disposal stays independent. The committed tokens (and
+        ;; images-key) ride along so the fork's first turn DELTA-PREFILLS
+        ;; over the shared prefix instead of cold-replaying it.
+        src (when fork-from (session! fork-from))
+        _ (when (and src (:busy? src))
+            (throw (ex-info (str "pi-provider: cannot fork session " fork-from
+                                 " mid-turn — its branch is ahead of its "
+                                 "committed tokens until the turn finishes.")
+                            {:genmlx/error :fork-source-busy :sid fork-from})))
         id (str "s" (:next-session @state*))
-        branch (fresh-branch! model)]
+        branch (if src
+                 (llm/branch-from model (:branch-id src))
+                 (fresh-branch! model))]
     (swap! state* (fn [st]
                     (-> st
                         (update :next-session inc)
                         (assoc-in [:sessions id]
                                   {:branch-id branch
-                                   :tokens []
+                                   :tokens (if src (:tokens src) [])
+                                   :images-key (when src (:images-key src))
                                    :busy? false
                                    :abort? (volatile! false)
                                    :logit-mask nil
