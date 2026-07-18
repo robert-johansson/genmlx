@@ -320,6 +320,7 @@ fast test/genmlx/mix_regen_general_test.cljs
 fast test/genmlx/mlx_fused_ops_test.cljs
 medium test/genmlx/multistep_kalman_ekf_test.cljs
 fast test/genmlx/mutation_boundary_test.cljs core
+fast test/genmlx/native_ckpt_load_test.cljs
 fast test/genmlx/native_guard_test.cljs core
 bench test/genmlx/nbb_benchmark.cljs
 medium test/genmlx/neg_binomial_test.cljs
@@ -473,6 +474,7 @@ fast test/genmlx/world_memory_test.cljs
 fast test/genmlx/world_net_test.cljs
 medium test/genmlx/world_proc_test.cljs
 fast test/genmlx/world_session_grpo_test.cljs
+fast test/genmlx/world_session_reward_test.cljs
 slow test/genmlx/world_train_reward_test.cljs
 slow test/genmlx/world_train_test.cljs
 fast test/genmlx/wp2_generate_test.cljs
