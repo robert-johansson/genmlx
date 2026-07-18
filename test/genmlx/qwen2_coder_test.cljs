@@ -18,6 +18,12 @@
 
 (def model-path (str (.-HOME js/process.env) "/.cache/models/Qwen2.5-Coder-0.5B-mlx"))
 
+;; Skip cleanly when the checkpoint is not provisioned on this host (the
+;; llm_cljs_forward_test contract) — an ENOENT here is a host gap, not a bug.
+(when-not (.existsSync (js/require "fs") (str model-path "/config.json"))
+  (println "SKIP qwen2-coder-test: Qwen2.5-Coder checkpoint absent at" model-path)
+  (js/process.exit 0))
+
 (println "\n== Qwen2.5-Coder-0.5B via qwen2→qwen3 path ==\n")
 
 (pr/let [;; Test 1: Model loads successfully

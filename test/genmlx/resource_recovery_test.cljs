@@ -67,6 +67,40 @@
 (assert-true "from-vec->item roundtrips"
              (< (js/Math.abs (- (mx/item (mx/sum (mx/array [1.0 2.0 3.0]))) 6.0)) 1e-5))
 
+;; Platform gate (genmlx-4u57 bucket B, the nvna negative-contract pattern):
+;; the Metal buffer-count wall machinery does not exist off-Metal — the
+;; limit/count queries report 0 there, and the controlled experiment below is
+;; meaningless (there is no wall to reach). Off-Metal we assert the NEGATIVE
+;; contract instead: queries report 0, and the same 700k loop must survive
+;; with BOTH layers silent — survival without the machinery, not by recovery.
+(when-not (mx/metal-is-available?)
+  (assert-true (str "off-Metal: get-resource-limit reports no wall ("
+                    (mx/get-resource-limit) ")")
+               (zero? (mx/get-resource-limit)))
+  (assert-true (str "off-Metal: get-num-resources reports no count ("
+                    (mx/get-num-resources) ")")
+               (zero? (mx/get-num-resources)))
+  (reset! mx/alloc-retry-count 0)
+  (reset! mx/proactive-sweep-count 0)
+  (println (str "  [off-Metal] allocating " N
+                " scalars (must survive with both layers silent)..."))
+  (let [outcome (run-alloc-loop!)]
+    (assert-true "[off-Metal] loop completed without a resource error"
+                 (= :completed outcome))
+    (assert-true (str "[off-Metal] reactive retry stayed silent (retries="
+                      @mx/alloc-retry-count ")")
+                 (zero? @mx/alloc-retry-count))
+    (assert-true (str "[off-Metal] proactive sweep stayed silent (count="
+                      @mx/proactive-sweep-count ")")
+                 (zero? @mx/proactive-sweep-count)))
+  (mx/force-gc!) (mx/clear-cache!)
+  (assert-true "off-Metal: membrane usable after the loop"
+               (try (< (js/Math.abs (- (mx/item (mx/scalar 9.0)) 9.0)) 1e-5)
+                    (catch :default _ false)))
+  (println (str "\n== resource-recovery (off-Metal negative contract): "
+                @pass " pass, " @fail " fail =="))
+  (js/process.exit (if (pos? @fail) 1 0)))
+
 ;; 2. Buffer-count query bindings (Layer 2 plumbing: MLX -> FFI -> Rust -> CLJS).
 (let [limit (mx/get-resource-limit)]
   (assert-true (str "get-resource-limit reports a sane wall (" limit ")")

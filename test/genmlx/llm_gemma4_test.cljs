@@ -27,6 +27,12 @@
 
 (def model-dir (str (.-HOME js/process.env) "/.cache/models/gemma4-e2b-it-4bit-safe"))
 
+;; Skip cleanly when the checkpoint is not provisioned on this host (the
+;; llm_cljs_forward_test contract) — an ENOENT here is a host gap, not a bug.
+(when-not (.existsSync (js/require "fs") (str model-dir "/config.json"))
+  (println "SKIP llm-gemma4-test: gemma4-e2b checkpoint absent at" model-dir)
+  (js/process.exit 0))
+
 ;; ---------------------------------------------------------------
 ;; 1. Model loading
 ;; ---------------------------------------------------------------
