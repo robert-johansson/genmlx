@@ -179,7 +179,24 @@
 (defn- ->chat-msg [m]
   (cond
     (string? m) #js {:role "user" :content m}
-    (map? m)    #js {:role (name (:role m :user)) :content (:content m)}
+    ;; :toolCalls/:toolCallId/:isError ride through to the native
+    ;; ChatMessage (genmlx-rlho): session-derived prompts contain tool-loop
+    ;; turns, and dropping the fields would render them WITHOUT their
+    ;; <tool_call> blocks — a silent infidelity vs administration. Bare
+    ;; {:role :content} prompts are untouched.
+    (map? m)    (let [o #js {:role (name (:role m :user)) :content (:content m)}]
+                  (when-let [tcs (:toolCalls m)]
+                    (set! (.-toolCalls o)
+                          (into-array
+                           (map (fn [tc] #js {:id        (:id tc)
+                                              :name      (:name tc)
+                                              :arguments (:arguments tc)})
+                                tcs))))
+                  (when-let [id (:toolCallId m)]
+                    (set! (.-toolCallId o) id))
+                  (when (contains? m :isError)
+                    (set! (.-isError o) (:isError m)))
+                  o)
     :else       m))
 
 (defn- ->prompt

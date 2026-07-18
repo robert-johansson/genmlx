@@ -349,6 +349,8 @@ bench test/genmlx/perfbench_curvefit.cljs
 bench test/genmlx/perfbench_large.cljs
 medium test/genmlx/phase_a_test.cljs
 medium test/genmlx/phase_bcd_test.cljs
+slow test/genmlx/pi_assess_test.cljs
+fast test/genmlx/pi_session_test.cljs
 medium test/genmlx/plate_generate_test.cljs
 medium test/genmlx/pmcmc_test.cljs
 medium test/genmlx/prng_hygiene_test.cljs
@@ -467,6 +469,7 @@ fast test/genmlx/wishart_gradient_test.cljs
 fast test/genmlx/world_memory_test.cljs
 fast test/genmlx/world_net_test.cljs
 medium test/genmlx/world_proc_test.cljs
+fast test/genmlx/world_session_grpo_test.cljs
 slow test/genmlx/world_train_reward_test.cljs
 slow test/genmlx/world_train_test.cljs
 fast test/genmlx/wp2_generate_test.cljs
