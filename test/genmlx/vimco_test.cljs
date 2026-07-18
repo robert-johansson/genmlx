@@ -11,6 +11,35 @@
             [genmlx.inference.vi :as vi]))
 
 ;; ---------------------------------------------------------------------------
+;; Determinism (genmlx-06xw): the convergence assertions flipped between
+;; 0/1/2 failures run-to-run because every SGD step drew entropy through
+;; (rng/fresh-key). Reseed fresh-key from a mulberry32 stream via with-redefs
+;; around run-tests (the amortized_test pattern) — the whole suite becomes a
+;; fixed sample path.
+;; ---------------------------------------------------------------------------
+
+(defn- mulberry32 [seed]
+  (let [state (atom seed)]
+    (fn []
+      (let [a (swap! state #(bit-or (+ % 0x6D2B79F5) 0))
+            t (js/Math.imul (bit-xor a (unsigned-bit-shift-right a 15)) (bit-or a 1))
+            t (bit-xor (+ t (js/Math.imul (bit-xor t (unsigned-bit-shift-right t 7))
+                                          (bit-or t 61)))
+                       t)]
+        (/ (unsigned-bit-shift-right (bit-xor t (unsigned-bit-shift-right t 14)) 0)
+           4294967296)))))
+
+(def ^:private rng-stream (mulberry32 2026))
+
+(def ^:private orig-fresh-key rng/fresh-key)
+
+(defn- det-fresh-key
+  "rng/fresh-key reseeded from the suite's mulberry32 stream; the
+   explicit-seed 1-arg form passes through unchanged."
+  ([]     (orig-fresh-key (js/Math.floor (* (rng-stream) 2147483647))))
+  ([seed] (orig-fresh-key seed)))
+
+;; ---------------------------------------------------------------------------
 ;; Tests
 ;; ---------------------------------------------------------------------------
 
@@ -100,4 +129,5 @@
           (is (= 0 (mx/ndim result)) (str "VIMCO K=" k ": returns scalar"))
           (is (js/isFinite (mx/item result)) (str "VIMCO K=" k ": finite")))))))
 
-(cljs.test/run-tests)
+(with-redefs [rng/fresh-key det-fresh-key]
+  (cljs.test/run-tests))
