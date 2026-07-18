@@ -7,11 +7,11 @@ run that produced it is either in-tree (`docs/cuda-test-triage.md`,
 
 ## Pins
 
-| repo | commit | branch |
+| repo | commit | ref |
 |---|---|---|
-| genmlx | this tag | `main` |
-| mlx-node (submodule) | `6aabbd9` | `thor/d58a-up-sync` (upstream `up/main 5602f12` fully merged) |
-| mlx (nested submodule) | `102a90cb` | `thor/mlx-sync-d58a` (14 fork commits rebased onto upstream `de7e34290`) |
+| genmlx | this tag | `main`, tag `v0` |
+| mlx-node (submodule) | `6aabbd9` | branch `thor/d58a-up-sync` (upstream `up/main 5602f12` fully merged), pinned durably by tag `genmlx-v0` |
+| mlx (nested submodule) | `102a90cb` | branch `thor/mlx-sync-d58a` (14 fork commits rebased onto upstream `de7e34290`), pinned durably by tag `genmlx-v0` |
 | malli (submodule) | `a74e3b45` | upstream `metosin/malli` (no fork) |
 | instaparse / test.check | `afc70aa` / `48d8694` | nbb-compat forks |
 
