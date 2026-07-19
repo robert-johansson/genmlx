@@ -103,6 +103,11 @@
                    {:genmlx/error :score-type-mismatch
                     :op op :score-type st :expected :joint})))))))
 
+(defn- present-choices?
+  "True when a choicemap is non-nil and non-EMPTY."
+  [cmap]
+  (and cmap (not= cmap cm/EMPTY)))
+
 (defn- assemble-indexed-discards
   "Collect non-empty per-element discards under their ORIGINAL element
    indices. Filtering before positional reassembly records element i's
@@ -111,7 +116,7 @@
   [results]
   (reduce (fn [acc [i r]]
             (let [d (:discard r)]
-              (if (and d (not= d cm/EMPTY))
+              (if (present-choices? d)
                 (cm/set-choice acc [i] d)
                 acc)))
           cm/EMPTY
@@ -156,6 +161,15 @@
     (cm/->Node (dissoc (:m cm-choices) :component-idx))
     cm-choices))
 
+(defn- component-idx
+  "Extract the Mix combinator's :component-idx from a choicemap as an int,
+   throwing when it is absent. op names the GFI operation for the error payload."
+  [choices op]
+  (when-not (cm/has-value? (cm/get-submap choices :component-idx))
+    (throw (ex-info "Mix combinator requires :component-idx in choices"
+                    {:operation op})))
+  (int (mx/item (cm/get-choice choices [:component-idx]))))
+
 (defn- batched-sub
   "Build [transition init-sub] for one batched sub-execution.
    Selects the generate transition (carrying weight) when constraints are
@@ -169,9 +183,9 @@
                     :batch-size batch-size :batched? true}
                    {:choices cm/EMPTY :score zero
                     :key key :batch-size batch-size :batched? true})
-        init-sub (if-let [ps (:param-store state)]
-                   (assoc init-sub :param-store ps)
-                   init-sub)]
+        init-sub (cond-> init-sub
+                   (:param-store state)
+                   (assoc :param-store (:param-store state)))]
     [(if has-constraints? h/batched-generate-transition h/batched-simulate-transition)
      init-sub]))
 
@@ -184,20 +198,18 @@
 (defn- unpack-fused-map-outputs
   "Unpack [N]-shaped fused map values into per-element ChoiceMaps."
   [values scores N addr-order]
-  (loop [i 0
-         choices cm/EMPTY
-         element-scores []]
-    (if (>= i N)
-      {:choices choices :element-scores element-scores}
-      (let [elem-cm (reduce
-                     (fn [scm addr]
-                       (cm/set-value scm addr (mx/index (get values addr) i)))
-                     cm/EMPTY
-                     addr-order)
-            elem-score (mx/index scores i)]
-        (recur (inc i)
-               (cm/set-choice choices [i] elem-cm)
-               (conj element-scores elem-score))))))
+  (reduce
+   (fn [{:keys [choices element-scores]} i]
+     (let [elem-cm (reduce
+                    (fn [scm addr]
+                      (cm/set-value scm addr (mx/index (get values addr) i)))
+                    cm/EMPTY
+                    addr-order)
+           elem-score (mx/index scores i)]
+       {:choices (cm/set-choice choices [i] elem-cm)
+        :element-scores (conj element-scores elem-score)}))
+   {:choices cm/EMPTY :element-scores []}
+   (range N)))
 
 (defn- map-simulate-fused
   "Fused Map simulate: all N elements in one call via broadcasting."
@@ -486,28 +498,25 @@
    Returns {:choices cm :states [retval...] :step-scores [score...]}."
   [outputs-tensor scores-tensor T addr-order state-keys]
   (let [n-sites (count addr-order)]
-    (loop [t 0
-           choices cm/EMPTY
-           states []
-           step-scores []]
-      (if (>= t T)
-        {:choices choices :states states :step-scores step-scores}
-        (let [row (mx/index outputs-tensor t)
-              step-cm (reduce
-                       (fn [scm [idx addr]]
-                         (cm/set-value scm addr (mx/index row idx)))
-                       cm/EMPTY
-                       (map-indexed vector addr-order))
-              retval (if state-keys
-                       (into {} (map-indexed
-                                 (fn [i k] [k (mx/index row (+ n-sites i))])
-                                 state-keys))
-                       (mx/index row n-sites))
-              step-score (mx/index scores-tensor t)]
-          (recur (inc t)
-                 (cm/set-choice choices [t] step-cm)
-                 (conj states retval)
-                 (conj step-scores step-score)))))))
+    (reduce
+     (fn [{:keys [choices states step-scores]} t]
+       (let [row (mx/index outputs-tensor t)
+             step-cm (reduce
+                      (fn [scm [idx addr]]
+                        (cm/set-value scm addr (mx/index row idx)))
+                      cm/EMPTY
+                      (map-indexed vector addr-order))
+             retval (if state-keys
+                      (into {} (map-indexed
+                                (fn [i k] [k (mx/index row (+ n-sites i))])
+                                state-keys))
+                      (mx/index row n-sites))
+             step-score (mx/index scores-tensor t)]
+         {:choices (cm/set-choice choices [t] step-cm)
+          :states (conj states retval)
+          :step-scores (conj step-scores step-score)}))
+     {:choices cm/EMPTY :states [] :step-scores []}
+     (range T))))
 
 (defn- extras-match?
   "Check if cached extra args match current extra args. Shape-safe: scalar
@@ -544,9 +553,9 @@
 
 (defn- unfold-simulate-fused
   "Fused Unfold simulate: 2 Metal dispatches for T steps."
-  [this args kernel fused-cache n init-state extra]
+  [this args fused n init-state extra]
   (let [{:keys [compiled-fn addr-order noise-site-types state-keys]}  ; noise-dim unused (genmlx-21kt)
-        (get-or-build-fused-unfold fused-cache kernel n extra)
+        fused
         key (splice-key this)
         noise (cops/generate-noise-matrix key n noise-site-types)
         ;; Pack map init-state to flat [N] array for compiled fn
@@ -615,8 +624,8 @@
   p/IGenerativeFunction
   (simulate [this args]
     (let [[n init-state & extra] args]
-      (if-let [_fused (get-or-build-fused-unfold fused-cache kernel n extra)]
-        (unfold-simulate-fused this args kernel fused-cache n init-state extra)
+      (if-let [fused (get-or-build-fused-unfold fused-cache kernel n extra)]
+        (unfold-simulate-fused this args fused n init-state extra)
         (if-let [csim (cops/get-compiled-simulate kernel)]
           (unfold-simulate-compiled this args kernel n init-state extra csim)
           (unfold-simulate-handler this args kernel n init-state extra)))))
@@ -684,11 +693,11 @@
           old-step-scores (::step-scores (meta trace))
           ;; Find first step with non-empty constraints (prefix-skip boundary)
           first-changed (if old-step-scores
-                          (loop [t 0]
-                            (cond
-                              (>= t n) n
-                              (not= (cm/get-submap constraints t) cm/EMPTY) t
-                              :else (recur (inc t))))
+                          (or (some #(when (not= (cm/get-submap constraints %)
+                                                 cm/EMPTY)
+                                       %)
+                                    (range n))
+                              n)
                           0)]
       ;; If no steps have constraints and we have metadata, return trace unchanged
       (if (and old-step-scores (= first-changed n))
@@ -923,8 +932,9 @@
         kern (:kernel unfold-gf)
         old-args (:args trace)
         [old-n init-state & extra] old-args
-        prev-state (if (seq (:retval trace))
-                     (peek (:retval trace))
+        old-retval (:retval trace)
+        prev-state (if (seq old-retval)
+                     (peek old-retval)
                      init-state)
         ;; Attach PRNG key — must use :genmlx.dynamic/key (not ::key)
         keyed-kern (vary-meta kern assoc :genmlx.dynamic/key key)
@@ -940,7 +950,6 @@
         ;; Build extended trace
         old-choices (:choices trace)
         old-score (:score trace)
-        old-retval (:retval trace)
         old-step-scores (::step-scores (meta trace))
         new-choices (cm/set-choice old-choices [old-n] (:choices step-trace))
         new-score (mx/add old-score step-score)
@@ -1244,16 +1253,16 @@
               batch-zero (mx/zeros [batch-size])
               ;; Run each branch once with batched handler
               branch-results
-              (loop [i 0 results [] key k2]
-                (if (>= i (count brs))
-                  results
-                  (let [[bk nk] (rng/split key)
-                        [transition init-sub]
-                        (batched-sub state sub-constraints bk batch-size batch-zero)
-                        result (rt/run-handler transition init-sub
-                                               (fn [rt] (apply (:body-fn (nth brs i)) rt
-                                                               (vec branch-args))))]
-                    (recur (inc i) (conj results result) nk))))
+              (first
+               (reduce (fn [[results key] br]
+                         (let [[bk nk] (rng/split key)
+                               [transition init-sub]
+                               (batched-sub state sub-constraints bk batch-size batch-zero)
+                               result (rt/run-handler transition init-sub
+                                                      (fn [rt] (apply (:body-fn br) rt
+                                                                      (vec branch-args))))]
+                           [(conj results result) nk]))
+                       [[] k2] brs))
               ;; Combine results using mx/where based on [N]-shaped index
               combined-score
               (where-combine index batch-zero branch-results :score)
@@ -1590,27 +1599,23 @@
   (let [n-sites (count addr-order)
         carry-idx n-sites
         output-idx (inc n-sites)]
-    (loop [t 0
-           choices cm/EMPTY
-           carries []
-           outputs []
-           step-scores []]
-      (if (>= t T)
-        {:choices choices :carries carries :outputs outputs :step-scores step-scores}
-        (let [row (mx/index outputs-tensor t)
-              step-cm (reduce
-                       (fn [scm [idx addr]]
-                         (cm/set-value scm addr (mx/index row idx)))
-                       cm/EMPTY
-                       (map-indexed vector addr-order))
-              carry (mx/index row carry-idx)
-              output (mx/index row output-idx)
-              step-score (mx/index scores-tensor t)]
-          (recur (inc t)
-                 (cm/set-choice choices [t] step-cm)
-                 (conj carries carry)
-                 (conj outputs output)
-                 (conj step-scores step-score)))))))
+    (reduce
+     (fn [{:keys [choices carries outputs step-scores]} t]
+       (let [row (mx/index outputs-tensor t)
+             step-cm (reduce
+                      (fn [scm [idx addr]]
+                        (cm/set-value scm addr (mx/index row idx)))
+                      cm/EMPTY
+                      (map-indexed vector addr-order))
+             carry (mx/index row carry-idx)
+             output (mx/index row output-idx)
+             step-score (mx/index scores-tensor t)]
+         {:choices (cm/set-choice choices [t] step-cm)
+          :carries (conj carries carry)
+          :outputs (conj outputs output)
+          :step-scores (conj step-scores step-score)}))
+     {:choices cm/EMPTY :carries [] :outputs [] :step-scores []}
+     (range T))))
 
 (defn- get-or-build-fused-scan
   "Get cached or build new fused scan simulate."
@@ -1626,9 +1631,9 @@
 
 (defn- scan-simulate-fused
   "Fused Scan simulate: compiled fn over all T steps."
-  [this args kernel fused-cache init-carry inputs n]
+  [this args fused init-carry inputs n]
   (let [{:keys [compiled-fn addr-order noise-site-types]}  ; noise-dim unused (genmlx-21kt)
-        (get-or-build-fused-scan fused-cache kernel n)
+        fused
         key (splice-key this)
         noise (cops/generate-noise-matrix key n noise-site-types)
         [outputs-tensor scores-tensor total-score]
@@ -1706,8 +1711,8 @@
   (simulate [this args]
     (let [[init-carry inputs] args
           n (count inputs)]
-      (if-let [_fused (get-or-build-fused-scan fused-cache kernel n)]
-        (scan-simulate-fused this args kernel fused-cache init-carry inputs n)
+      (if-let [fused (get-or-build-fused-scan fused-cache kernel n)]
+        (scan-simulate-fused this args fused init-carry inputs n)
         (if-let [csim (cops/get-compiled-simulate kernel)]
           (scan-simulate-compiled this args kernel init-carry inputs n csim)
           (scan-simulate-handler this args kernel init-carry inputs n)))))
@@ -1785,11 +1790,11 @@
           old-step-carries (::step-carries (meta trace))
           ;; Find first step with non-empty constraints (prefix-skip boundary)
           first-changed (if (and old-step-scores old-step-carries)
-                          (loop [t 0]
-                            (cond
-                              (>= t n) n
-                              (not= (cm/get-submap constraints t) cm/EMPTY) t
-                              :else (recur (inc t))))
+                          (or (some #(when (not= (cm/get-submap constraints %)
+                                                 cm/EMPTY)
+                                       %)
+                                    (range n))
+                              n)
                           0)]
       ;; If no steps have constraints and we have metadata, return trace unchanged
       (if (and old-step-scores old-step-carries (= first-changed n))
@@ -2082,13 +2087,14 @@
                                         :choices (:choices trace)
                                         :retval (:retval trace) :score (:score trace)})
                         (tr/score-type trace))
-          result (p/update (:inner this) inner-trace constraints)]
+          result (p/update (:inner this) inner-trace constraints)
+          ntr (:trace result)]
       {:trace (tr/with-score-type
                 (tr/make-trace {:gen-fn this :args (:args trace)
-                                :choices (:choices (:trace result))
-                                :retval (:retval (:trace result))
-                                :score (:score (:trace result))})
-                (tr/score-type (:trace result)))
+                                :choices (:choices ntr)
+                                :retval (:retval ntr)
+                                :score (:score ntr)})
+                (tr/score-type ntr))
        :weight (:weight result) :discard (:discard result)}))
 
   p/IRegenerate
@@ -2099,13 +2105,14 @@
                                         :choices (:choices trace)
                                         :retval (:retval trace) :score (:score trace)})
                         (tr/score-type trace))
-          result (p/regenerate (:inner this) inner-trace selection)]
+          result (p/regenerate (:inner this) inner-trace selection)
+          ntr (:trace result)]
       {:trace (tr/with-score-type
                 (tr/make-trace {:gen-fn this :args (:args trace)
-                                :choices (:choices (:trace result))
-                                :retval (:retval (:trace result))
-                                :score (:score (:trace result))})
-                (tr/score-type (:trace result)))
+                                :choices (:choices ntr)
+                                :retval (:retval ntr)
+                                :score (:score ntr)})
+                (tr/score-type ntr))
        :weight (:weight result)})))
 
 (extend-type MapRetvalGF
@@ -2116,13 +2123,14 @@
                                         :choices (:choices trace)
                                         :retval nil :score (:score trace)})
                         (tr/score-type trace))
-          result (p/update (:inner this) inner-trace constraints)]
+          result (p/update (:inner this) inner-trace constraints)
+          ntr (:trace result)]
       {:trace (tr/with-score-type
                 (tr/make-trace {:gen-fn this :args (:args trace)
-                                :choices (:choices (:trace result))
-                                :retval ((:g this) (:retval (:trace result)))
-                                :score (:score (:trace result))})
-                (tr/score-type (:trace result)))
+                                :choices (:choices ntr)
+                                :retval ((:g this) (:retval ntr))
+                                :score (:score ntr)})
+                (tr/score-type ntr))
        :weight (:weight result) :discard (:discard result)}))
 
   p/IRegenerate
@@ -2132,13 +2140,14 @@
                                         :choices (:choices trace)
                                         :retval nil :score (:score trace)})
                         (tr/score-type trace))
-          result (p/regenerate (:inner this) inner-trace selection)]
+          result (p/regenerate (:inner this) inner-trace selection)
+          ntr (:trace result)]
       {:trace (tr/with-score-type
                 (tr/make-trace {:gen-fn this :args (:args trace)
-                                :choices (:choices (:trace result))
-                                :retval ((:g this) (:retval (:trace result)))
-                                :score (:score (:trace result))})
-                (tr/score-type (:trace result)))
+                                :choices (:choices ntr)
+                                :retval ((:g this) (:retval ntr))
+                                :score (:score ntr)})
+                (tr/score-type ntr))
        :weight (:weight result)})))
 
 ;; ---------------------------------------------------------------------------
@@ -2297,16 +2306,16 @@
               batch-zero (mx/zeros [batch-size])
               ;; Run each component once with batched handler
               comp-results
-              (loop [i 0 results [] key k-comps]
-                (if (>= i (count comps))
-                  results
-                  (let [[ck nk] (rng/split key)
-                        [transition init-sub]
-                        (batched-sub state inner-constraints ck batch-size batch-zero)
-                        result (rt/run-handler transition init-sub
-                                               (fn [rt] (apply (:body-fn (nth comps i)) rt
-                                                               (vec args))))]
-                    (recur (inc i) (conj results result) nk))))
+              (first
+               (reduce (fn [[results key] cmpnt]
+                         (let [[ck nk] (rng/split key)
+                               [transition init-sub]
+                               (batched-sub state inner-constraints ck batch-size batch-zero)
+                               result (rt/run-handler transition init-sub
+                                                      (fn [rt] (apply (:body-fn cmpnt) rt
+                                                                      (vec args))))]
+                           [(conj results result) nk]))
+                       [[] k-comps] comps))
               ;; Combine per-particle results using mx/where on idx-vals
               combined-score
               (where-combine idx-vals batch-zero comp-results :score)
@@ -2342,10 +2351,7 @@
   (update [this trace constraints]
     (let [trace (ensure-joint-self this :update trace)
           old-choices (:choices trace)
-          _ (when-not (cm/has-value? (cm/get-submap old-choices :component-idx))
-              (throw (ex-info "Mix combinator requires :component-idx in choices"
-                              {:operation :update})))
-          old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
+          old-idx (component-idx old-choices :update)
           args (:args trace)
           log-w ((:log-weights-fn this) args)
           idx-dist (dc/->Distribution :categorical {:logits log-w})
@@ -2436,10 +2442,7 @@
   (regenerate [this trace selection]
     (let [trace (ensure-joint-self this :regenerate trace)
           old-choices (:choices trace)
-          _ (when-not (cm/has-value? (cm/get-submap old-choices :component-idx))
-              (throw (ex-info "Mix combinator requires :component-idx in choices"
-                              {:operation :regenerate})))
-          old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
+          old-idx (component-idx old-choices :regenerate)
           args (:args trace)
           log-w ((:log-weights-fn this) args)
           idx-dist (dc/->Distribution :categorical {:logits log-w})
@@ -2564,43 +2567,29 @@
 ;; IEdit implementations — delegate to edit-dispatch for all combinator types
 ;; ---------------------------------------------------------------------------
 
-(extend-type MapCombinator
-  edit/IEdit
+(extend-protocol edit/IEdit
+  MapCombinator
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
-
-(extend-type UnfoldCombinator
-  edit/IEdit
+    (edit/edit-dispatch gf trace edit-request))
+  UnfoldCombinator
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
-
-(extend-type SwitchCombinator
-  edit/IEdit
+    (edit/edit-dispatch gf trace edit-request))
+  SwitchCombinator
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
-
-(extend-type ScanCombinator
-  edit/IEdit
+    (edit/edit-dispatch gf trace edit-request))
+  ScanCombinator
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
-
-(extend-type MaskCombinator
-  edit/IEdit
+    (edit/edit-dispatch gf trace edit-request))
+  MaskCombinator
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
-
-(extend-type MixCombinator
-  edit/IEdit
+    (edit/edit-dispatch gf trace edit-request))
+  MixCombinator
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
-
-(extend-type ContramapGF
-  edit/IEdit
+    (edit/edit-dispatch gf trace edit-request))
+  ContramapGF
   (edit [gf trace edit-request]
-    (edit/edit-dispatch gf trace edit-request)))
-
-(extend-type MapRetvalGF
-  edit/IEdit
+    (edit/edit-dispatch gf trace edit-request))
+  MapRetvalGF
   (edit [gf trace edit-request]
     (edit/edit-dispatch gf trace edit-request)))
 
@@ -2616,15 +2605,15 @@
           args (:args trace)
           n (count (first args))
           old-element-scores (::element-scores (meta trace))
-          has-constraints (not= constraints cm/EMPTY)]
+          has-constraints? (not= constraints cm/EMPTY)]
       (cond
         ;; No changes to args and no new constraints: return trace unchanged
-        (and (diff/no-change? argdiffs) (not has-constraints))
+        (and (diff/no-change? argdiffs) (not has-constraints?))
         {:trace trace :weight ZERO :discard cm/EMPTY}
 
         ;; vector-diff with stored element scores: optimize
         (and (or (diff/no-change? argdiffs)
-                 (= (:diff-type argdiffs) :vector-diff))
+                 (diff/vector-diff? argdiffs))
              old-element-scores)
         (let [changed-set (if (diff/no-change? argdiffs)
                             #{}
@@ -2632,7 +2621,7 @@
               kernel (ensure-kernel-key (:kernel this))
               ;; Determine which elements need updating: changed args OR new constraints
               update-set (into changed-set
-                               (filter #(not= (cm/get-submap constraints %) cm/EMPTY))
+                               (remove #(= (cm/get-submap constraints %) cm/EMPTY))
                                (range n))
               results (mapv
                        (fn [i]
@@ -2696,8 +2685,28 @@
       :else
       (p/update this trace constraints))))
 
-(extend-type SwitchCombinator
-  p/IUpdateWithDiffs
+(extend-protocol p/IUpdateWithDiffs
+  SwitchCombinator
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight ZERO :discard cm/EMPTY}
+      (p/update this trace constraints)))
+  MaskCombinator
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight ZERO :discard cm/EMPTY}
+      (p/update this trace constraints)))
+  ContramapGF
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight ZERO :discard cm/EMPTY}
+      (p/update this trace constraints)))
+  MapRetvalGF
+  (update-with-diffs [this trace constraints argdiffs]
+    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
+      {:trace trace :weight ZERO :discard cm/EMPTY}
+      (p/update this trace constraints)))
+  MixCombinator
   (update-with-diffs [this trace constraints argdiffs]
     (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
       {:trace trace :weight ZERO :discard cm/EMPTY}
@@ -2717,34 +2726,6 @@
 
       ;; Only constraints changed: prefix-skip via p/update
       :else
-      (p/update this trace constraints))))
-
-(extend-type MaskCombinator
-  p/IUpdateWithDiffs
-  (update-with-diffs [this trace constraints argdiffs]
-    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
-      {:trace trace :weight ZERO :discard cm/EMPTY}
-      (p/update this trace constraints))))
-
-(extend-type ContramapGF
-  p/IUpdateWithDiffs
-  (update-with-diffs [this trace constraints argdiffs]
-    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
-      {:trace trace :weight ZERO :discard cm/EMPTY}
-      (p/update this trace constraints))))
-
-(extend-type MapRetvalGF
-  p/IUpdateWithDiffs
-  (update-with-diffs [this trace constraints argdiffs]
-    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
-      {:trace trace :weight ZERO :discard cm/EMPTY}
-      (p/update this trace constraints))))
-
-(extend-type MixCombinator
-  p/IUpdateWithDiffs
-  (update-with-diffs [this trace constraints argdiffs]
-    (if (and (diff/no-change? argdiffs) (= constraints cm/EMPTY))
-      {:trace trace :weight ZERO :discard cm/EMPTY}
       (p/update this trace constraints))))
 
 ;; ---------------------------------------------------------------------------
@@ -2834,7 +2815,7 @@
                        (cm/set-choice choices [i] (:choices ntr))
                        (mx/add score (:score ntr))
                        (mx/add nf (mx/add (:weight result) c-old))
-                       (if (and (:discard result) (not= (:discard result) cm/EMPTY))
+                       (if (present-choices? (:discard result))
                          (cm/set-choice discard [i] (:discard result))
                          discard)
                        (conj retvals (:retval ntr))
@@ -2871,11 +2852,11 @@
           shared-config? (and (= old-init new-init) (= old-extra new-extra))
           kept-n (min old-n new-n)
           boundary (if (and shared-config? old-step-scores)
-                     (loop [t 0]
-                       (cond
-                         (>= t kept-n) kept-n
-                         (not= (cm/get-submap constraints t) cm/EMPTY) t
-                         :else (recur (inc t))))
+                     (or (some #(when (not= (cm/get-submap constraints %)
+                                            cm/EMPTY)
+                                  %)
+                               (range kept-n))
+                         kept-n)
                      0)
           prefix-choices (if (pos? boundary)
                            (reduce (fn [acc t]
@@ -2933,7 +2914,7 @@
                        (cm/set-choice new-choices [t] (:choices ntr))
                        (mx/add score (:score ntr))
                        (mx/add nf (mx/add (:weight result) c-old))
-                       (if (and (:discard result) (not= (:discard result) cm/EMPTY))
+                       (if (present-choices? (:discard result))
                          (cm/set-choice discard [t] (:discard result))
                          discard)
                        (conj states new-state)
@@ -2969,12 +2950,13 @@
           ;; input — both verified, not asserted (host = on inputs).
           boundary (if (and (= old-init-carry new-init-carry)
                             old-step-scores old-step-carries)
-                     (loop [t 0]
-                       (cond
-                         (>= t kept-n) kept-n
-                         (not= (cm/get-submap constraints t) cm/EMPTY) t
-                         (not= (nth old-inputs t) (nth new-inputs t)) t
-                         :else (recur (inc t))))
+                     (or (some #(when (or (not= (cm/get-submap constraints %)
+                                                cm/EMPTY)
+                                          (not= (nth old-inputs %)
+                                                (nth new-inputs %)))
+                                  %)
+                               (range kept-n))
+                         kept-n)
                      0)
           prefix-choices (if (pos? boundary)
                            (reduce (fn [acc t]
@@ -3040,7 +3022,7 @@
                        (cm/set-choice new-choices [t] (:choices ntr))
                        (mx/add score (:score ntr))
                        (mx/add nf (mx/add (:weight result) c-old))
-                       (if (and (:discard result) (not= (:discard result) cm/EMPTY))
+                       (if (present-choices? (:discard result))
                          (cm/set-choice discard [t] (:discard result))
                          discard)
                        (conj outputs output)
@@ -3116,13 +3098,14 @@
                                         :retval (:retval trace) :score (:score trace)})
                         (tr/score-type trace))
           result (p/update-with-args inner inner-trace new-inner-args
-                                     :unknown constraints)]
+                                     :unknown constraints)
+          ntr (:trace result)]
       {:trace (tr/with-score-type
                 (tr/make-trace {:gen-fn this :args new-args
-                                :choices (:choices (:trace result))
-                                :retval (:retval (:trace result))
-                                :score (:score (:trace result))})
-                (tr/score-type (:trace result)))
+                                :choices (:choices ntr)
+                                :retval (:retval ntr)
+                                :score (:score ntr)})
+                (tr/score-type ntr))
        :weight (:weight result) :discard (:discard result)})))
 
 (extend-type MapRetvalGF
@@ -3135,27 +3118,24 @@
                                         :retval (:retval trace) :score (:score trace)})
                         (tr/score-type trace))
           result (p/update-with-args inner inner-trace new-args
-                                     argdiffs constraints)]
+                                     argdiffs constraints)
+          ntr (:trace result)]
       {:trace (tr/with-score-type
                 (tr/make-trace {:gen-fn this :args new-args
-                                :choices (:choices (:trace result))
-                                :retval ((:g this) (:retval (:trace result)))
-                                :score (:score (:trace result))})
-                (tr/score-type (:trace result)))
+                                :choices (:choices ntr)
+                                :retval ((:g this) (:retval ntr))
+                                :score (:score ntr)})
+                (tr/score-type ntr))
        :weight (:weight result) :discard (:discard result)})))
 
-(extend-type MaskCombinator
-  p/IUpdateWithArgs
+(extend-protocol p/IUpdateWithArgs
+  MaskCombinator
   (update-with-args [this _trace _new-args _argdiffs _constraints]
-    (throw-update-with-args-unsupported this)))
-
-(extend-type MixCombinator
-  p/IUpdateWithArgs
+    (throw-update-with-args-unsupported this))
+  MixCombinator
   (update-with-args [this _trace _new-args _argdiffs _constraints]
-    (throw-update-with-args-unsupported this)))
-
-(extend-type RecurseCombinator
-  p/IUpdateWithArgs
+    (throw-update-with-args-unsupported this))
+  RecurseCombinator
   (update-with-args [this _trace _new-args _argdiffs _constraints]
     (throw-update-with-args-unsupported this)))
 
@@ -3252,10 +3232,7 @@
   (project [this trace selection]
     (let [trace (ensure-joint-self this :project trace)
           old-choices (:choices trace)
-          _ (when-not (cm/has-value? (cm/get-submap old-choices :component-idx))
-              (throw (ex-info "Mix combinator requires :component-idx in choices"
-                              {:operation :project})))
-          old-idx (int (mx/item (cm/get-choice old-choices [:component-idx])))
+          old-idx (component-idx old-choices :project)
           args (:args trace)
           log-w ((:log-weights-fn this) args)
           idx-dist (dc/->Distribution :categorical {:logits log-w})
@@ -3452,12 +3429,8 @@
 (extend-type MixCombinator
   p/IAssess
   (assess [this args choices]
-    (when-not (cm/has-value? (cm/get-submap choices :component-idx))
-      (throw (ex-info "Mix combinator requires :component-idx in choices"
-                      {:operation :assess})))
-    (let [log-w ((:log-weights-fn this) args)
-          idx-val (cm/get-choice choices [:component-idx])
-          idx (int (mx/item idx-val))
+    (let [idx (component-idx choices :assess)
+          log-w ((:log-weights-fn this) args)
           idx-dist (dc/->Distribution :categorical {:logits log-w})
           idx-weight (dc/dist-log-prob idx-dist (mx/scalar idx mx/int32))
           component (nth (:components this) idx)
