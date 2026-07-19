@@ -704,7 +704,7 @@
               weight: simulate.score} (modulo internal proposal)"
     :tags #{:propose :simulate :consistency}
     :check (fn [{:keys [model args]}]
-             (let [{:keys [choices weight retval]} (p/propose model args)
+             (let [{:keys [choices weight]} (p/propose model args)
                    pw (ev weight)]
                  ;; Weight should be finite and choices should be assessable
                (and (js/Number.isFinite pw)

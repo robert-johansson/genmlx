@@ -1609,9 +1609,8 @@
   (sample [key]
     ;; Best's rejection algorithm
           (let [k-val (mx/realize kappa)
-                tau (* 2.0 (js/Math.atan2 1.0 (js/Math.sqrt (+ (* 4.0 k-val k-val) 1.0))))
-          ;; tau is a modified parameter; we use the standard algorithm:
-          ;; τ = 1 + sqrt(1 + 4κ²), ρ = (τ - sqrt(2τ))/(2κ), r = (1 + ρ²)/(2ρ)
+                ;; Standard algorithm parameters:
+                ;; τ = 1 + sqrt(1 + 4κ²), ρ = (τ - sqrt(2τ))/(2κ), r = (1 + ρ²)/(2ρ)
                 tau2 (+ 1.0 (js/Math.sqrt (+ 1.0 (* 4.0 k-val k-val))))
                 rho (/ (- tau2 (js/Math.sqrt (* 2.0 tau2))) (* 2.0 k-val))
                 r (/ (+ 1.0 (* rho rho)) (* 2.0 rho))]

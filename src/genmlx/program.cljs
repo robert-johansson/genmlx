@@ -1036,8 +1036,7 @@
    var-names: [:x :y]
    Returns the template string with <<<HOLE>>> markers."
   [var-names]
-  (let [n (count var-names)
-        ar-bindings (mapv (fn [v]
+  (let [ar-bindings (mapv (fn [v]
                             (str "ar-" (name v) " (trace :ar-" (name v)
                                  " (dist/gaussian 0.5 0.3))"))
                           var-names)
@@ -1157,13 +1156,12 @@
   ([model-map var-names] (fill-scaffold-chat model-map var-names {}))
   ([model-map var-names opts]
    (let [scaffold (build-scaffold var-names)]
-     (pr/loop [i 0, current scaffold, vnames var-names]
+     (pr/loop [current scaffold, vnames var-names]
        (if (empty? vnames)
          current
          (pr/let [expr (fill-hole-chat model-map (first vnames) var-names opts)]
-           (if expr
-             (pr/recur (inc i) (fill-scaffold current [expr]) (rest vnames))
-             nil)))))))
+           (when expr
+             (pr/recur (fill-scaffold current [expr]) (rest vnames)))))))))
 
 (defn generate-candidates
   "Generate N candidate models by filling scaffold holes via chat LLM.

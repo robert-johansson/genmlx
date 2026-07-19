@@ -37,7 +37,6 @@
    compiled-equivalence laws). I4's round-trip, where the spec's bit-exact
    intent is realizable (no resampling), IS checked bit-exact on choices."
   (:require [clojure.test.check.generators :as gen]
-            [clojure.string :as str]
             [sci.core :as sci]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
@@ -414,8 +413,6 @@
       (fn [rt & as] (apply f (.-trace rt) (.-splice rt) as))
       source))))
 
-(declare run-one-pair pair-by-name)
-
 (defn source->model
   "Materialize a hand-written gen source form ([args] body) as a DynamicGF —
    the corpus entry point (pef_corpus.cljs freezes minimal audit models as
@@ -433,23 +430,6 @@
       (dyn/make-gen-fn
        (fn [rt & as] (apply f (.-trace rt) (.-splice rt) as))
        source)))))
-
-(defn check-model
-  "Run a pair-name subset against ONE model bundle {:model :args :meta} —
-   the corpus runner. Returns {:pass? :failures}."
-  [bundle {:keys [pair-names key]}]
-  (let [key (or key (rng/fresh-key 424242))
-        bundle (update bundle :meta #(or % {}))
-        failures
-        (into []
-              (keep (fn [nm]
-                      (let [spec (get pair-by-name nm)]
-                        (when (and spec ((:applicable? spec) bundle))
-                          (let [r (run-one-pair bundle spec key)]
-                            (when-not (:pass? r)
-                              {:pair nm :details (:details r)}))))))
-              pair-names)]
-    {:pass? (empty? failures) :failures failures}))
 
 (defn- gen-args
   "Deterministic model-arg values for a genome (from the model's own seed)."
@@ -929,6 +909,23 @@
       {:pass? false
        :details {:i3-crash (.-message e)
                  :genmlx-error (:genmlx/error (ex-data e))}})))
+
+(defn check-model
+  "Run a pair-name subset against ONE model bundle {:model :args :meta} —
+   the corpus runner. Returns {:pass? :failures}."
+  [bundle {:keys [pair-names key]}]
+  (let [key (or key (rng/fresh-key 424242))
+        bundle (update bundle :meta #(or % {}))
+        failures
+        (into []
+              (keep (fn [nm]
+                      (let [spec (get pair-by-name nm)]
+                        (when (and spec ((:applicable? spec) bundle))
+                          (let [r (run-one-pair bundle spec key)]
+                            (when-not (:pass? r)
+                              {:pair nm :details (:details r)}))))))
+              pair-names)]
+    {:pass? (empty? failures) :failures failures}))
 
 (defn run-pef
   "Run the fuzz sweep. opts:

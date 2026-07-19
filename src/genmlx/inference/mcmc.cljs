@@ -251,7 +251,7 @@
   "Validate that a compiled function produced a valid result.
    Throws with descriptive error if result is nil (Metal graph too large)."
   [result method-name total-steps]
-  (when (or (nil? result) (undefined? result))
+  (when (nil? result)
     (throw (js/Error.
             (str "Fused " method-name " compilation failed: Metal graph too large for "
                  total-steps " total steps. Reduce samples/burn/thin or use the "
@@ -859,8 +859,7 @@
                                     (u/extract-params trace addresses)))
                                 (range n-chains)))
              param-shape (mx/shape init-params)
-             std (mx/scalar proposal-std)
-             d (count addresses)]
+             std (mx/scalar proposal-std)]
          ;; Denominator: steps actually run (i at exit) × chains — the loop
          ;; stops at the last kept sample, burn+(samples-1)*thin+1 steps,
          ;; not burn+samples*thin (genmlx-7ca0).

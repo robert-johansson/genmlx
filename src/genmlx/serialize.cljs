@@ -128,8 +128,7 @@
 (defn- mlx-data?
   "Is data a serialized MLX leaf (a map tagged :type \"scalar\" or \"array\")?"
   [data]
-  (and (map? data) (contains? data :type)
-       (or (= "scalar" (:type data)) (= "array" (:type data)))))
+  (and (map? data) (#{"scalar" "array"} (:type data))))
 
 (defn- data->choicemap
   "Recursively convert serializable data back to a ChoiceMap."

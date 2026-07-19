@@ -21,20 +21,14 @@
      9.7  Synthesize and rank      (synthesize-and-rank)
      9.8  Importance sampling      (importance-sample, infer-answer)
      9.9  End-to-end pipeline      (msa)"
-  (:require [sci.core :as sci]
-            [clojure.string :as str]
-            [cljs.reader :as reader]
+  (:require [clojure.string :as str]
             [instaparse.core :as insta]
             [genmlx.llm.backend :as llm]
             [genmlx.llm.msa-score :as score]
             [genmlx.mlx :as mx]
-            [genmlx.dist :as dist]
-            [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.method-selection :as ms]
-            [promesa.core :as pr])
-  (:require-macros [genmlx.gen :refer [gen]]))
+            [promesa.core :as pr]))
 
 ;; ============================================================
 ;; 9.1 SCI evaluation context  (native-free spine in genmlx.llm.msa-score,

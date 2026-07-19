@@ -31,7 +31,12 @@
 
 (def EMPTY (->Node {}))
 
-(declare from-map)
+(defn from-map
+  "Convert a plain nested map to a choice map."
+  [m]
+  (if (map? m)
+    (->Node (into {} (map (fn [[k v]] [k (from-map v)])) m))
+    (->Value m)))
 
 ;; ---------------------------------------------------------------------------
 ;; Smart constructor from flat key-value pairs
@@ -169,7 +174,6 @@
   "All leaf address paths as a vector of vectors."
   [cm]
   (cond
-    (nil? cm) []
     (not (choicemap? cm)) []
     (has-value? cm) [[]]
     :else
@@ -186,17 +190,9 @@
   "Convert a choice map to a plain nested Clojure map."
   [cm]
   (cond
-    (nil? cm) {}
     (not (choicemap? cm)) {}
     (has-value? cm) (-get-value cm)
     :else (into {} (map (fn [[k v]] [k (to-map v)])) (-submaps cm))))
-
-(defn from-map
-  "Convert a plain nested map to a choice map."
-  [m]
-  (if (map? m)
-    (->Node (into {} (map (fn [[k v]] [k (from-map v)])) m))
-    (->Value m)))
 
 (defn from-flat-map
   "Build a ChoiceMap from a flat {keyword -> value} map.

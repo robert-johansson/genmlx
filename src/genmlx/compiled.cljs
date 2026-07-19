@@ -143,39 +143,6 @@
                     :retval {:final-state final-state :states states}
                     :score total-score})))
 
-(defn- compiled-unfold-generate
-  "Run a compiled unfold with observations and return {:trace Trace :weight scalar}.
-   step-fn:    pure MLX step function with obs (see make-compiled-unfold-generate)
-   n-steps:    number of timesteps
-   state-dim:  state vector dimension
-   noise-dim:  noise per step
-   obs-dim:    observation dimension per step
-   init-state: [state-dim] MLX array
-   obs:        [T, obs-dim] MLX array of observations
-   key:        PRNG key
-   addr-fn:    (fn [t] -> keyword) maps timestep to trace address
-
-   Returns: {:trace Trace :weight scalar}"
-  [{:keys [step-fn n-steps state-dim noise-dim obs-dim addr-fn]
-    :or {addr-fn identity}}
-   init-state obs key]
-  (let [key (rng/ensure-key key)
-        compiled (make-compiled-unfold-generate step-fn n-steps state-dim noise-dim obs-dim)
-        noise (rng/normal key [n-steps noise-dim])
-        [final-state states total-score total-weight] (compiled init-state noise obs)
-        _ (mx/materialize! final-state states total-score total-weight)
-        ;; Build choicemap from states tensor
-        choices (reduce
-                 (fn [cm t]
-                   (cm/set-value cm (addr-fn t) (slice-row states t [state-dim])))
-                 cm/EMPTY
-                 (range n-steps))]
-    {:trace (tr/make-trace {:gen-fn nil :args [n-steps init-state]
-                            :choices choices
-                            :retval {:final-state final-state :states states}
-                            :score total-score})
-     :weight total-weight}))
-
 ;; ---------------------------------------------------------------------------
 ;; Convenience: compile from a step specification
 ;; ---------------------------------------------------------------------------
@@ -1059,8 +1026,6 @@
         {:dist-type (keyword name-part)
          :dist-args (vec (rest dist-form))}))))
 
-(declare walk-prefix-forms)
-
 (defn- walk-prefix-bindings
   "Walk let bindings, collecting prefix trace sites.
    Returns {:prefix [...] :stopped boolean}."
@@ -1307,8 +1272,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Source form walker for branch rewriting
 ;; ---------------------------------------------------------------------------
-
-(declare walk-rewrite-forms)
 
 (defn- walk-rewrite-bindings
   "Walk let bindings, collecting sites (standard + rewritten branches).

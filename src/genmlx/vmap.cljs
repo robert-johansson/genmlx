@@ -19,7 +19,6 @@
   "Get the leading dimension size of an arg."
   [a]
   (cond
-    (nil? a) nil
     (mx/array? a) (first (mx/shape a))
     (sequential? a) (count a)
     :else nil))

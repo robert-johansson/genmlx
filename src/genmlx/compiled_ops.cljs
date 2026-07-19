@@ -418,11 +418,6 @@
         [value (update state :choices cm/set-value addr value)])
       (h/assess-transition state addr dist))))
 
-(defn- get-compiled-assess
-  "Returns the compiled-assess function for a gen-fn, or nil."
-  [gf]
-  (:compiled-assess (:schema gf)))
-
 ;; ===========================================================================
 ;; WP-5: Compiled Project
 ;; ===========================================================================
@@ -531,11 +526,6 @@
       (let [value (get compiled-values addr)]
         [value (update state :choices cm/set-value addr value)])
       (h/project-transition state addr dist))))
-
-(defn- get-compiled-project
-  "Returns the compiled-project function for a gen-fn, or nil."
-  [gf]
-  (:compiled-project (:schema gf)))
 
 ;; ===========================================================================
 ;; WP-6: Compiled Regenerate
