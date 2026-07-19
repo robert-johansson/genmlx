@@ -450,26 +450,24 @@
   (let [{:keys [sample data gold complexity structural?] :as fdef
          :or {structural? true}} (family-by-key family)
         fidx (family-index family)]
-    (loop [attempt 0]
-      (if (> attempt max-retries)
-        nil
-        (let [seed   (mix-seed round fidx instance attempt)
-              params (sample seed)
-              obs    (data params seed)
-              cal    (calibrate (or (:sigma params) (:proc params) 1.0) #(gold params %) obs structural?)]
-          (if (and cal (well-posed? cal structural? min-gap min-struct-gap))
-            (merge {:id (str (name family) "-r" round "-i" instance)
-                    :family family :complexity complexity
-                    :n-latents ((:n-latents fdef) params)
-                    :task-desc ((:desc fdef) params)
-                    :observations obs
-                    ;; full ordered params (incl :addrs/:xs) so family-proposer can
-                    ;; rebuild the exact gold structure with no hash-map key-order risk
-                    :true-params params
-                    :seed seed}
-                   (select-keys cal [:ground-truth-code :crude :crude-tuned :gold
-                                     :gold-scale :solve-bar :gap :struct-gap :exact? :method]))
-            (recur (inc attempt))))))))
+    (some (fn [attempt]
+            (let [seed   (mix-seed round fidx instance attempt)
+                  params (sample seed)
+                  obs    (data params seed)
+                  cal    (calibrate (or (:sigma params) (:proc params) 1.0) #(gold params %) obs structural?)]
+              (when (and cal (well-posed? cal structural? min-gap min-struct-gap))
+                (merge {:id (str (name family) "-r" round "-i" instance)
+                        :family family :complexity complexity
+                        :n-latents ((:n-latents fdef) params)
+                        :task-desc ((:desc fdef) params)
+                        :observations obs
+                        ;; full ordered params (incl :addrs/:xs) so family-proposer can
+                        ;; rebuild the exact gold structure with no hash-map key-order risk
+                        :true-params params
+                        :seed seed}
+                       (select-keys cal [:ground-truth-code :crude :crude-tuned :gold
+                                         :gold-scale :solve-bar :gap :struct-gap :exact? :method])))))
+          (range (inc max-retries)))))
 
 ;; ===========================================================================
 ;; 5. Curriculum assembly + leakage-safe task-level split.

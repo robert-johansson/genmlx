@@ -139,11 +139,8 @@
                        ;; column j*pf+k (LSB-first)
                        (let [pf      (quot 32 t-bits)
                              divisor (mx/array [(js/Math.pow 2 t-bits)] [] mx/uint32)
-                             parts (loop [cur wq k 0 acc []]
-                                     (if (= k pf)
-                                       acc
-                                       (recur (mx/floor-divide cur divisor) (inc k)
-                                              (conj acc (mx/remainder cur divisor)))))
+                             parts (mapv #(mx/remainder % divisor)
+                                         (take pf (iterate #(mx/floor-divide % divisor) wq)))
                              q  (-> (mx/stack parts 2)   ; [out in/pf pf]
                                     (mx/reshape [out in])
                                     (mx/astype mx/float32))

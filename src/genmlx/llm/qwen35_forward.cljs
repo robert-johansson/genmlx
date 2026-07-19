@@ -760,16 +760,16 @@
         n   (count ids)]
     (if (or (nil? chunk) (<= chunk 0) (>= chunk n))
       (prefill model ids)
-      (loop [off 0, cache (init-cache model), last-logits nil]
-        (if (>= off n)
-          [last-logits cache]
-          (let [block (subvec ids off (min n (+ off chunk)))
-                [lg cache'] (forward-cached model block cache off)
-                lg-last (mx/index lg (dec (count block)))]
-            (materialize-cache! cache')
-            (mx/materialize! lg-last)
-            (mx/jsc-cleanup!)
-            (recur (+ off (count block)) cache' lg-last)))))))
+      (reduce (fn [[_last cache] off]
+                (let [block (subvec ids off (min n (+ off chunk)))
+                      [lg cache'] (forward-cached model block cache off)
+                      lg-last (mx/index lg (dec (count block)))]
+                  (materialize-cache! cache')
+                  (mx/materialize! lg-last)
+                  (mx/jsc-cleanup!)
+                  [lg-last cache']))
+              [nil (init-cache model)]
+              (range 0 n chunk)))))
 
 (defn step
   "Advance one token from `cache` (current length = `offset`). Returns

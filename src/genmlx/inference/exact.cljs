@@ -353,7 +353,7 @@
    target-addr: keyword address to keep
    Returns: 1D log-prob tensor of size |D_target|"
   [log-probs axes target-addr]
-  (let [target-axis (first (filter #(= (:addr %) target-addr) axes))
+  (let [target-axis (some #(when (= (:addr %) target-addr) %) axes)
         _ (when-not target-axis
             (throw (ex-info (str "Unknown address: " target-addr)
                             {:addr target-addr :axes axes})))
@@ -468,7 +468,7 @@
    of condition-on calls, insert mx/eval! on intermediate results if the
    lazy graph grows too large."
   [log-probs axes addr value]
-  (let [target (first (filter #(= (:addr %) addr) axes))
+  (let [target (some #(when (= (:addr %) addr) %) axes)
         _ (when-not target
             (throw (ex-info (str "condition-on: unknown address " addr)
                             {:addr addr})))
@@ -540,7 +540,7 @@
    Returns MLX tensor of shape [|D_cond|, |D_remaining|...]"
   [joint-result condition-addr]
   (let [{:keys [axes log-probs]} joint-result
-        cond-axis (first (filter #(= (:addr %) condition-addr) axes))
+        cond-axis (some #(when (= (:addr %) condition-addr) %) axes)
         _ (when-not cond-axis
             (throw (ex-info (str "extract-table: unknown address " condition-addr)
                             {:addr condition-addr})))

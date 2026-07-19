@@ -948,30 +948,38 @@
         pair-specs (if-let [names (:pairs opts)]
                      (mapv pair-by-name names)
                      pairs)
-        failures (volatile! [])
-        checks (volatile! 0)]
-    (doseq [i (range n-models)]
-      (let [bundle (try (model-for {:seed seed :idx i :profile profile})
-                        (catch :default e
-                          {:materialize-error (.-message e)}))]
-        (if (:materialize-error bundle)
-          (vswap! failures conj {:seed seed :idx i :profile-name (:name profile)
-                                 :pair :materialize
-                                 :details {:error (:materialize-error bundle)}})
-          (let [key (rng/fresh-key (+ (* seed key-stride) i))]
-            (doseq [spec pair-specs
-                    :when (and spec ((:applicable? spec) bundle))]
-              (vswap! checks inc)
-              (let [r (run-one-pair bundle spec key)]
-                (when-not (:pass? r)
-                  (vswap! failures conj
-                          {:seed seed :idx i :profile-name (:name profile)
-                           :pair (:name spec) :details (:details r)
-                           :source (:source bundle)}))))))))
-    {:pass? (empty? @failures)
+        {:keys [failures checks]}
+        (reduce
+         (fn [acc i]
+           (let [bundle (try (model-for {:seed seed :idx i :profile profile})
+                             (catch :default e
+                               {:materialize-error (.-message e)}))]
+             (if (:materialize-error bundle)
+               (update acc :failures conj
+                       {:seed seed :idx i :profile-name (:name profile)
+                        :pair :materialize
+                        :details {:error (:materialize-error bundle)}})
+               (let [key (rng/fresh-key (+ (* seed key-stride) i))]
+                 (reduce
+                  (fn [acc spec]
+                    (if (and spec ((:applicable? spec) bundle))
+                      (let [acc (update acc :checks inc)
+                            r (run-one-pair bundle spec key)]
+                        (if (:pass? r)
+                          acc
+                          (update acc :failures conj
+                                  {:seed seed :idx i :profile-name (:name profile)
+                                   :pair (:name spec) :details (:details r)
+                                   :source (:source bundle)})))
+                      acc))
+                  acc
+                  pair-specs)))))
+         {:failures [] :checks 0}
+         (range n-models))]
+    {:pass? (empty? failures)
      :n-models n-models
-     :n-checks @checks
-     :failures @failures}))
+     :n-checks checks
+     :failures failures}))
 
 (defn reproduce
   "Replay a failure artifact: regenerate the exact model and re-run the

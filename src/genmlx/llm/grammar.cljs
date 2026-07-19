@@ -195,14 +195,10 @@
                                         ;; (reduce ... ()) returned nil and crashed
                                         ;; NFA construction (genmlx-abw8).
                                         [:empty]))))
-       :cat        (fn [& items]
-                     (if (= 1 (count items))
-                       (first items)
-                       (reduce (fn [a b] [:cat a b]) items)))
-       :alt        (fn [& items]
-                     (if (= 1 (count items))
-                       (first items)
-                       (reduce (fn [a b] [:alt a b]) items)))
+       ;; single-item case needs no guard: reduce sans init returns the lone
+       ;; element without calling f
+       :cat        (fn [& items] (reduce (fn [a b] [:cat a b]) items))
+       :alt        (fn [& items] (reduce (fn [a b] [:alt a b]) items))
        :group      identity
        :regex      identity}
       tree)))
@@ -354,11 +350,11 @@
 (defn dfa-advance-string
   "Advance DFA through a string. Returns final state or :dead."
   [dfa state s]
-  (reduce (fn [st i]
+  (reduce (fn [st ch]
             (if (= st :dead)
               (reduced :dead)
-              (dfa-advance dfa st (subs s i (inc i)))))
-          state (range (count s))))
+              (dfa-advance dfa st ch)))
+          state s))
 
 (defn dfa-accepts?
   "Does the DFA accept this string (starting from :start)?"

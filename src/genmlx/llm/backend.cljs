@@ -714,23 +714,25 @@
                       [ids]
                       (mapv vec (partition-all chunk ids)))
              many? (> (count blocks) 1)]
-         (loop [bs blocks, cache cache, off offset, last-logits nil]
-           (if (empty? bs)
-             (do (swap! (:branches model) assoc-in [:branches id]
-                        {:cache cache :offset (+ offset n) :rope-delta rope-delta})
-                 last-logits)
-             (let [block (first bs)
-                   ;; rotation at the compressed position, mask at the
-                   ;; PHYSICAL cache width — they differ over a VLM prefix
-                   ;; (rope-delta; genmlx-5aah)
-                   [lg cache'] (fwd/forward-cached (:fwd model) block cache
-                                                   (+ off (or rope-delta 0)) off)
-                   lg-last (mx/index lg (dec (count block)))]
-               (when many?
-                 (fwd/materialize-cache! cache')
-                 (mx/materialize! lg-last)
-                 (mx/jsc-cleanup!))
-               (recur (rest bs) cache' (+ off (count block)) lg-last)))))))))
+         (let [[end-cache _off last-logits]
+               (reduce
+                (fn [[cache off _last] block]
+                  ;; rotation at the compressed position, mask at the
+                  ;; PHYSICAL cache width — they differ over a VLM prefix
+                  ;; (rope-delta; genmlx-5aah)
+                  (let [[lg cache'] (fwd/forward-cached (:fwd model) block cache
+                                                        (+ off (or rope-delta 0)) off)
+                        lg-last (mx/index lg (dec (count block)))]
+                    (when many?
+                      (fwd/materialize-cache! cache')
+                      (mx/materialize! lg-last)
+                      (mx/jsc-cleanup!))
+                    [cache' (+ off (count block)) lg-last]))
+                [cache offset nil]
+                blocks)]
+           (swap! (:branches model) assoc-in [:branches id]
+                  {:cache end-cache :offset (+ offset n) :rope-delta rope-delta})
+           last-logits))))))
 
 (defn forward-branch-scores
   "Advance branch `id` by MULTIPLE tokens exactly like forward-branch-tokens
@@ -771,47 +773,49 @@
                       [ids]
                       (mapv vec (partition-all chunk ids)))
              many?  (> (count blocks) 1)]
-         (loop [bs blocks, cache cache, off offset, carry nil, acc []]
-           (if (empty? bs)
-             (do (swap! (:branches model) assoc-in [:branches id]
-                        {:cache cache :offset (+ offset n) :rope-delta rope-delta})
-                 (cond
-                   (empty? acc)        (mx/zeros [0])
-                   (= 1 (count acc))   (first acc)
-                   :else               (mx/concatenate acc 0)))
-             (let [block (first bs)
-                   t     (count block)
-                   [lg cache'] (fwd/forward-cached (:fwd model) block cache
-                                                   (+ off (or rope-delta 0)) off)
-                   ;; upcast before the softmax: bf16 logprobs quantize to
-                   ;; 1/4-nat steps at typical magnitudes, and the scores
-                   ;; contract is float32
-                   lp    (mx/log-softmax (mx/astype lg mx/float32) -1)
-                   ;; the carried last row of the previous block scores this
-                   ;; block's FIRST token
-                   head  (when carry
-                           (mx/reshape (mx/index carry (first block)) [1]))
-                   ;; rows 0..t-2 score tokens 1..t-1 of this block
-                   body  (when (> t 1)
-                           (let [rows (mx/take-idx
-                                       lp
-                                       (mx/array (vec (range (dec t)))
-                                                 [(dec t)] mx/int32)
-                                       0)
-                                 tgts (mx/reshape (mx/array (subvec block 1)
-                                                            [(dec t)] mx/int32)
-                                                  [(dec t) 1])]
-                             (mx/reshape (mx/take-along-axis rows tgts 1)
-                                         [(dec t)])))
-                   carry' (mx/index lp (dec t))
-                   pieces (into [] (remove nil?) [head body])]
-               ;; break the block's [T vocab] graph before the next iteration
-               (apply mx/materialize! pieces)
-               (mx/materialize! carry')
-               (when many?
-                 (fwd/materialize-cache! cache')
-                 (mx/jsc-cleanup!))
-               (recur (rest bs) cache' (+ off t) carry' (into acc pieces))))))))))
+         (let [[end-cache _off _carry acc]
+               (reduce
+                (fn [[cache off carry acc] block]
+                  (let [t     (count block)
+                        [lg cache'] (fwd/forward-cached (:fwd model) block cache
+                                                        (+ off (or rope-delta 0)) off)
+                        ;; upcast before the softmax: bf16 logprobs quantize to
+                        ;; 1/4-nat steps at typical magnitudes, and the scores
+                        ;; contract is float32
+                        lp    (mx/log-softmax (mx/astype lg mx/float32) -1)
+                        ;; the carried last row of the previous block scores this
+                        ;; block's FIRST token
+                        head  (when carry
+                                (mx/reshape (mx/index carry (first block)) [1]))
+                        ;; rows 0..t-2 score tokens 1..t-1 of this block
+                        body  (when (> t 1)
+                                (let [rows (mx/take-idx
+                                            lp
+                                            (mx/array (vec (range (dec t)))
+                                                      [(dec t)] mx/int32)
+                                            0)
+                                      tgts (mx/reshape (mx/array (subvec block 1)
+                                                                 [(dec t)] mx/int32)
+                                                       [(dec t) 1])]
+                                  (mx/reshape (mx/take-along-axis rows tgts 1)
+                                              [(dec t)])))
+                        carry' (mx/index lp (dec t))
+                        pieces (into [] (remove nil?) [head body])]
+                    ;; break the block's [T vocab] graph before the next iteration
+                    (apply mx/materialize! pieces)
+                    (mx/materialize! carry')
+                    (when many?
+                      (fwd/materialize-cache! cache')
+                      (mx/jsc-cleanup!))
+                    [cache' (+ off t) carry' (into acc pieces)]))
+                [cache offset nil []]
+                blocks)]
+           (swap! (:branches model) assoc-in [:branches id]
+                  {:cache end-cache :offset (+ offset n) :rope-delta rope-delta})
+           (cond
+             (empty? acc)        (mx/zeros [0])
+             (= 1 (count acc))   (first acc)
+             :else               (mx/concatenate acc 0))))))))
 
 (defn forward-branch-batched
   "Advance a [K]-batched branch `id` by one lockstep token per lane

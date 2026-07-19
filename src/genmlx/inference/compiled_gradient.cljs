@@ -37,21 +37,21 @@
    - All score computations flow through differentiable ops"
   [score-fn proposal-std T K]
   (fn [init-params noise-2d uniforms-1d]
-    (loop [p init-params, t 0]
-      (if (>= t T)
-        p
-        (let [;; Extract noise for this step
-              row (mx/index noise-2d t)
-              ;; Propose
-              proposal (mx/add p (mx/multiply proposal-std row))
-              ;; Score current and proposed
-              s-cur (score-fn p)
-              s-prop (score-fn proposal)
-              ;; Accept/reject via mx/where (differentiable)
-              log-alpha (mx/subtract s-prop s-cur)
-              log-u (mx/log (mx/index uniforms-1d t))
-              accept? (mx/greater log-alpha log-u)]
-          (recur (mx/where accept? proposal p) (inc t)))))))
+    (reduce (fn [p t]
+              (let [;; Extract noise for this step
+                    row (mx/index noise-2d t)
+                    ;; Propose
+                    proposal (mx/add p (mx/multiply proposal-std row))
+                    ;; Score current and proposed
+                    s-cur (score-fn p)
+                    s-prop (score-fn proposal)
+                    ;; Accept/reject via mx/where (differentiable)
+                    log-alpha (mx/subtract s-prop s-cur)
+                    log-u (mx/log (mx/index uniforms-1d t))
+                    accept? (mx/greater log-alpha log-u)]
+                (mx/where accept? proposal p)))
+            init-params
+            (range T))))
 
 (defn mcmc-score-gradient
   "Compute gradient of final MCMC score w.r.t. model parameters.

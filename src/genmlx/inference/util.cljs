@@ -65,17 +65,18 @@
   "Compute the flatten/unflatten layout for addresses that may hold array-valued choices.
    Returns {:layout [{:addr :shape :offset :size} ...] :total-size int :array-valued? bool}."
   [trace addresses]
-  (loop [addrs addresses, offset 0, layout [], any-array? false]
-    (if (empty? addrs)
-      {:layout layout :total-size offset :array-valued? any-array?}
-      (let [addr (first addrs)
-            v (cm/get-choice (:choices trace) [addr])
-            sh (mx/shape v)
-            arr? (pos? (count sh))
-            size (if arr? (reduce * sh) 1)]
-        (recur (rest addrs) (+ offset size)
-               (conj layout {:addr addr :shape sh :offset offset :size size})
-               (or any-array? arr?))))))
+  (let [{:keys [offset layout any-array?]}
+        (reduce (fn [{:keys [offset layout any-array?]} addr]
+                  (let [v (cm/get-choice (:choices trace) [addr])
+                        sh (mx/shape v)
+                        arr? (pos? (count sh))
+                        size (if arr? (reduce * sh) 1)]
+                    {:offset (+ offset size)
+                     :layout (conj layout {:addr addr :shape sh :offset offset :size size})
+                     :any-array? (or any-array? arr?)}))
+                {:offset 0 :layout [] :any-array? false}
+                addresses)]
+    {:layout layout :total-size offset :array-valued? any-array?}))
 
 (defn make-score-fn
   "Build a score function from a model + observations + addresses.

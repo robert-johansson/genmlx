@@ -391,17 +391,16 @@
 
    Returns {:ll total marginal LL, :posteriors final posteriors}."
   [step-fn dispatches T context-fn]
-  (loop [t 0
-         posteriors {}
-         acc-ll nil]
-    (if (>= t T)
-      {:ll (or acc-ll (mx/scalar 0.0)) :posteriors posteriors}
-      (let [{:keys [args constraints]} (context-fn t)
-            result (conjugate-generate
-                     step-fn args constraints dispatches
-                     (rng/fresh-key t)
-                     {:init-posteriors posteriors})
-            step-ll (:conjugate-ll result)]
-        (recur (inc t)
-               (:conjugate-posteriors result)
-               (add-ll acc-ll step-ll))))))
+  (let [{:keys [posteriors acc-ll]}
+        (reduce (fn [{:keys [posteriors acc-ll]} t]
+                  (let [{:keys [args constraints]} (context-fn t)
+                        result (conjugate-generate
+                                 step-fn args constraints dispatches
+                                 (rng/fresh-key t)
+                                 {:init-posteriors posteriors})
+                        step-ll (:conjugate-ll result)]
+                    {:posteriors (:conjugate-posteriors result)
+                     :acc-ll (add-ll acc-ll step-ll)}))
+                {:posteriors {} :acc-ll nil}
+                (range T))]
+    {:ll (or acc-ll (mx/scalar 0.0)) :posteriors posteriors}))

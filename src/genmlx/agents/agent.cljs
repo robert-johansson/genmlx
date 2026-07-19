@@ -70,13 +70,14 @@
    finite alpha and hard max at alpha = ##Inf. Returns {:Q [S,A] :V [S]}.
    Materializes V each sweep to break lazy-graph accumulation."
   [{:keys [S gamma] :as mdp} alpha n]
-  (let [value-of (value-fn-for alpha)]
-    (loop [V (mx/zeros #js [S]), i 0, Q nil]
-      (if (>= i n)
-        {:Q Q :V V}
-        (let [[Q' V'] (bellman-step mdp gamma alpha value-of V)]
-          (mx/materialize! V')
-          (recur V' (inc i) Q'))))))
+  (let [value-of (value-fn-for alpha)
+        [V Q] (reduce (fn [[V _Q] _i]
+                        (let [[Q' V'] (bellman-step mdp gamma alpha value-of V)]
+                          (mx/materialize! V')
+                          [V' Q']))
+                      [(mx/zeros #js [S]) nil]
+                      (range n))]
+    {:Q Q :V V}))
 
 (defn- soft-value-tensor
   "soft-value where `alpha` may be a TENSOR (for differentiation) as well as a
@@ -96,11 +97,12 @@
   (when (and (number? alpha) (= alpha ##Inf))
     (throw (ex-info "value-iteration-lazy: alpha must be finite (argmax is non-differentiable)"
                     {:alpha alpha})))
-  (loop [V (mx/zeros #js [S]), i 0, Q nil]
-    (if (>= i n)
-      {:Q Q :V V}
-      (let [[Q' V'] (bellman-step mdp gamma alpha soft-value-tensor V)]
-        (recur V' (inc i) Q')))))
+  (let [[V Q] (reduce (fn [[V _Q] _i]
+                        (let [[Q' V'] (bellman-step mdp gamma alpha soft-value-tensor V)]
+                          [V' Q']))
+                      [(mx/zeros #js [S]) nil]
+                      (range n))]
+    {:Q Q :V V}))
 
 ;; ---------------------------------------------------------------------------
 ;; Path 2: faithful recursive expectedUtility (exact/with-cache + soft policy)

@@ -1059,15 +1059,15 @@
   [key T noise-site-types]
   (if (empty? noise-site-types)
     (mx/zeros [T 1])
-    (let [cols (loop [sites noise-site-types, k key, cols []]
-                 (if (empty? sites)
-                   cols
-                   (let [[k1 k2] (rng/split k)
-                         site (first sites)
-                         col (case (get noise-type-map (:dist-type site))
-                               :normal (rng/normal k1 [T])
-                               :uniform (rng/uniform k1 [T]))]
-                     (recur (rest sites) k2 (conj cols col)))))]
+    (let [[_k cols]
+          (reduce (fn [[k cols] site]
+                    (let [[k1 k2] (rng/split k)
+                          col (case (get noise-type-map (:dist-type site))
+                                :normal (rng/normal k1 [T])
+                                :uniform (rng/uniform k1 [T]))]
+                      [k2 (conj cols col)]))
+                  [key []]
+                  noise-site-types)]
       (if (= 1 (count cols))
         (mx/reshape (first cols) [T 1])
         (mx/stack cols 1)))))

@@ -264,17 +264,15 @@
 
    Returns [P]-shaped total marginal LL (not summed — caller aggregates)."
   [step-fn latent-addr n T context-fn]
-  (loop [t 0
-         belief (zero-belief n)
-         acc-ll (mx/zeros [n])]
-    (if (>= t T)
-      acc-ll
-      (let [{:keys [args constraints]} (context-fn t)
-            result (kalman-generate
-                     step-fn args constraints latent-addr n
-                     (rng/fresh-key t)
-                     {:init-belief belief})
-            step-ll (or (:kalman-ll result) (mx/zeros [n]))]
-        (recur (inc t)
-               (:kalman-belief result)
-               (mx/add acc-ll step-ll))))))
+  (:acc-ll
+   (reduce (fn [{:keys [belief acc-ll]} t]
+             (let [{:keys [args constraints]} (context-fn t)
+                   result (kalman-generate
+                            step-fn args constraints latent-addr n
+                            (rng/fresh-key t)
+                            {:init-belief belief})
+                   step-ll (or (:kalman-ll result) (mx/zeros [n]))]
+               {:belief (:kalman-belief result)
+                :acc-ll (mx/add acc-ll step-ll)}))
+           {:belief (zero-belief n) :acc-ll (mx/zeros [n])}
+           (range T))))

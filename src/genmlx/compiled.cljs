@@ -869,14 +869,15 @@
   "Pre-generate noise for all sites OUTSIDE mx/compile-fn.
    Returns a flat JS array of noise values (one per site, nil for delta sites)."
   [site-specs key]
-  (let [n (count site-specs)]
-    (loop [i 0, k key, noise-vals (transient [])]
-      (if (>= i n)
-        (mx/stack (persistent! noise-vals))
-        (let [[k1 k2] (rng/split k)
-              nfn (site-noise-fn (nth site-specs i))
-              v (if nfn (nfn k2) (mx/scalar 0.0))]
-          (recur (inc i) k1 (conj! noise-vals v)))))))
+  (let [[_k noise-vals]
+        (reduce (fn [[k noise-vals] site-spec]
+                  (let [[k1 k2] (rng/split k)
+                        nfn (site-noise-fn site-spec)
+                        v (if nfn (nfn k2) (mx/scalar 0.0))]
+                    [k1 (conj! noise-vals v)]))
+                [key (transient [])]
+                site-specs)]
+    (mx/stack (persistent! noise-vals))))
 
 (defn- run-site-steps
   "Run the noise-transform step-fns and return a flat JS array

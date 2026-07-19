@@ -1051,10 +1051,8 @@
   (sample [key]
           (let [nt (int (mx/realize n-trials))
                 ks (rng/split-n key nt)
-                successes (reduce (fn [acc ki]
-                                    (let [u (mx/realize (rng/uniform ki []))]
-                                      (if (< u (mx/realize p)) (inc acc) acc)))
-                                  0 ks)]
+                p-val (mx/realize p)
+                successes (count (filter #(< (mx/realize (rng/uniform % [])) p-val) ks))]
             (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)

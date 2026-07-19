@@ -80,16 +80,16 @@
               x0-mean 5 x0-std 2 y0-mean 20 y0-std 5}} dgp]
     (vec
      (for [_ (range n-individuals)]
-       (loop [t 0
-              x (+ x0-mean (* x0-std (randn)))
-              y (+ y0-mean (* y0-std (randn)))
-              series [{:x x :y y}]]
-         (if (>= t (dec n-steps))
-           series
-           (let [x-next (+ (* ar-x x) (* beta-yx y) (* sigma-x (randn)))
-                 y-next (+ (* ar-y y) (* beta-xy x) (* sigma-y (randn)))]
-             (recur (inc t) x-next y-next
-                    (conj series {:x x-next :y y-next})))))))))
+       (let [x0 (+ x0-mean (* x0-std (randn)))
+             y0 (+ y0-mean (* y0-std (randn)))]
+         (:series
+          (reduce (fn [{:keys [x y series]} _t]
+                    (let [x-next (+ (* ar-x x) (* beta-yx y) (* sigma-x (randn)))
+                          y-next (+ (* ar-y y) (* beta-xy x) (* sigma-y (randn)))]
+                      {:x x-next :y y-next
+                       :series (conj series {:x x-next :y y-next})}))
+                  {:x x0 :y y0 :series [{:x x0 :y y0}]}
+                  (range (dec n-steps)))))))))
 
 (defn extract-transitions
   "Extract transition pairs from time series data.
@@ -126,14 +126,13 @@
    sources: set of source variables with active edges into target"
   [target sources]
   (let [ar-term (str "(mx/multiply ar-" (name target) " " (name target) "-prev)")]
-    (if (empty? sources)
-      ar-term
-      (reduce (fn [acc src]
-                (str "(mx/add " acc
-                     " (mx/multiply beta-" (name src) "->" (name target)
-                     " " (name src) "-prev))"))
-              ar-term
-              sources))))
+    ;; no empty-sources guard needed: reduce WITH init returns ar-term unchanged
+    (reduce (fn [acc src]
+              (str "(mx/add " acc
+                   " (mx/multiply beta-" (name src) "->" (name target)
+                   " " (name src) "-prev))"))
+            ar-term
+            sources)))
 
 (def default-priors
   "Single source of truth for the transition-model prior hyperparameters, shared
@@ -271,16 +270,16 @@
    (let [{:keys [n-particles] :or {n-particles 50}} opts
          constraints (build-constraints transitions var-names)
          [weights first-err]
-         (loop [i 0, ws [], err nil]
-           (if (>= i n-particles)
-             [ws err]
-             (let [[w err] (try
-                             [(mx/item (:weight (p/generate gf [transitions] constraints)))
-                              err]
-                             (catch :default e [##-Inf (or err e)]))]
-               (when (zero? (mod (inc i) 10))
-                 (mx/force-gc!))
-               (recur (inc i) (conj ws w) err))))]
+         (reduce (fn [[ws err] i]
+                   (let [[w err] (try
+                                   [(mx/item (:weight (p/generate gf [transitions] constraints)))
+                                    err]
+                                   (catch :default e [##-Inf (or err e)]))]
+                     (when (zero? (mod (inc i) 10))
+                       (mx/force-gc!))
+                     [(conj ws w) err]))
+                 [[] nil]
+                 (range n-particles))]
      (mx/force-gc!)
      ;; Every particle throwing means the MODEL is broken (shape mismatch, bad
      ;; body), not merely improbable — without a diagnostic the caller only sees
@@ -711,18 +710,19 @@
      (for [_ (range n-individuals)]
        (let [init (zipmap var-names
                           (map #(+ (get init-mean %) (* (get init-std %) (randn))) var-names))]
-         (loop [t 0, prev init, series [init]]
-           (if (>= t (dec n-steps))
-             series
-             (let [nxt (zipmap var-names
-                               (map (fn [v]
-                                      (+ (* (get ar v) (get prev v))
-                                         (reduce + (map (fn [[[src tgt] coeff]]
-                                                          (if (= tgt v) (* coeff (get prev src)) 0))
-                                                        cross))
-                                         (* (get sigma v) (randn))))
-                                    var-names))]
-               (recur (inc t) nxt (conj series nxt))))))))))
+         (:series
+          (reduce (fn [{:keys [prev series]} _t]
+                    (let [nxt (zipmap var-names
+                                      (map (fn [v]
+                                             (+ (* (get ar v) (get prev v))
+                                                (reduce + (map (fn [[[src tgt] coeff]]
+                                                                 (if (= tgt v) (* coeff (get prev src)) 0))
+                                                               cross))
+                                                (* (get sigma v) (randn))))
+                                           var-names))]
+                      {:prev nxt :series (conj series nxt)}))
+                  {:prev init :series [init]}
+                  (range (dec n-steps)))))))))
 
 (defn extract-kvar-transitions
   "Extract transition pairs from K-variable panel data.

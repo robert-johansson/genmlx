@@ -372,19 +372,19 @@
 
    Returns {:ll [P]-shaped total LL, :means final means, :covs final covs}."
   [step-fn latent-addrs n T context-fn]
-  (loop [t 0
-         means (make-zero-means latent-addrs n)
-         covs (make-zero-covs latent-addrs n)
-         acc-ll (mx/zeros [n])]
-    (if (>= t T)
-      {:ll acc-ll :means means :covs covs}
-      (let [{:keys [args constraints]} (context-fn t)
-            result (ekf-nd-generate
-                     step-fn args constraints latent-addrs n
-                     (rng/fresh-key t)
-                     {:init-means means :init-covs covs})
-            step-ll (or (:ekf-nd-ll result) (mx/zeros [n]))]
-        (recur (inc t)
-               (:ekf-nd-means result)
-               (:ekf-nd-covs result)
-               (mx/add acc-ll step-ll))))))
+  (let [{:keys [means covs acc-ll]}
+        (reduce (fn [{:keys [means covs acc-ll]} t]
+                  (let [{:keys [args constraints]} (context-fn t)
+                        result (ekf-nd-generate
+                                 step-fn args constraints latent-addrs n
+                                 (rng/fresh-key t)
+                                 {:init-means means :init-covs covs})
+                        step-ll (or (:ekf-nd-ll result) (mx/zeros [n]))]
+                    {:means (:ekf-nd-means result)
+                     :covs (:ekf-nd-covs result)
+                     :acc-ll (mx/add acc-ll step-ll)}))
+                {:means (make-zero-means latent-addrs n)
+                 :covs (make-zero-covs latent-addrs n)
+                 :acc-ll (mx/zeros [n])}
+                (range T))]
+    {:ll acc-ll :means means :covs covs}))

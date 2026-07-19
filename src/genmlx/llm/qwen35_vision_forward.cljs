@@ -221,24 +221,25 @@
              (mx/add h ff)))
          h1 (range depth))
         ;; --- merger (per image; spatial 2x2 merge -> MLP) ---
-        outs
-        (loop [gs grids start 0 acc []]
-          (if-let [[t h w] (first gs)]
-            (let [np   (* t h w)
-                  x    (mx/take-idx hh (mx/arange start (+ start np)) 0)
-                  xn   (layer-norm x (g "merger.norm.weight") (g "merger.norm.bias") eps)
-                  hb   (quot h merge)
-                  wb   (quot w merge)
-                  xm   (-> xn
-                           (mx/reshape [t hb merge wb merge hidden])
-                           (mx/transpose [0 1 3 2 4 5])
-                           (mx/reshape [(* t hb wb) (* merge merge hidden)]))
-                  y    (lin (gelu-tanh (lin xm (g "merger.linear_fc1.weight")
-                                           (g "merger.linear_fc1.bias")))
-                            (g "merger.linear_fc2.weight")
-                            (g "merger.linear_fc2.bias"))]
-              (recur (rest gs) (+ start np) (conj acc y)))
-            acc))]
+        [_ outs]
+        (reduce
+         (fn [[start acc] [t h w]]
+           (let [np   (* t h w)
+                 x    (mx/take-idx hh (mx/arange start (+ start np)) 0)
+                 xn   (layer-norm x (g "merger.norm.weight") (g "merger.norm.bias") eps)
+                 hb   (quot h merge)
+                 wb   (quot w merge)
+                 xm   (-> xn
+                          (mx/reshape [t hb merge wb merge hidden])
+                          (mx/transpose [0 1 3 2 4 5])
+                          (mx/reshape [(* t hb wb) (* merge merge hidden)]))
+                 y    (lin (gelu-tanh (lin xm (g "merger.linear_fc1.weight")
+                                          (g "merger.linear_fc1.bias")))
+                           (g "merger.linear_fc2.weight")
+                           (g "merger.linear_fc2.bias"))]
+             [(+ start np) (conj acc y)]))
+         [0 []]
+         grids)]
     (if (= 1 (count outs)) (first outs) (mx/concatenate outs 0))))
 
 ;; ----------------------------------------------------------------------------
@@ -254,12 +255,13 @@
   "Expand each single <|image_pad|> marker to its image's merged token count
    (one marker per image, in order — the chat-template layout)."
   [tokens counts]
-  (loop [ts tokens cs counts out []]
-    (if-let [t (first ts)]
-      (if (and (= t image-token-id) (seq cs))
-        (recur (rest ts) (rest cs) (into out (repeat (first cs) image-token-id)))
-        (recur (rest ts) cs (conj out t)))
-      out)))
+  (first
+   (reduce (fn [[out cs] t]
+             (if (and (= t image-token-id) (seq cs))
+               [(into out (repeat (first cs) image-token-id)) (rest cs)]
+               [(conj out t) cs]))
+           [[] counts]
+           tokens)))
 
 (defn- mrope-position-ids
   "3-axis M-RoPE position ids [[t…] [h…] [w…]] + rope-delta for the expanded
@@ -320,37 +322,39 @@
         feats   (mx/astype (vision-features weights vcfg pv grids) (mx/dtype embed))
         h0      (let [ids (mx/array expanded [T] mx/int32)
                       te  (mx/take-idx embed ids 0)          ; [T hidden]
-                      runs (loop [i 0 segs [] fstart 0]      ; splice per segment
-                             (if (< i T)
-                               (if (= (nth expanded i) image-token-id)
-                                 (let [j (loop [j i] (if (and (< j T) (= (nth expanded j) image-token-id)) (recur (inc j)) j))
-                                       n (- j i)]
-                                   (recur j (conj segs (mx/take-idx feats (mx/arange fstart (+ fstart n)) 0))
-                                          (+ fstart n)))
-                                 (let [j (loop [j i] (if (and (< j T) (not= (nth expanded j) image-token-id)) (recur (inc j)) j))]
-                                   (recur j (conj segs (mx/take-idx te (mx/arange i j) 0)) fstart)))
-                               segs))]
+                      ;; splice per segment: runs of image-pad vs text tokens
+                      token-runs (partition-by #(= % image-token-id) expanded)
+                      starts  (reductions + 0 (map count token-runs))
+                      fstarts (reductions + 0 (map #(if (= (first %) image-token-id) (count %) 0)
+                                                   token-runs))
+                      runs (mapv (fn [run i fstart]
+                                   (let [n (count run)]
+                                     (if (= (first run) image-token-id)
+                                       (mx/take-idx feats (mx/arange fstart (+ fstart n)) 0)
+                                       (mx/take-idx te (mx/arange i (+ i n)) 0))))
+                                 token-runs starts fstarts)]
                   (mx/reshape (if (= 1 (count runs)) (first runs) (mx/concatenate runs 0))
                               [1 T (:hidden config)]))
         _ (mx/materialize! h0)
         h0-flat (mx/reshape h0 [T (:hidden config)])
         [last-logits cache]
-        (loop [start 0 cache (q35/init-cache model) logits nil]
-          (if (< start T)
-            (let [n    (min chunk (- T start))
-                  hs   (mx/reshape (mx/take-idx h0-flat (mx/arange start (+ start n)) 0)
-                                   [1 n (:hidden config)])
-                  pids (mapv #(subvec (vec %) start (+ start n)) position-ids)
-                  [lg c] (q35/forward-embeds model hs cache pids start)
-                  ;; materialize the kept row — an UNevaluated logits node
-                  ;; would pin the whole chunk graph (GDN states included)
-                  ;; across chunks and OOM exactly like the unchunked path
-                  last-row (mx/index lg (dec n))]
-              (mx/materialize! last-row)
-              (q35/materialize-cache! c)
-              (mx/force-gc!)
-              (recur (+ start n) c last-row))
-            [logits cache]))]
+        (reduce
+         (fn [[_logits cache] start]
+           (let [n    (min chunk (- T start))
+                 hs   (mx/reshape (mx/take-idx h0-flat (mx/arange start (+ start n)) 0)
+                                  [1 n (:hidden config)])
+                 pids (mapv #(subvec (vec %) start (+ start n)) position-ids)
+                 [lg c] (q35/forward-embeds model hs cache pids start)
+                 ;; materialize the kept row — an UNevaluated logits node
+                 ;; would pin the whole chunk graph (GDN states included)
+                 ;; across chunks and OOM exactly like the unchunked path
+                 last-row (mx/index lg (dec n))]
+             (mx/materialize! last-row)
+             (q35/materialize-cache! c)
+             (mx/force-gc!)
+             [last-row c]))
+         [nil (q35/init-cache model)]
+         (range 0 T chunk))]
     {:logits last-logits
      :cache  cache
      :seq-len T

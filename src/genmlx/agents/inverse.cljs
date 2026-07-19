@@ -105,15 +105,13 @@
   (let [goals (vec (keys agents-by-goal))              ; pin order: same axis for stack + readout
         logp-policies (stack-log-policies goals agents-by-goal)
         logp0 (mx/log (mx/array (clj->js (mapv #(double (prior %)) goals)) mx/float32))]
-    (loop [obs  observations
-           logp logp0
-           acc  [(softmax->map goals logp0)]]
-      (if (empty? obs)
-        acc
-        (let [[s a] (first obs)
-              cell  (mx/idx (mx/idx logp-policies s 1) a 1)   ; [G,S,A] -> [G,A] -> [G]
-              logp' (mx/add logp cell)]
-          (recur (rest obs) logp' (conj acc (softmax->map goals logp'))))))))
+    (mapv #(softmax->map goals %)
+          (reductions
+           (fn [logp [s a]]
+             (let [cell (mx/idx (mx/idx logp-policies s 1) a 1)]  ; [G,S,A] -> [G,A] -> [G]
+               (mx/add logp cell)))
+           logp0
+           observations))))
 
 (defn observe-rollout
   "Turn an agent rollout {:states :actions} into [state action] observation pairs."

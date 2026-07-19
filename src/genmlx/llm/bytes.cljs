@@ -89,12 +89,12 @@
   "Navigate the trie by a byte string, returning the subtrie at the end
    of the path, or nil if no such path exists."
   [trie byte-str]
-  (reduce (fn [node i]
-            (if-let [child (get-in node [:children (subs byte-str i (inc i))])]
+  (reduce (fn [node ch]
+            (if-let [child (get-in node [:children ch])]
               child
               (reduced nil)))
           trie
-          (range (count byte-str))))
+          byte-str))
 
 ;; ============================================================
 ;; Byte marginals via logsumexp gather

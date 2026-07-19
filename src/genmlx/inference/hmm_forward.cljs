@@ -250,18 +250,18 @@
 
    Returns {:ll [P]-shaped total marginal LL, :belief final log-alpha}."
   [step-fn latent-addr log-trans n K T context-fn]
-  (let [zero-ll (if (pos? n) (mx/zeros [n]) (mx/scalar 0.0))]
-    (loop [t 0
-           belief nil  ;; nil = use default uniform prior
-           acc-ll zero-ll]
-      (if (>= t T)
-        {:ll acc-ll :belief belief}
-        (let [{:keys [args constraints]} (context-fn t)
-              result (hmm-generate
-                       step-fn args constraints latent-addr log-trans n K
-                       (rng/fresh-key t)
-                       {:init-belief belief})
-              step-ll (or (:hmm-ll result) zero-ll)]
-          (recur (inc t)
-                 (:hmm-belief result)
-                 (mx/add acc-ll step-ll)))))))
+  (let [zero-ll (if (pos? n) (mx/zeros [n]) (mx/scalar 0.0))
+        {:keys [belief acc-ll]}
+        (reduce (fn [{:keys [belief acc-ll]} t]
+                  (let [{:keys [args constraints]} (context-fn t)
+                        result (hmm-generate
+                                 step-fn args constraints latent-addr log-trans n K
+                                 (rng/fresh-key t)
+                                 {:init-belief belief})
+                        step-ll (or (:hmm-ll result) zero-ll)]
+                    {:belief (:hmm-belief result)
+                     :acc-ll (mx/add acc-ll step-ll)}))
+                {:belief nil  ;; nil = use default uniform prior
+                 :acc-ll zero-ll}
+                (range T))]
+    {:ll acc-ll :belief belief}))

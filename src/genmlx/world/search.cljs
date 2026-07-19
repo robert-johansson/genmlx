@@ -115,8 +115,8 @@
 ;; reproducible without touching js/Math.random (which nbb can't seed in required nses).
 (defn- lcg-next [s] (mod (+ (* 1103515245 s) 12345) 2147483648))
 (defn- uniforms [seed n]
-  (loop [s (lcg-next (+ seed 1)), i 0, acc []]
-    (if (>= i n) acc (recur (lcg-next s) (inc i) (conj acc (/ s 2147483648.0))))))
+  (mapv #(/ % 2147483648.0)
+        (take n (iterate lcg-next (lcg-next (+ seed 1))))))
 
 (defn- softmax [xs temp]
   (let [t  (max temp 1e-6)
@@ -126,9 +126,9 @@
     (map #(/ % z) es)))
 
 (defn- weighted-pick [items weights u]
-  (loop [is items, ws weights, acc 0.0]
-    (let [acc' (+ acc (first ws))]
-      (if (or (empty? (rest is)) (<= u acc')) (first is) (recur (rest is) (rest ws) acc')))))
+  (or (some (fn [[item cum]] (when (<= u cum) item))
+            (map vector items (reductions + weights)))
+      (last items)))
 
 (defn- select-smc
   "Resample `width` UNIQUE particles from the pool with replacement, proportional to

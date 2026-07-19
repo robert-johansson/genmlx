@@ -110,32 +110,33 @@
   [{:keys [iterations optimizer lr callback key]
     :or {iterations 1000 optimizer :adam lr 0.001}}
    loss-grad-fn init-params]
-  (let [opt-state (when (= optimizer :adam) (adam-init init-params))]
-    (loop [i 0 params init-params
-           opt-st opt-state
-           losses (transient [])
-           rk key]
-      (if (>= i iterations)
-        {:params params :loss-history (persistent! losses)}
-        (let [[step-key next-key] (rng/split-or-nils rk)
-              {:keys [loss grad]} (loss-grad-fn params step-key)
-              ;; Break lazy graph — prevents accumulation across iterations
-              _ (mx/materialize! loss grad)
-              loss-val (mx/item loss)
-              [new-params new-opt-st]
-              (case optimizer
-                :sgd [(sgd-step params grad lr) nil]
-                :adam (adam-step params grad opt-st {:lr lr})
-                (throw (ex-info "Unknown optimizer" {:optimizer optimizer})))]
-          (when callback
-            (callback {:iter i :loss loss-val :params new-params}))
-          ;; Periodic resource cleanup — critical for models with large
-          ;; computation graphs (e.g. Kalman filters, temporal models)
-          (when (zero? (mod i 10))
-            (mx/clear-cache!)
-            (mx/sweep-dead-arrays!))
-          (recur (inc i) new-params new-opt-st
-                 (conj! losses loss-val) next-key))))))
+  (let [opt-state (when (= optimizer :adam) (adam-init init-params))
+        {:keys [params losses]}
+        (reduce
+         (fn [{:keys [params opt-st losses rk]} i]
+           (let [[step-key next-key] (rng/split-or-nils rk)
+                 {:keys [loss grad]} (loss-grad-fn params step-key)
+                 ;; Break lazy graph — prevents accumulation across iterations
+                 _ (mx/materialize! loss grad)
+                 loss-val (mx/item loss)
+                 [new-params new-opt-st]
+                 (case optimizer
+                   :sgd [(sgd-step params grad lr) nil]
+                   :adam (adam-step params grad opt-st {:lr lr})
+                   (throw (ex-info "Unknown optimizer" {:optimizer optimizer})))]
+             (when callback
+               (callback {:iter i :loss loss-val :params new-params}))
+             ;; Periodic resource cleanup — critical for models with large
+             ;; computation graphs (e.g. Kalman filters, temporal models)
+             (when (zero? (mod i 10))
+               (mx/clear-cache!)
+               (mx/sweep-dead-arrays!))
+             {:params new-params :opt-st new-opt-st
+              :losses (conj! losses loss-val) :rk next-key}))
+         {:params init-params :opt-st opt-state
+          :losses (transient []) :rk key}
+         (range iterations))]
+    {:params params :loss-history (persistent! losses)}))
 
 ;; ---------------------------------------------------------------------------
 ;; Param-store integration with GFI
@@ -309,42 +310,43 @@
         wake-loss-fn (wake-phase-loss model guide args observations guide-addresses)
         sleep-loss-fn (sleep-phase-loss model guide args guide-addresses)
         opt-state (adam-init init-guide-params)]
-    (loop [i 0 params init-guide-params
-           opt-st opt-state
-           wake-losses (transient [])
-           sleep-losses (transient [])
-           rk key]
-      (if (>= i iterations)
-        {:params params
-         :wake-losses (persistent! wake-losses)
-         :sleep-losses (persistent! sleep-losses)}
-        (let [[wake-key sleep-key next-key] (rng/split-n-or-nils rk 3)
-              ;; Wake phase
-              [params' opt-st' wl]
-              (loop [j 0 p params os opt-st losses [] wk wake-key]
-                (if (>= j wake-steps)
-                  [p os losses]
-                  (let [[wk1 wk2] (rng/split-or-nils wk)
-                        {:keys [loss grad]} (wake-loss-fn p wk1)
-                        ;; Break lazy graph per wake step
-                        _ (mx/materialize! loss grad)
-                        [p' os'] (adam-step p grad os {:lr lr})]
-                    (recur (inc j) p' os' (conj losses (mx/item loss)) wk2))))
-              ;; Sleep phase
-              [params'' opt-st'' sl]
-              (loop [j 0 p params' os opt-st' losses [] sk sleep-key]
-                (if (>= j sleep-steps)
-                  [p os losses]
-                  (let [[sk1 sk2] (rng/split-or-nils sk)
-                        {:keys [loss grad]} (sleep-loss-fn p sk1)
-                        ;; Break lazy graph per sleep step
-                        _ (mx/materialize! loss grad)
-                        [p' os'] (adam-step p grad os {:lr lr})]
-                    (recur (inc j) p' os' (conj losses (mx/item loss)) sk2))))]
-          (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
-          (when callback
-            (callback {:iter i :wake-loss (last wl) :sleep-loss (last sl)}))
-          (recur (inc i) params'' opt-st''
-                 (reduce conj! wake-losses wl)
-                 (reduce conj! sleep-losses sl)
-                 next-key))))))
+    (let [{:keys [params wake-losses sleep-losses]}
+          (reduce
+           (fn [{:keys [params opt-st wake-losses sleep-losses rk]} i]
+             (let [[wake-key sleep-key next-key] (rng/split-n-or-nils rk 3)
+                   ;; Wake phase
+                   [params' opt-st' wl]
+                   (reduce (fn [[p os losses wk] _j]
+                             (let [[wk1 wk2] (rng/split-or-nils wk)
+                                   {:keys [loss grad]} (wake-loss-fn p wk1)
+                                   ;; Break lazy graph per wake step
+                                   _ (mx/materialize! loss grad)
+                                   [p' os'] (adam-step p grad os {:lr lr})]
+                               [p' os' (conj losses (mx/item loss)) wk2]))
+                           [params opt-st [] wake-key]
+                           (range wake-steps))
+                   ;; Sleep phase
+                   [params'' opt-st'' sl]
+                   (reduce (fn [[p os losses sk] _j]
+                             (let [[sk1 sk2] (rng/split-or-nils sk)
+                                   {:keys [loss grad]} (sleep-loss-fn p sk1)
+                                   ;; Break lazy graph per sleep step
+                                   _ (mx/materialize! loss grad)
+                                   [p' os'] (adam-step p grad os {:lr lr})]
+                               [p' os' (conj losses (mx/item loss)) sk2]))
+                           [params' opt-st' [] sleep-key]
+                           (range sleep-steps))]
+               (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+               (when callback
+                 (callback {:iter i :wake-loss (last wl) :sleep-loss (last sl)}))
+               {:params params'' :opt-st opt-st''
+                :wake-losses (reduce conj! wake-losses wl)
+                :sleep-losses (reduce conj! sleep-losses sl)
+                :rk next-key}))
+           {:params init-guide-params :opt-st opt-state
+            :wake-losses (transient []) :sleep-losses (transient [])
+            :rk key}
+           (range iterations))]
+      {:params params
+       :wake-losses (persistent! wake-losses)
+       :sleep-losses (persistent! sleep-losses)})))

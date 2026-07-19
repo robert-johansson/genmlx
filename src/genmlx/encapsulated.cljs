@@ -426,31 +426,32 @@
         [k0 rk0] (rng/split rk)
         init-trace (:trace (p/generate (keyed k0) [(mx/scalar (double theta0))] obs))
         n-total (+ burn samples)]
-    (loop [cur-trace init-trace
-           theta theta0
-           i 0
-           rk rk0
-           acc (transient [])
-           n-acc 0]
-      (if (>= i n-total)
-        {:samples (persistent! acc)
-         :accept-rate (/ n-acc (double n-total))}
-        (let [[k-prop k-move k-acc rk'] (rng/split-n rk 4)
-              ;; Random-walk proposal theta' = theta + step * N(0,1).
-              theta' (+ theta (* step (mx/item (rng/normal k-prop []))))
-              ;; Pseudo-marginal move: change the arg theta→theta', redraw omega.
-              ;; weight = logxi'(theta') − logxi_old (the stored auxiliary).
-              {prop-trace :trace weight :weight}
-              (p/update-with-args (keyed k-move) cur-trace
-                                  [(mx/scalar theta')] :unknown cm/EMPTY)
-              log-alpha (+ (mx/item weight)
-                           (- (log-prior theta') (log-prior theta)))
-              u (mx/item (rng/uniform k-acc []))
-              accept? (< (js/Math.log u) log-alpha)
-              ;; On reject KEEP the old trace (with its stored old xi); on accept
-              ;; carry the proposed trace forward (its xi' becomes the next aux).
-              next-trace (if accept? prop-trace cur-trace)
-              next-theta (if accept? theta' theta)]
-          (recur next-trace next-theta (inc i) rk'
-                 (if (>= i burn) (conj! acc next-theta) acc)
-                 (+ n-acc (if accept? 1 0))))))))
+    (let [{:keys [acc n-acc]}
+          (reduce
+           (fn [{:keys [cur-trace theta rk acc n-acc]} i]
+             (let [[k-prop k-move k-acc rk'] (rng/split-n rk 4)
+                   ;; Random-walk proposal theta' = theta + step * N(0,1).
+                   theta' (+ theta (* step (mx/item (rng/normal k-prop []))))
+                   ;; Pseudo-marginal move: change the arg theta→theta', redraw omega.
+                   ;; weight = logxi'(theta') − logxi_old (the stored auxiliary).
+                   {prop-trace :trace weight :weight}
+                   (p/update-with-args (keyed k-move) cur-trace
+                                       [(mx/scalar theta')] :unknown cm/EMPTY)
+                   log-alpha (+ (mx/item weight)
+                                (- (log-prior theta') (log-prior theta)))
+                   u (mx/item (rng/uniform k-acc []))
+                   accept? (< (js/Math.log u) log-alpha)
+                   ;; On reject KEEP the old trace (with its stored old xi); on accept
+                   ;; carry the proposed trace forward (its xi' becomes the next aux).
+                   next-trace (if accept? prop-trace cur-trace)
+                   next-theta (if accept? theta' theta)]
+               {:cur-trace next-trace
+                :theta next-theta
+                :rk rk'
+                :acc (if (>= i burn) (conj! acc next-theta) acc)
+                :n-acc (+ n-acc (if accept? 1 0))}))
+           {:cur-trace init-trace :theta theta0 :rk rk0
+            :acc (transient []) :n-acc 0}
+           (range n-total))]
+      {:samples (persistent! acc)
+       :accept-rate (/ n-acc (double n-total))})))
