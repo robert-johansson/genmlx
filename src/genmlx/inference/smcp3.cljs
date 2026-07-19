@@ -220,9 +220,9 @@
         ;; returns deterministic posterior means, collapsing particle
         ;; diversity to N identical particles on L3 models.
         model (-> model dyn/auto-key smc/strip-analytical)
-        forward-kernel (when forward-kernel (dyn/auto-key forward-kernel))
-        backward-kernel (when backward-kernel (dyn/auto-key backward-kernel))
-        init-proposal (when init-proposal (dyn/auto-key init-proposal))
+        forward-kernel (some-> forward-kernel dyn/auto-key)
+        backward-kernel (some-> backward-kernel dyn/auto-key)
+        init-proposal (some-> init-proposal dyn/auto-key)
         obs-vec (vec observations-seq)
         n-steps (count obs-vec)]
     (loop [t 0

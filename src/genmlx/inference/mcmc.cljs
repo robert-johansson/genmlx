@@ -128,7 +128,7 @@
   ([current-trace model proposal-gf backward-gf key]
    (let [model (dyn/auto-key model)
          proposal-gf (dyn/auto-key proposal-gf)
-         backward-gf (when backward-gf (dyn/auto-key backward-gf))
+         backward-gf (some-> backward-gf dyn/auto-key)
          current-trace (ensure-joint-trace model current-trace)
          [k1 k2 k3] (rng/split-n (rng/ensure-key key) 3)
          ;; 1. Run propose on the proposal GF → forward choices + forward score.
@@ -203,6 +203,27 @@
         accept? (u/accept-mh? log-alpha accept-key)]
     {:state (if accept? proposal params) :accepted? accept?}))
 
+(defn- noise-row
+  "Row i of a pre-generated [K,...]-shaped noise/momentum/uniforms stack,
+   reshaped to `shape`. Pure lazy-graph slice — the per-step row extraction
+   shared by every fused chain builder."
+  [noise i shape]
+  (mx/reshape (mx/take-idx noise (mx/array [i] mx/int32) 0) shape))
+
+(defn- mh-transition
+  "One random-walk MH accept/reject on flat [D] params (pure lazy-graph ops).
+   Proposes p + proposal-std*row, scores both, accepts where
+   log-alpha > log(uniforms[i]). Returns [new-p accept-mask]; accept-mask is
+   the lazy boolean node (consumed by callers that count acceptances)."
+  [score-fn proposal-std p row uniforms i]
+  (let [proposal (mx/add p (mx/multiply proposal-std row))
+        s-cur (score-fn p)
+        s-prop (score-fn proposal)
+        log-alpha (mx/subtract s-prop s-cur)
+        log-u (mx/log (mx/index uniforms i))
+        accept-mask (mx/greater log-alpha log-u)]
+    [(mx/where accept-mask proposal p) accept-mask]))
+
 (defn- make-compiled-chain
   "Build a compiled K-step MH chain as one fused lazy-graph evaluation.
    Returns compiled fn: (params [D], noise [K,D], uniforms [K]) → params [D].
@@ -212,18 +233,11 @@
         (fn [params noise-2d uniforms-1d]
           (loop [p params, i 0]
             (if (>= i k-steps) p
-                (let [row (mx/reshape
-                           (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
-                           [n-params])
-                      proposal (mx/add p (mx/multiply proposal-std row))
-                      s-cur (score-fn p)
-                      s-prop (score-fn proposal)
-                      log-alpha (mx/subtract s-prop s-cur)
-                      log-u (mx/log (mx/index uniforms-1d i))
-                      accept? (mx/greater log-alpha log-u)]
-                  (recur (mx/where accept? proposal p) (inc i))))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
+                (let [row (noise-row noise-2d i [n-params])
+                      [new-p _] (mh-transition score-fn proposal-std p
+                                               row uniforms-1d i)]
+                  (recur new-p (inc i))))))]
+    (mx/compile-fn chain-fn)))
 
 (defn- pre-generate-chain-noise
   "Generate all noise for a complete MH chain upfront.
@@ -310,23 +324,26 @@
         (fn [params noise uniforms]
           (loop [p params, i 0]
             (if (>= i n-burn) p
-                (let [row (mx/reshape
-                           (mx/take-idx noise (mx/array [i] mx/int32) 0)
-                           [n-params])
-                      proposal (mx/add p (mx/multiply proposal-std row))
-                      s-cur (score-fn p)
-                      s-prop (score-fn proposal)
-                      log-alpha (mx/subtract s-prop s-cur)
-                      log-u (mx/log (mx/index uniforms i))
-                      accept? (mx/greater log-alpha log-u)]
-                  (recur (mx/where accept? proposal p) (inc i))))))
-        compiled (mx/compile-fn burn-fn)]
-    compiled))
+                (let [row (noise-row noise i [n-params])
+                      [new-p _] (mh-transition score-fn proposal-std p
+                                               row uniforms i)]
+                  (recur new-p (inc i))))))]
+    (mx/compile-fn burn-fn)))
 
 (def ^:private ^:const fused-step-limit
   "Maximum steps per fused compiled function. Beyond this, use block-based fusion.
    Determined empirically: ~11K steps is OOM ceiling for D=3; 5K is safe."
   5000)
+
+(def ^:private ^:const sweep-cadence
+  "Iterations between mx/sweep-dead-arrays! + clear-cache! in the vectorized
+   per-step loops. Memory housekeeping cadence only — never affects results."
+  50)
+
+(def ^:private ^:const max-bracket-iters
+  "Iteration cap for the step-size doubling/halving searches and the
+   elliptical-slice shrink loop — bounds pathological non-termination."
+  100)
 
 (defn- run-fused-burn-in
   "Run burn-in using fused compiled functions with pre-generated noise.
@@ -372,16 +389,9 @@
                  samples (mx/zeros [n-samples n-params])]
             (if (>= i total-steps)
               samples
-              (let [row (mx/reshape
-                         (mx/take-idx noise (mx/array [i] mx/int32) 0)
-                         [n-params])
-                    proposal (mx/add p (mx/multiply proposal-std row))
-                    s-cur (score-fn p)
-                    s-prop (score-fn proposal)
-                    log-alpha (mx/subtract s-prop s-cur)
-                    log-u (mx/log (mx/index uniforms i))
-                    accept? (mx/greater log-alpha log-u)
-                    new-p (mx/where accept? proposal p)
+              (let [row (noise-row noise i [n-params])
+                    [new-p _] (mh-transition score-fn proposal-std p
+                                             row uniforms i)
                     ;; Record every thin steps (host-side decision). Records at
                     ;; i=0 of the phase, so the first kept sample sits 1 step
                     ;; past burn-in — a spacing off-by-one at the boundary
@@ -395,9 +405,8 @@
                     new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
-                (recur new-p (inc i) new-count new-samples)))))
-        compiled (mx/compile-fn collect-fn)]
-    compiled))
+                (recur new-p (inc i) new-count new-samples)))))]
+    (mx/compile-fn collect-fn)))
 
 (defn- make-fused-burn-and-collect
   "Compile a single function for burn-in + thinned collection.
@@ -414,17 +423,10 @@
                  accept-count (mx/scalar 0.0)]
             (if (>= i total-steps)
               #js [p samples accept-count]
-              (let [row (mx/reshape
-                         (mx/take-idx noise (mx/array [i] mx/int32) 0)
-                         [n-params])
-                    proposal (mx/add p (mx/multiply proposal-std row))
-                    s-cur (score-fn p)
-                    s-prop (score-fn proposal)
-                    log-alpha (mx/subtract s-prop s-cur)
-                    log-u (mx/log (mx/index uniforms i))
-                    accept? (mx/greater log-alpha log-u)
-                    new-p (mx/where accept? proposal p)
-                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
+              (let [row (noise-row noise i [n-params])
+                    [new-p accept-mask] (mh-transition score-fn proposal-std p
+                                                       row uniforms i)
+                    new-accept-count (mx/add accept-count (mx/astype accept-mask mx/float32))
                     ;; After burn-in, record every thin steps
                     past-burn? (>= i n-burn)
                     record? (and past-burn? (zero? (mod (- i n-burn) thin)))
@@ -435,9 +437,8 @@
                     new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
-                (recur new-p (inc i) new-count new-samples new-accept-count)))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
+                (recur new-p (inc i) new-count new-samples new-accept-count)))))]
+    (mx/compile-fn chain-fn)))
 
 (defn- make-compiled-trajectory
   "Build a compiled K-step MH chain that returns the FULL trajectory [K,D].
@@ -450,19 +451,11 @@
           (loop [p params, i 0, traj []]
             (if (>= i k-steps)
               (mx/stack traj)
-              (let [row (mx/reshape
-                         (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
-                         [n-params])
-                    proposal (mx/add p (mx/multiply proposal-std row))
-                    s-cur (score-fn p)
-                    s-prop (score-fn proposal)
-                    log-alpha (mx/subtract s-prop s-cur)
-                    log-u (mx/log (mx/index uniforms-1d i))
-                    accept? (mx/greater log-alpha log-u)
-                    p' (mx/where accept? proposal p)]
-                (recur p' (inc i) (conj traj p'))))))
-        compiled (mx/compile-fn traj-fn)]
-    compiled))
+              (let [row (noise-row noise-2d i [n-params])
+                    [p' _] (mh-transition score-fn proposal-std p
+                                          row uniforms-1d i)]
+                (recur p' (inc i) (conj traj p'))))))]
+    (mx/compile-fn traj-fn)))
 
 (defn- eager-mh-step
   "One eager MH step using pre-generated noise and uniform.
@@ -493,7 +486,7 @@
             rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
             [params rk]
-            (if (and burn-chain (> burn 0))
+            (if (and burn-chain (pos? burn))
               (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
                 (run-blocks n-blocks [init-params rk]
                   (fn [[p rk] _]
@@ -617,7 +610,7 @@
              {:keys [score-fn init-params n-params]}
              (u/prepare-mcmc-score model args observations addresses trace)
              raw-score-fn score-fn
-             score-fn (if compile? (mx/compile-fn raw-score-fn) raw-score-fn)
+             score-fn (cond-> raw-score-fn compile? mx/compile-fn)
              std (mx/scalar proposal-std)]
          (if compile?
          ;; Compiled path: fused or block-based burn-in + trajectory collection
@@ -625,12 +618,12 @@
            (let [;; Burn-in: fused (one dispatch) or block-based
                  [burn-key collect-key] (rng/split (rng/ensure-key key))
                  init-after-burn
-                 (if (and fuse-burn-in? (> burn 0))
+                 (if (and fuse-burn-in? (pos? burn))
                    (run-fused-burn-in burn init-params n-params raw-score-fn std burn-key)
                    init-params)
                  ;; Collection chains (same as before)
                  burn-block (min (max burn 1) block-size)
-                 burn-chain (when (and (not fuse-burn-in?) (> burn 0))
+                 burn-chain (when (and (not fuse-burn-in?) (pos? burn))
                               (make-compiled-chain burn-block raw-score-fn std n-params))
                  thin-chain (when (> thin 1)
                               (make-compiled-chain thin raw-score-fn std n-params))
@@ -736,11 +729,10 @@
                   std (mx/scalar proposal-std)
                   rk (rng/ensure-key key)
                   {:keys [noise uniforms]} (pre-generate-chain-noise rk total-steps n-params)
-                  cfn (if chain-fn
-                        chain-fn
-                        (safe-compile-chain
-                         #(make-fused-burn-and-collect burn samples thin score-fn std n-params)
-                         "fused-mh" total-steps))
+                  cfn (or chain-fn
+                          (safe-compile-chain
+                           #(make-fused-burn-and-collect burn samples thin score-fn std n-params)
+                           "fused-mh" total-steps))
                   result (cfn init-params noise uniforms)]
               (validate-compiled-result result "fused-mh" total-steps)
               (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
@@ -879,7 +871,7 @@
              (let [[step-key next-key] (rng/split-or-nils rk)
                    {:keys [state n-accepted]} (vectorized-mh-step
                                                state score-fn std param-shape n-chains step-key)
-                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+                   _ (when (zero? (mod i sweep-cadence)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -894,6 +886,21 @@
 ;; Vectorized Compiled Trajectory MH (N chains × K steps per dispatch)
 ;; ---------------------------------------------------------------------------
 
+(defn- vectorized-mh-transition
+  "One random-walk MH accept/reject on [N,D] params, per chain (pure
+   lazy-graph ops). Slices the step-i noise/uniform rows, proposes, scores
+   ([N]-shaped), and selects per chain via the [N,1]-expanded mask.
+   Returns [new-p accept-mask]; accept-mask is the lazy [N] boolean node."
+  [score-fn proposal-std p noise uniforms i n-chains n-params]
+  (let [row (noise-row noise i [n-chains n-params])
+        proposal (mx/add p (mx/multiply proposal-std row))
+        s-cur (score-fn p)
+        s-prop (score-fn proposal)
+        log-alpha (mx/subtract s-prop s-cur)
+        log-u (mx/log (noise-row uniforms i [n-chains]))
+        accept-mask (mx/greater log-alpha log-u)]
+    [(mx/where (mx/expand-dims accept-mask 1) proposal p) accept-mask]))
+
 (defn- make-vectorized-compiled-trajectory
   "Build a compiled K-step MH trajectory for [N,D]-shaped params.
    Returns compiled fn: (params [N,D], noise [K,N,D], uniforms [K,N]) → [K,N,D]."
@@ -903,22 +910,11 @@
           (loop [p params, i 0, traj []]
             (if (>= i k-steps)
               (mx/stack traj)
-              (let [row (mx/reshape
-                         (mx/take-idx noise-3d (mx/array [i] mx/int32) 0)
-                         [n-chains n-params])
-                    proposal (mx/add p (mx/multiply proposal-std row))
-                    s-cur (score-fn p)
-                    s-prop (score-fn proposal)
-                    log-alpha (mx/subtract s-prop s-cur)
-                    u-row (mx/reshape
-                           (mx/take-idx uniforms-2d (mx/array [i] mx/int32) 0)
-                           [n-chains])
-                    log-u (mx/log u-row)
-                    accept? (mx/greater log-alpha log-u)
-                    p' (mx/where (mx/expand-dims accept? 1) proposal p)]
-                (recur p' (inc i) (conj traj p'))))))
-        compiled (mx/compile-fn traj-fn)]
-    compiled))
+              (let [[p' _] (vectorized-mh-transition
+                            score-fn proposal-std p noise-3d uniforms-2d i
+                            n-chains n-params)]
+                (recur p' (inc i) (conj traj p'))))))]
+    (mx/compile-fn traj-fn)))
 
 (defn vectorized-compiled-trajectory-mh
   "Vectorized compiled trajectory MH: N parallel chains with K steps per
@@ -962,7 +958,7 @@
 
               ;; Phase 1: Burn-in — run trajectory blocks, keep only final state
               [params rk]
-              (if (> burn 0)
+              (if (pos? burn)
                 (let [n-burn-blocks (js/Math.ceil (/ burn k))]
                   (run-blocks n-burn-blocks [init-params rk]
                     (fn [[p rk] _]
@@ -1032,22 +1028,10 @@
                  accept-count (mx/zeros [n-chains])]
             (if (>= i total-steps)
               #js [p samples accept-count]
-              (let [;; Extract noise row: [T,N,D] → [N,D]
-                    row (mx/reshape
-                         (mx/take-idx noise (mx/array [i] mx/int32) 0)
-                         [n-chains n-params])
-                    proposal (mx/add p (mx/multiply proposal-std row))
-                    s-cur (score-fn p) ;; [N]
-                    s-prop (score-fn proposal) ;; [N]
-                    log-alpha (mx/subtract s-prop s-cur) ;; [N]
-                    ;; Extract uniform row: [T,N] → [N]
-                    u-row (mx/reshape
-                           (mx/take-idx uniforms (mx/array [i] mx/int32) 0)
-                           [n-chains])
-                    log-u (mx/log u-row)
-                    accept? (mx/greater log-alpha log-u) ;; [N] boolean
-                    new-p (mx/where (mx/expand-dims accept? 1) proposal p) ;; [N,D]
-                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
+              (let [[new-p accept-mask] (vectorized-mh-transition
+                                         score-fn proposal-std p noise uniforms i
+                                         n-chains n-params)
+                    new-accept-count (mx/add accept-count (mx/astype accept-mask mx/float32))
                     ;; Record logic (host-side decision)
                     past-burn? (>= i n-burn)
                     record? (and past-burn? (zero? (mod (- i n-burn) thin)))
@@ -1059,9 +1043,8 @@
                     new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
-                (recur new-p (inc i) new-count new-samples new-accept-count)))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
+                (recur new-p (inc i) new-count new-samples new-accept-count)))))]
+    (mx/compile-fn chain-fn)))
 
 (defn fused-vectorized-mh
   "Fully fused vectorized MH: N parallel chains, burn-in + thinned collection
@@ -1106,12 +1089,11 @@
               noise (rng/normal k1 [total-steps n-chains n-params])
               uniforms (rng/uniform k2 [total-steps n-chains])
               _ (mx/materialize! noise uniforms)
-              cfn (if chain-fn
-                    chain-fn
-                    (safe-compile-chain
-                     #(make-fused-vectorized-burn-and-collect
-                       burn samples thin raw-score-fn std n-chains n-params)
-                     "fused-vectorized-mh" total-steps))
+              cfn (or chain-fn
+                      (safe-compile-chain
+                       #(make-fused-vectorized-burn-and-collect
+                         burn samples thin raw-score-fn std n-chains n-params)
+                       "fused-vectorized-mh" total-steps))
               result (cfn init-params noise uniforms)]
           (validate-compiled-result result "fused-vectorized-mh" total-steps)
           (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
@@ -1133,7 +1115,8 @@
   (let [gf (:gen-fn current-trace)
         ;; For each candidate value, compute model score
         log-scores (mapv (fn [v]
-                           (:score (:trace (p/update gf current-trace (cm/choicemap addr v)))))
+                           (-> (p/update gf current-trace (cm/choicemap addr v))
+                               :trace :score))
                          support-values)
         ;; Normalize via log-softmax
         log-scores-arr (mx/array (mapv mx/realize log-scores))
@@ -1294,10 +1277,7 @@
           (loop [q q, sq score-q, gq grad-q, i 0]
             (if (>= i k-steps)
               #js [q sq gq]
-              (let [;; Extract noise row i
-                    noise-i (mx/reshape
-                             (mx/take-idx noise-2d (mx/array [i] mx/int32) 0)
-                             [n-params])
+              (let [noise-i (noise-row noise-2d i [n-params])
                     ;; Propose: q' = q + half-eps2 * grad + eps * noise
                     q' (mx/add q (mx/multiply half-eps2 gq)
                                (mx/multiply eps noise-i))
@@ -1313,14 +1293,13 @@
                     log-alpha (mx/add (mx/subtract sq' sq)
                                       (mx/subtract log-bwd log-fwd))
                     log-u (mx/log (mx/index uniforms-1d i))
-                    accept? (mx/greater log-alpha log-u)
-                    ;; Branchless select (scalar accept? broadcasts to [D])
-                    new-q (mx/where accept? q' q)
-                    new-sq (mx/where accept? sq' sq)
-                    new-gq (mx/where accept? gq' gq)]
-                (recur new-q new-sq new-gq (inc i))))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
+                    accept-mask (mx/greater log-alpha log-u)
+                    ;; Branchless select (scalar accept-mask broadcasts to [D])
+                    new-q (mx/where accept-mask q' q)
+                    new-sq (mx/where accept-mask sq' sq)
+                    new-gq (mx/where accept-mask gq' gq)]
+                (recur new-q new-sq new-gq (inc i))))))]
+    (mx/compile-fn chain-fn)))
 
 (defn- run-loop-compiled-mala
   "Run compiled MALA with loop compilation for burn-in and collection.
@@ -1336,7 +1315,7 @@
             _ (mx/materialize! init-score init-grad)
         ;; Phase 1: Burn-in via compiled chain blocks
             [params score grad rk]
-            (if (and burn-chain (> burn 0))
+            (if (and burn-chain (pos? burn))
               (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
                 (run-blocks n-blocks [init-q init-score init-grad rk]
                   (fn [[q sq gq rk] _]
@@ -1393,6 +1372,19 @@
 ;; with optional diagonal mass matrix estimation via Welford's algorithm.
 ;; ---------------------------------------------------------------------------
 
+(defn- clamp-accept-stat
+  "Clamp an acceptance statistic to [0,1]; NaN (divergent Hamiltonian) → 0.0."
+  [x]
+  (if (js/isNaN x) 0.0 (min 1.0 x)))
+
+(defn- warmup-keys
+  "Derive [eps-key wloop-key] for adaptive warmup from the caller's :key —
+   DISJOINT from the sampling stream so warmup is reproducible under a fixed
+   key (genmlx-vv3t). nil-tolerant: [nil nil] when key is nil (unseeded)."
+  [key]
+  (let [[warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))]
+    (rng/split-or-nils warmup-key)))
+
 (defn- dual-averaging-warmup
   "Run n-warmup steps adapting step-size via dual averaging.
    step-fn: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
@@ -1430,7 +1422,7 @@
                       (fn [{:keys [state]}] [state]))
               _ (mx/clear-cache!)
               {:keys [state accept-stat]} result
-              alpha (if (js/isNaN accept-stat) 0.0 (min 1.0 accept-stat))
+              alpha (clamp-accept-stat accept-stat)
               ;; Update dual averaging statistics
               w (/ 1.0 (+ m t0))
               h-bar' (+ (* (- 1.0 w) h-bar)
@@ -1467,7 +1459,7 @@
         init-a (test-accept 1.0)
         dir (if (> init-a 0.5) 1 -1)]
     (loop [eps 1.0, i 0]
-      (if (>= i 100) eps
+      (if (>= i max-bracket-iters) eps
           (let [a (test-accept eps)]
             (if (neg? (* dir (- a 0.5)))
               eps
@@ -1487,6 +1479,23 @@
       {:state state
        :accept-stat (if accepted? 1.0 0.0)})))
 
+(defn- adapt-mala-step-size
+  "Shared MALA dual-averaging warmup (mala + fused-mala): derive warmup keys
+   disjoint from the sampling stream (genmlx-vv3t), find a reasonable initial
+   eps, run dual-averaging-warmup, and report the adapted step-size.
+   Returns {:adapted-eps eps :warmup-q q}."
+  [n-warmup target-accept init-q val-grad-compiled q-shape n-params key]
+  (let [[eps-key wloop-key] (warmup-keys key)
+        init-eps (find-reasonable-mala-epsilon
+                  init-q val-grad-compiled q-shape eps-key)
+        step-fn (make-mala-step-fn val-grad-compiled q-shape)
+        result (dual-averaging-warmup
+                n-warmup target-accept init-q step-fn
+                n-params init-eps false nil wloop-key)]
+    (println "Adapted MALA step-size:" (:step-size result))
+    {:adapted-eps (:step-size result)
+     :warmup-q (:state result)}))
+
 (defn mala
   "MALA inference using gradient information for proposals.
 
@@ -1501,15 +1510,17 @@
 
    opts: {:samples N :step-size eps :burn B :thin T :addresses [addr...]
           :compile? bool :callback fn :key prng-key :device :cpu|:gpu
-          :block-size K :adapt-step-size bool :target-accept float}
+          :block-size K :adapt-step-size bool :target-accept float
+          :warmup-steps int}
    model: generative function
    args: model arguments
    observations: choice map of observed values
    Default device: :cpu (faster for scalar parameters)."
   [{:keys [samples step-size burn thin addresses compile? callback key device
-           block-size adapt-step-size target-accept]
+           block-size adapt-step-size target-accept warmup-steps]
     :or {step-size 0.01 burn 0 thin 1 compile? true device :cpu
-         block-size 50 adapt-step-size false target-accept 0.574}}
+         block-size 50 adapt-step-size false target-accept 0.574
+         warmup-steps 200}}
    model args observations]
   (let [model (dyn/auto-key model)]
     (with-device device
@@ -1522,34 +1533,22 @@
              q-shape (mx/shape init-q)
            ;; Step-size adaptation (optional)
              {:keys [adapted-eps warmup-q]}
-             (if (and adapt-step-size (> burn 0))
-               (let [n-warmup (min burn 200)
-                     ;; Derive a warmup key DISJOINT from the sampling stream so
-                     ;; warmup is reproducible under a fixed :key (genmlx-vv3t).
-                     ;; nil-tolerant: [nil nil] when key is nil (unseeded).
-                     [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
-                     [eps-key wloop-key] (rng/split-or-nils warmup-key)
-                     init-eps (find-reasonable-mala-epsilon
-                               init-q val-grad-compiled q-shape eps-key)
-                     step-fn (make-mala-step-fn val-grad-compiled q-shape)
-                     result (dual-averaging-warmup
-                             n-warmup target-accept init-q step-fn
-                             n-params init-eps false nil wloop-key)]
-                 (println "Adapted MALA step-size:" (:step-size result))
-                 {:adapted-eps (:step-size result)
-                  :warmup-q (:state result)})
+             (if (and adapt-step-size (pos? burn))
+               (adapt-mala-step-size (min warmup-steps burn) target-accept
+                                     init-q val-grad-compiled q-shape
+                                     n-params key)
                {:adapted-eps nil :warmup-q nil})
            ;; Use adapted values if available
              final-step-size (or adapted-eps step-size)
              start-q (or warmup-q init-q)
-             remaining-burn (if warmup-q (max 0 (- burn 200)) burn)
+             remaining-burn (if warmup-q (max 0 (- burn warmup-steps)) burn)
              eps (mx/scalar final-step-size)
              half-eps2 (mx/scalar (* 0.5 final-step-size final-step-size))
              two-eps-sq (mx/scalar (* 2.0 final-step-size final-step-size))]
          (if compile?
          ;; Loop-compiled path
            (let [burn-block (min (max remaining-burn 1) block-size)
-                 burn-chain (when (> remaining-burn 0)
+                 burn-chain (when (pos? remaining-burn)
                               (make-compiled-mala-chain
                                burn-block val-grad-fn eps half-eps2 two-eps-sq n-params))
                  thin-steps (max thin 1)
@@ -1587,10 +1586,7 @@
                  accept-count (mx/scalar 0.0)]
             (if (>= i total-steps)
               #js [q sq gq samples accept-count]
-              (let [;; Extract noise row i
-                    noise-i (mx/reshape
-                             (mx/take-idx noise (mx/array [i] mx/int32) 0)
-                             [n-params])
+              (let [noise-i (noise-row noise i [n-params])
                     ;; Propose: q' = q + half-eps2 * grad + eps * noise
                     q' (mx/add q (mx/multiply half-eps2 gq)
                                (mx/multiply eps noise-i))
@@ -1606,12 +1602,12 @@
                     log-alpha (mx/add (mx/subtract sq' sq)
                                       (mx/subtract log-bwd log-fwd))
                     log-u (mx/log (mx/index uniforms i))
-                    accept? (mx/greater log-alpha log-u)
-                    ;; Branchless select (scalar accept? broadcasts to [D])
-                    new-q (mx/where accept? q' q)
-                    new-sq (mx/where accept? sq' sq)
-                    new-gq (mx/where accept? gq' gq)
-                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
+                    accept-mask (mx/greater log-alpha log-u)
+                    ;; Branchless select (scalar accept-mask broadcasts to [D])
+                    new-q (mx/where accept-mask q' q)
+                    new-sq (mx/where accept-mask sq' sq)
+                    new-gq (mx/where accept-mask gq' gq)
+                    new-accept-count (mx/add accept-count (mx/astype accept-mask mx/float32))
                     ;; After burn-in, record every thin steps
                     past-burn? (>= i n-burn)
                     record? (and past-burn? (zero? (mod (- i n-burn) thin)))
@@ -1623,9 +1619,8 @@
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-q new-sq new-gq (inc i)
-                       new-count new-samples new-accept-count)))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
+                       new-count new-samples new-accept-count)))))]
+    (mx/compile-fn chain-fn)))
 
 (defn fused-mala
   "Fully fused MALA: burn-in + thinned collection in one fused lazy-graph evaluation.
@@ -1679,20 +1674,10 @@
                   q-shape (mx/shape init-params)
                   ;; Step-size adaptation (optional)
                   {:keys [adapted-eps warmup-q]}
-                  (if (and adapt-step-size (nil? chain-fn) (> burn 0))
-                    (let [n-warmup (min warmup-steps burn)
-                          ;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
-                          [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
-                          [eps-key wloop-key] (rng/split-or-nils warmup-key)
-                          init-eps (find-reasonable-mala-epsilon
-                                    init-params val-grad-compiled q-shape eps-key)
-                          step-fn (make-mala-step-fn val-grad-compiled q-shape)
-                          result (dual-averaging-warmup
-                                  n-warmup target-accept init-params step-fn
-                                  n-params init-eps false nil wloop-key)]
-                      (println "Adapted MALA step-size:" (:step-size result))
-                      {:adapted-eps (:step-size result)
-                       :warmup-q (:state result)})
+                  (if (and adapt-step-size (nil? chain-fn) (pos? burn))
+                    (adapt-mala-step-size (min warmup-steps burn) target-accept
+                                          init-params val-grad-compiled q-shape
+                                          n-params key)
                     {:adapted-eps nil :warmup-q nil})
                   ;; Use adapted values if available
                   final-step-size (or adapted-eps step-size)
@@ -1706,13 +1691,12 @@
                   {:keys [noise uniforms]} (pre-generate-chain-noise rk remaining-total n-params)
                   [init-score init-grad] (val-grad-fn start-q)
                   _ (mx/materialize! init-score init-grad)
-                  cfn (if chain-fn
-                        chain-fn
-                        (safe-compile-chain
-                         #(make-fused-mala-burn-and-collect
-                           remaining-burn samples thin val-grad-fn
-                           eps half-eps2 two-eps-sq n-params)
-                         "fused-mala" remaining-total))
+                  cfn (or chain-fn
+                          (safe-compile-chain
+                           #(make-fused-mala-burn-and-collect
+                             remaining-burn samples thin val-grad-fn
+                             eps half-eps2 two-eps-sq n-params)
+                           "fused-mala" remaining-total))
                   result (cfn start-q init-score init-grad noise uniforms)]
               (validate-compiled-result result "fused-mala" remaining-total)
               (mx/materialize! (aget result 0) (aget result 1) (aget result 2)
@@ -1814,7 +1798,7 @@
                    {:keys [state n-accepted]}
                    (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
                                          n-chains step-key)
-                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+                   _ (when (zero? (mod i sweep-cadence)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -1941,8 +1925,7 @@
   [q neg-U-compiled grad-neg-U eps half-eps half q-shape leapfrog-steps metric key]
   (let [[momentum-key accept-key] (rng/split-or-nils key)
         ;; Sample momentum from N(0, M)
-        p0 (let [p (sample-momentum metric q-shape momentum-key)]
-             (mx/materialize! p) p)
+        p0 (doto (sample-momentum metric q-shape momentum-key) mx/materialize!)
         ;; Current Hamiltonian
         current-H (hamiltonian neg-U-compiled q p0 half metric)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
@@ -1972,40 +1955,23 @@
         (fn [q momentum-2d uniforms-1d]
           (loop [q q, k 0]
             (if (>= k k-steps) q
-                (let [;; Extract momentum row k
-                      p0 (mx/reshape
-                          (mx/take-idx momentum-2d (mx/array [k] mx/int32) 0)
-                          [n-params])
-                    ;; Current Hamiltonian: H = neg-U(q) + 0.5*sum(p²)
+                (let [p0 (noise-row momentum-2d k [n-params])
+                      ;; Current Hamiltonian: H = neg-U(q) + 0.5*sum(p²)
                       current-H (mx/add (neg-U-fn q)
                                         (mx/multiply half (mx/sum (mx/square p0))))
-                    ;; Inline fused leapfrog (L+1 grad evals instead of 2L)
-                    ;; Initial half-kick: p -= half-eps * grad(neg-U)
-                      g0 (grad-neg-U q)
-                      p1 (mx/subtract p0 (mx/multiply half-eps g0))
-                    ;; First drift: q += eps * p (identity mass)
-                      q1 (mx/add q (mx/multiply eps p1))
-                    ;; L-1 interior steps: full kick + drift
-                      [q-lf p-lf]
-                      (loop [j 1, qj q1, pj p1]
-                        (if (>= j leapfrog-steps) [qj pj]
-                            (let [gj (grad-neg-U qj)
-                                  pj (mx/subtract pj (mx/multiply eps gj))
-                                  qj (mx/add qj (mx/multiply eps pj))]
-                              (recur (inc j) qj pj))))
-                    ;; Final half-kick
-                      g-final (grad-neg-U q-lf)
-                      p-final (mx/subtract p-lf (mx/multiply half-eps g-final))
-                    ;; Proposed Hamiltonian
+                      ;; Fused leapfrog (L+1 grad evals instead of 2L;
+                      ;; identity mass — inv-mass-multiply is a no-op)
+                      [q-lf p-final] (leapfrog-trajectory-fused
+                                      grad-neg-U q p0 eps half-eps leapfrog-steps)
+                      ;; Proposed Hamiltonian
                       proposed-H (mx/add (neg-U-fn q-lf)
                                          (mx/multiply half (mx/sum (mx/square p-final))))
-                    ;; Accept/reject
+                      ;; Accept/reject
                       log-alpha (mx/subtract current-H proposed-H)
                       log-u (mx/log (mx/index uniforms-1d k))
-                      accept? (mx/greater log-alpha log-u)]
-                  (recur (mx/where accept? q-lf q) (inc k))))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
+                      accept-mask (mx/greater log-alpha log-u)]
+                  (recur (mx/where accept-mask q-lf q) (inc k))))))]
+    (mx/compile-fn chain-fn)))
 
 (defn- run-loop-compiled-hmc
   "Run compiled HMC with loop compilation for burn-in and optional thinning.
@@ -2019,7 +1985,7 @@
       (let [rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
             [params rk]
-            (if (and burn-chain (> burn 0))
+            (if (and burn-chain (pos? burn))
               (let [n-blocks (js/Math.ceil (/ burn burn-block-size))]
                 (run-blocks n-blocks [init-q rk]
                   (fn [[q rk] _]
@@ -2063,21 +2029,38 @@
   (let [half (mx/scalar 0.5)
         test-accept
         (fn [eps]
-          (let [p0 (let [p (sample-momentum metric q-shape key)] (mx/materialize! p) p)
+          (let [p0 (doto (sample-momentum metric q-shape key) mx/materialize!)
                 current-H (hamiltonian neg-U-fn q p0 half metric)
                 [q' p'] (leapfrog-step grad-neg-U q p0
                                        (mx/scalar eps) (mx/scalar (* 0.5 eps)) metric)
                 proposed-H (hamiltonian neg-U-fn q' p' half metric)
                 raw (js/Math.exp (- current-H proposed-H))]
-            (if (js/isNaN raw) 0.0 (min 1.0 raw))))
+            (clamp-accept-stat raw)))
         init-a (test-accept 1.0)
         dir (if (> init-a 0.5) 1 -1)]
     (loop [eps 1.0, i 0]
-      (if (>= i 100) eps
+      (if (>= i max-bracket-iters) eps
           (let [a (test-accept eps)]
             (if (neg? (* dir (- a 0.5)))
               eps
               (recur (* eps (js/Math.pow 2.0 dir)) (inc i))))))))
+
+(defn- make-hmc-step-fn
+  "Adapter: wraps hmc-step into the dual-averaging-warmup interface
+   (fn [q eps-val metric key] -> {:state q' :accept-stat alpha}).
+   Shared by the hmc and fused-hmc warmup phases; fused-hmc always passes a
+   nil warmup metric, so the metric argument is simply nil there."
+  [neg-U-compiled grad-neg-U q-shape leapfrog-steps]
+  (fn [q eps-val m step-key]
+    (let [eps-mx (mx/scalar eps-val)
+          half-eps-mx (mx/scalar (* 0.5 eps-val))
+          half-mx (mx/scalar 0.5)
+          {:keys [state log-accept]}
+          (hmc-step q neg-U-compiled grad-neg-U
+                    eps-mx half-eps-mx half-mx q-shape
+                    leapfrog-steps m step-key)]
+      {:state state
+       :accept-stat (clamp-accept-stat (js/Math.exp log-accept))})))
 
 (defn hmc
   "Hamiltonian Monte Carlo sampling.
@@ -2123,28 +2106,16 @@
              (u/prepare-mcmc-score model args observations addresses trace)
              neg-U (fn [q] (mx/negative (score-fn q)))
              grad-neg-U-raw (mx/grad neg-U)
-             grad-neg-U (if compile? (mx/compile-fn grad-neg-U-raw) grad-neg-U-raw)
-             neg-U-compiled (if compile? (mx/compile-fn neg-U) neg-U)
+             grad-neg-U (cond-> grad-neg-U-raw compile? mx/compile-fn)
+             neg-U-compiled (cond-> neg-U compile? mx/compile-fn)
              init-q init-params
              q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
              {:keys [adapted-eps warmup-q adapted-metric]}
-             (if (and (or adapt-step-size adapt-metric) (> burn 0))
-               (let [;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
-                     [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
-                     [eps-key wloop-key] (rng/split-or-nils warmup-key)
-                     hmc-step-fn
-                     (fn [q eps-val m step-key]
-                       (let [eps-mx (mx/scalar eps-val)
-                             half-eps-mx (mx/scalar (* 0.5 eps-val))
-                             half-mx (mx/scalar 0.5)
-                             {:keys [state log-accept]}
-                             (hmc-step q neg-U-compiled grad-neg-U
-                                       eps-mx half-eps-mx half-mx q-shape
-                                       leapfrog-steps m step-key)]
-                         {:state state
-                          :accept-stat (let [a (js/Math.exp log-accept)]
-                                         (if (js/isNaN a) 0.0 (min 1.0 a)))}))
+             (if (and (or adapt-step-size adapt-metric) (pos? burn))
+               (let [[eps-key wloop-key] (warmup-keys key)
+                     hmc-step-fn (make-hmc-step-fn neg-U-compiled grad-neg-U
+                                                   q-shape leapfrog-steps)
                      init-eps (if adapt-step-size
                                 (find-reasonable-epsilon init-q neg-U-compiled grad-neg-U
                                                          q-shape metric eps-key)
@@ -2167,7 +2138,7 @@
          (if (and compile? (nil? final-metric))
          ;; Loop-compiled path (identity mass matrix only)
            (let [burn-block (min (max remaining-burn 1) block-size)
-                 burn-chain (when (> remaining-burn 0)
+                 burn-chain (when (pos? remaining-burn)
                               (make-compiled-hmc-chain
                                burn-block neg-U grad-neg-U-raw
                                eps half-eps half n-params leapfrog-steps))
@@ -2209,39 +2180,23 @@
                  accept-count (mx/scalar 0.0)]
             (if (>= i total-steps)
               #js [q samples accept-count]
-              (let [;; Extract momentum row i
-                    p0 (mx/reshape
-                        (mx/take-idx momentum-2d (mx/array [i] mx/int32) 0)
-                        [n-params])
+              (let [p0 (noise-row momentum-2d i [n-params])
                     ;; Current Hamiltonian: H = neg-U(q) + 0.5*sum(p²)
                     current-H (mx/add (neg-U-fn q)
                                       (mx/multiply half (mx/sum (mx/square p0))))
-                    ;; Inline fused leapfrog (L+1 grad evals instead of 2L)
-                    ;; Initial half-kick: p -= half-eps * grad(neg-U)
-                    g0 (grad-neg-U q)
-                    p1 (mx/subtract p0 (mx/multiply half-eps g0))
-                    ;; First drift: q += eps * p (identity mass)
-                    q1 (mx/add q (mx/multiply eps p1))
-                    ;; L-1 interior steps: full kick + drift
-                    [q-lf p-lf]
-                    (loop [j 1, qj q1, pj p1]
-                      (if (>= j leapfrog-steps) [qj pj]
-                          (let [gj (grad-neg-U qj)
-                                pj (mx/subtract pj (mx/multiply eps gj))
-                                qj (mx/add qj (mx/multiply eps pj))]
-                            (recur (inc j) qj pj))))
-                    ;; Final half-kick
-                    g-final (grad-neg-U q-lf)
-                    p-final (mx/subtract p-lf (mx/multiply half-eps g-final))
+                    ;; Fused leapfrog (L+1 grad evals instead of 2L;
+                    ;; identity mass — inv-mass-multiply is a no-op)
+                    [q-lf p-final] (leapfrog-trajectory-fused
+                                    grad-neg-U q p0 eps half-eps leapfrog-steps)
                     ;; Proposed Hamiltonian
                     proposed-H (mx/add (neg-U-fn q-lf)
                                        (mx/multiply half (mx/sum (mx/square p-final))))
                     ;; Accept/reject
                     log-alpha (mx/subtract current-H proposed-H)
                     log-u (mx/log (mx/index uniforms-1d i))
-                    accept? (mx/greater log-alpha log-u)
-                    new-q (mx/where accept? q-lf q)
-                    new-accept-count (mx/add accept-count (mx/astype accept? mx/float32))
+                    accept-mask (mx/greater log-alpha log-u)
+                    new-q (mx/where accept-mask q-lf q)
+                    new-accept-count (mx/add accept-count (mx/astype accept-mask mx/float32))
                     ;; After burn-in, record every thin steps
                     past-burn? (>= i n-burn)
                     record? (and past-burn? (zero? (mod (- i n-burn) thin)))
@@ -2252,9 +2207,8 @@
                     new-count (if record?
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
-                (recur new-q (inc i) new-count new-samples new-accept-count)))))
-        compiled (mx/compile-fn chain-fn)]
-    compiled))
+                (recur new-q (inc i) new-count new-samples new-accept-count)))))]
+    (mx/compile-fn chain-fn)))
 
 (defn fused-hmc
   "Fully fused HMC: burn-in + thinned collection in one fused lazy-graph evaluation.
@@ -2314,26 +2268,16 @@
                   q-shape (mx/shape init-params)
                   ;; Step-size adaptation (optional)
                   {:keys [adapted-eps warmup-q]}
-                  (if (and adapt-step-size (nil? chain-fn) (> burn 0))
+                  (if (and adapt-step-size (nil? chain-fn) (pos? burn))
                     (let [n-warmup (min warmup-steps burn)
-                          ;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
-                          [warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))
-                          [eps-key wloop-key] (rng/split-or-nils warmup-key)
+                          [eps-key wloop-key] (warmup-keys key)
                           init-eps (find-reasonable-epsilon
                                     init-params neg-U-compiled grad-neg-U
                                     q-shape nil eps-key)
-                          half-mx (mx/scalar 0.5)
-                          hmc-step-fn
-                          (fn [q eps-val _m step-key]
-                            (let [eps-mx (mx/scalar eps-val)
-                                  half-eps-mx (mx/scalar (* 0.5 eps-val))
-                                  {:keys [state log-accept]}
-                                  (hmc-step q neg-U-compiled grad-neg-U
-                                            eps-mx half-eps-mx half-mx q-shape
-                                            leapfrog-steps nil step-key)]
-                              {:state state
-                               :accept-stat (let [a (js/Math.exp log-accept)]
-                                              (if (js/isNaN a) 0.0 (min 1.0 a)))}))
+                          ;; nil warmup metric — the shared adapter's metric
+                          ;; argument is always nil on this path
+                          hmc-step-fn (make-hmc-step-fn neg-U-compiled grad-neg-U
+                                                        q-shape leapfrog-steps)
                           result (dual-averaging-warmup
                                   n-warmup target-accept init-params hmc-step-fn
                                   n-params init-eps false nil wloop-key)]
@@ -2354,13 +2298,12 @@
                   momentum (rng/normal k1 [remaining-total n-params])
                   uniforms (rng/uniform k2 [remaining-total])
                   _ (mx/materialize! momentum uniforms)
-                  cfn (if chain-fn
-                        chain-fn
-                        (safe-compile-chain
-                         #(make-fused-hmc-burn-and-collect
-                           remaining-burn samples thin neg-U-fn grad-neg-U-raw
-                           eps half-eps half n-params leapfrog-steps)
-                         "fused-hmc" remaining-total))
+                  cfn (or chain-fn
+                          (safe-compile-chain
+                           #(make-fused-hmc-burn-and-collect
+                             remaining-burn samples thin neg-U-fn grad-neg-U-raw
+                             eps half-eps half n-params leapfrog-steps)
+                           "fused-hmc" remaining-total))
                   result (cfn start-q momentum uniforms)]
               (validate-compiled-result result "fused-hmc" remaining-total)
               (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
@@ -2484,7 +2427,7 @@
                    {:keys [state n-accepted]}
                    (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
                                         n-chains leapfrog-steps step-key)
-                   _ (when (zero? (mod i 50)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+                   _ (when (zero? (mod i sweep-cadence)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
                    past-burn? (>= i burn)
                    keep? (and past-burn? (zero? (mod (- i burn) thin)))]
                (when (and callback keep?)
@@ -2561,6 +2504,55 @@
            :alpha (+ (:alpha tree1) (:alpha tree2))
            :n-alpha (+ (:n-alpha tree1) (:n-alpha tree2))})))))
 
+(defn- nuts-transition
+  "One full NUTS transition: sample momentum, draw the slice variable, then
+   run the trajectory-doubling loop until U-turn/divergence or max-depth.
+   Shared verbatim by the warmup and sampling paths; the alpha bookkeeping is
+   host-float-only (no graph ops), so the sampling path simply ignores it.
+   ctx: {:neg-ld :grad :eps :half-eps :half :metric}.
+   Returns {:q' q :total-alpha a :total-n-alpha n}."
+  [ctx q q-shape max-depth key]
+  (let [[momentum-key slice-key dir-key tree-key]
+        (rng/split-n (rng/ensure-key key) 4)
+        p0 (doto (sample-momentum (:metric ctx) q-shape momentum-key)
+             mx/materialize!)
+        current-H (hamiltonian (:neg-ld ctx) q p0 (:half ctx) (:metric ctx))
+        log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key [])))
+                 (- current-H))]
+    (loop [j 0
+           q-minus q, p-minus p0
+           q-plus q, p-plus p0
+           q' q, depth-n 1, continue? true
+           total-alpha 0.0, total-n-alpha 0
+           dk dir-key, tk tree-key]
+      (if (or (not continue?) (>= j max-depth))
+        {:q' q' :total-alpha total-alpha :total-n-alpha total-n-alpha}
+        (let [[dk1 dk-next] (rng/split dk)
+              ;; ak must be disjoint from tk1: build-tree splits tk1
+              ;; internally, so re-splitting it here made the accept uniform
+              ;; reuse the tree's first key (genmlx-njaq).
+              [tk1 ak tk-next] (rng/split-n tk 3)
+              v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
+              [qs ps] (if (pos? v)
+                        [q-plus p-plus]
+                        [q-minus p-minus])
+              tree (build-tree ctx qs ps log-u v j current-H tk1)
+              accept? (and (:s' tree)
+                           (< (mx/realize (rng/uniform ak []))
+                              (/ (:n' tree) (max 1 depth-n))))
+              q'' (if accept? (:q' tree) q')
+              qm' (if (neg? v) (:q-minus tree) q-minus)
+              pm' (if (neg? v) (:p-minus tree) p-minus)
+              qp' (if (pos? v) (:q-plus tree) q-plus)
+              pp' (if (pos? v) (:p-plus tree) p-plus)
+              cont? (and (:s' tree)
+                         (compute-u-turn? qm' qp' pm' pp' (:metric ctx)))]
+          (recur (inc j) qm' pm' qp' pp' q''
+                 (+ depth-n (:n' tree)) cont?
+                 (+ total-alpha (:alpha tree))
+                 (+ total-n-alpha (:n-alpha tree))
+                 dk-next tk-next))))))
+
 (defn nuts
   "No-U-Turn Sampler (NUTS).
 
@@ -2594,17 +2586,14 @@
              {:keys [score-fn init-params n-params]}
              (u/prepare-mcmc-score model args observations addresses trace)
              neg-log-density (fn [q] (mx/negative (score-fn q)))
-             grad-neg-ld (let [g (mx/grad neg-log-density)]
-                           (if compile? (mx/compile-fn g) g))
-             neg-ld-compiled (if compile? (mx/compile-fn neg-log-density) neg-log-density)
+             grad-neg-ld (cond-> (mx/grad neg-log-density) compile? mx/compile-fn)
+             neg-ld-compiled (cond-> neg-log-density compile? mx/compile-fn)
              init-q init-params
              q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
              {:keys [adapted-eps warmup-q adapted-metric]}
-             (if (and (or adapt-step-size adapt-metric) (> burn 0))
-               (let [;; Warmup key DISJOINT from the sampling stream (genmlx-vv3t).
-                     [warmup-key-outer _sample-key] (rng/split-or-nils (rng/ensure-key key))
-                     [eps-key wloop-key] (rng/split-or-nils warmup-key-outer)
+             (if (and (or adapt-step-size adapt-metric) (pos? burn))
+               (let [[eps-key wloop-key] (warmup-keys key)
                      nuts-step-fn
                      (fn [q eps-val m step-key]
                        (let [eps-mx (mx/scalar eps-val)
@@ -2613,50 +2602,12 @@
                              local-ctx {:neg-ld neg-ld-compiled :grad grad-neg-ld
                                         :eps eps-mx :half-eps half-eps-mx
                                         :half half-mx :metric m}
-                             ;; Use the threaded warmup sub-key instead of fresh
-                             ;; entropy so warmup is reproducible (genmlx-vv3t).
-                             warmup-key (rng/ensure-key step-key)
-                             [momentum-key slice-key dir-key tree-key] (rng/split-n warmup-key 4)
-                             p0 (let [p (sample-momentum m q-shape momentum-key)] (mx/materialize! p) p)
-                             current-H (hamiltonian neg-ld-compiled q p0 half-mx m)
-                             log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key []))) (- current-H))]
-                         (loop [j 0
-                                q-minus q, p-minus p0
-                                q-plus q, p-plus p0
-                                q' q, depth-n 1, continue? true
-                                total-alpha 0.0, total-n-alpha 0
-                                dk dir-key, tk tree-key]
-                           (if (or (not continue?) (>= j max-depth))
-                             {:state q'
-                              :accept-stat (if (pos? total-n-alpha)
-                                             (/ total-alpha total-n-alpha)
-                                             0.0)}
-                             (let [[dk1 dk-next] (rng/split dk)
-                                   ;; ak must be disjoint from tk1: build-tree
-                                   ;; splits tk1 internally, so re-splitting it
-                                   ;; here made the accept uniform reuse the
-                                   ;; tree's first key (genmlx-njaq).
-                                   [tk1 ak tk-next] (rng/split-n tk 3)
-                                   v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
-                                   [qs ps] (if (pos? v)
-                                             [q-plus p-plus]
-                                             [q-minus p-minus])
-                                   tree (build-tree local-ctx qs ps log-u v j current-H tk1)
-                                   accept? (and (:s' tree)
-                                                (< (mx/realize (rng/uniform ak []))
-                                                   (/ (:n' tree) (max 1 depth-n))))
-                                   q'' (if accept? (:q' tree) q')
-                                   qm' (if (neg? v) (:q-minus tree) q-minus)
-                                   pm' (if (neg? v) (:p-minus tree) p-minus)
-                                   qp' (if (pos? v) (:q-plus tree) q-plus)
-                                   pp' (if (pos? v) (:p-plus tree) p-plus)
-                                   cont? (and (:s' tree)
-                                              (compute-u-turn? qm' qp' pm' pp' (:metric local-ctx)))]
-                               (recur (inc j) qm' pm' qp' pp' q''
-                                      (+ depth-n (:n' tree)) cont?
-                                      (+ total-alpha (:alpha tree))
-                                      (+ total-n-alpha (:n-alpha tree))
-                                      dk-next tk-next))))))
+                             {:keys [q' total-alpha total-n-alpha]}
+                             (nuts-transition local-ctx q q-shape max-depth step-key)]
+                         {:state q'
+                          :accept-stat (if (pos? total-n-alpha)
+                                         (/ total-alpha total-n-alpha)
+                                         0.0)}))
                      init-eps (if adapt-step-size
                                 (find-reasonable-epsilon init-q neg-ld-compiled grad-neg-ld
                                                          q-shape metric eps-key)
@@ -2681,41 +2632,7 @@
          (kern/collect-samples
           {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
           (fn [q step-key]
-            (let [step-key (rng/ensure-key step-key)
-                  [momentum-key slice-key dir-key tree-key]
-                  (rng/split-n step-key 4)
-                  p0 (let [p (sample-momentum final-metric q-shape momentum-key)] (mx/materialize! p) p)
-                  current-H (hamiltonian neg-ld-compiled q p0 half final-metric)
-                  log-u (+ (js/Math.log (mx/realize (rng/uniform slice-key [])))
-                           (- current-H))
-                  new-q (loop [j 0
-                               q-minus q, p-minus p0
-                               q-plus q, p-plus p0
-                               q' q, depth-n 1, continue? true
-                               dk dir-key, tk tree-key]
-                          (if (or (not continue?) (>= j max-depth))
-                            q'
-                            (let [[dk1 dk-next] (rng/split dk)
-                                  ;; ak disjoint from tk1 (see warmup loop note)
-                                  [tk1 ak tk-next] (rng/split-n tk 3)
-                                  v (if (< (mx/realize (rng/uniform dk1 [])) 0.5) -1 1)
-                                  [qs ps] (if (pos? v)
-                                            [q-plus p-plus]
-                                            [q-minus p-minus])
-                                  tree (build-tree ctx qs ps log-u v j current-H tk1)
-                                  accept? (and (:s' tree)
-                                               (< (mx/realize (rng/uniform ak []))
-                                                  (/ (:n' tree) (max 1 depth-n))))
-                                  q'' (if accept? (:q' tree) q')
-                                  qm' (if (neg? v) (:q-minus tree) q-minus)
-                                  pm' (if (neg? v) (:p-minus tree) p-minus)
-                                  qp' (if (pos? v) (:q-plus tree) q-plus)
-                                  pp' (if (pos? v) (:p-plus tree) p-plus)
-                                  cont? (and (:s' tree)
-                                             (compute-u-turn? qm' qp' pm' pp' (:metric ctx)))]
-                              (recur (inc j) qm' pm' qp' pp' q''
-                                     (+ depth-n (:n' tree)) cont?
-                                     dk-next tk-next))))]
+            (let [new-q (:q' (nuts-transition ctx q q-shape max-depth step-key))]
               {:state new-q :accepted? (not (identical? new-q q))}))
           mx/->clj
           start-q)))))
@@ -2778,9 +2695,9 @@
             new-ll (- new-score (log-prior-gaussian f' prior-std d))]
         (if (> new-ll log-y)
           trace
-          (if (>= iter 100)
+          (if (>= iter max-bracket-iters)
             current-trace
-            (let [[tmin' tmax'] (if (< theta 0) [theta tmax] [tmin theta])
+            (let [[tmin' tmax'] (if (neg? theta) [theta tmax] [tmin theta])
                   [rk1 rk2] (rng/split (rng/ensure-key rk))
                   new-theta (+ tmin' (* (- tmax' tmin') (mx/realize (rng/uniform rk1 []))))]
               (recur new-theta tmin' tmax' (inc iter) rk2))))))))
@@ -2833,7 +2750,7 @@
                  (u/prepare-mcmc-score model args observations addresses trace)
                  layout (u/compute-param-layout trace addresses)
                  val-grad-fn (mx/value-and-grad score-fn)
-                 val-grad (if compile? (mx/compile-fn val-grad-fn) val-grad-fn)
+                 val-grad (cond-> val-grad-fn compile? mx/compile-fn)
                  opt-state (when (= optimizer :adam) (learn/adam-init init-params))]
              (loop [i 0
                     params init-params
