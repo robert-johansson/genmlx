@@ -280,8 +280,18 @@
    contract is trained ⊆ base (no extra keys); the overlay loader enforces
    the same bound at serve time."
   []
-  (let [base-keys (set (keys (q3f/load-weights model-dir)))
-        ckpt-keys (set (keys (q3f/load-weights ckpt-out)))
+  ;; {:skip? (constantly true)} = names-only load: every quantized tensor
+  ;; stays packed, so the quantized MoE base's 3-D packed expert tensors
+  ;; never reach the 2-D dequantize reshape — the genmlx-vjsp reopen was
+  ;; THIS call dequantizing the base, not the trained-save remap. Dropping
+  ;; .scales/.biases afterwards yields exactly the keyset a real dequantize
+  ;; produces (each .weight kept, sidecars folded), so dense-quantized
+  ;; exact-parity semantics are unchanged — without unpacking a single
+  ;; tensor.
+  (let [dequant-names (fn [ks] (remove #(or (str/ends-with? % ".scales")
+                                            (str/ends-with? % ".biases")) ks))
+        base-keys (set (dequant-names (keys (q3f/load-weights model-dir {:skip? (constantly true)}))))
+        ckpt-keys (set (dequant-names (keys (q3f/load-weights ckpt-out {:skip? (constantly true)}))))
         missing   (sort (cset/difference base-keys ckpt-keys))
         extra     (sort (cset/difference ckpt-keys base-keys))]
     (println (str "  keyset " (if moe? "subset (partial save)" "parity")
@@ -391,7 +401,9 @@
                                                (+ (.-length ids) (* 6 (count pr)))))
                                            prompts))]
                        (let [kept (into [] (comp (filter (fn [[_ c]] (<= c max-prompt-tokens)))
-                                                 (map first))
+                                                 ;; carry the measured count on prompt
+                                                 ;; meta so the step metrics can log it
+                                                 (map (fn [[p c]] (vary-meta p assoc :prompt-tokens c))))
                                         (map vector prompts counts))]
                          (println (str "  prompt cap " max-prompt-tokens " tokens: kept "
                                        (count kept) "/" (count prompts)
@@ -426,6 +438,7 @@
                               {:step i :prompt-index pidx
                                :session-id (:session-id prov)
                                :turn-index (:turn-index prov)
+                               :prompt-tokens (:prompt-tokens (meta prompt))
                                :reward-mean (:reward-mean r)
                                :reward-std (:reward-std r)
                                :loss (:loss r)
@@ -433,7 +446,11 @@
                                :rewards (:rewards r)
                                :total-tokens (:total-tokens r)
                                :generation-ms (:generation-ms r)
-                               :training-ms (:training-ms r)})
+                               :training-ms (:training-ms r)
+                               ;; genmlx-pnaw post-mortem fields: the night
+                               ;; JSONL previously had no memory signal at all
+                               :peak-memory-mb (:peak-memory-mb r)
+                               :active-memory-mb (:active-memory-mb r)})
                              ;; genmlx-pnaw: per-step collection trigger — the
                              ;; step boundary retained ~21GB at group 4 (qwen
                              ;; smoke: recovery 68GB vs 89GB baseline) and the

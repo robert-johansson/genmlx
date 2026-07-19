@@ -254,6 +254,14 @@
           (= k "final_norm.weight")
           (assoc! m (str pfx "norm.weight") v)
 
+          ;; HF scopes lm_head OUTSIDE model.: language_model.lm_head.weight.
+          ;; The generic prefix branch put it under language_model.model.,
+          ;; which no base checkpoint contains — caught by the vjsp keyset
+          ;; check on the first real 35B partial save (tied-embedding saves
+          ;; ship no lm_head tensor, so the 0.8b path never hit this).
+          (= k "lm_head.weight")
+          (assoc! m "language_model.lm_head.weight" v)
+
           (str/ends-with? k ".in_proj_qkvz.weight")
           (let [base (subs k 0 (- (count k) (count "qkvz.weight")))
                 n    (first (mx/shape v))]
