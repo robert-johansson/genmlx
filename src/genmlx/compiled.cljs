@@ -774,6 +774,8 @@
 
 ;; Aliases
 (def noise-transforms-full
+  "The noise-transform registry consumers dispatch on: `noise-transforms`
+   plus the :normal/:flip aliases."
   (assoc noise-transforms
          :normal (:gaussian noise-transforms)
          :flip (:bernoulli noise-transforms)))

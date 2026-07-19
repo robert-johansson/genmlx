@@ -244,7 +244,10 @@
 ;; VLM prefill: expand pads, merge features into embeds, M-RoPE positions
 ;; ----------------------------------------------------------------------------
 
-(def image-token-id 248056)
+(def image-token-id
+  "Native <|image_pad|> marker id — one per image in the token stream; the
+   VLM prefill expands each to its image's merged token count."
+  248056)
 
 (defn- expand-image-pads
   "Expand each single <|image_pad|> marker to its image's merged token count

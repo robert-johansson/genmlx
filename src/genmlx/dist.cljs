@@ -167,7 +167,7 @@
         key (rng/ensure-key key)]
     (mx/add mu (mx/multiply sigma (rng/normal key [n])))))
 
-(def normal gaussian)
+(def normal "Alias for `gaussian`." gaussian)
 
 ;; ---------------------------------------------------------------------------
 ;; Uniform
@@ -1588,7 +1588,7 @@
 ;; Product distribution (re-export from dist.core)
 ;; ---------------------------------------------------------------------------
 
-(def product dc/product)
+(def product "Alias for `genmlx.dist.core/product` — product of independent component distributions." dc/product)
 
 ;; ---------------------------------------------------------------------------
 ;; Von Mises — circular distribution

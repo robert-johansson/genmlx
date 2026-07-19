@@ -102,10 +102,12 @@
 
    Requires gumbel-softmax resampling (differentiable).
 
-   make-extend: (fn [model-params] -> extend-fn)
-     Factory that builds a parameterized extend step.
-   model-params: [P] current model parameter values
-   observations-seq: seq of observation ChoiceMaps
+   kernel: compile-eligible gen-fn kernel; its :schema/:source drive
+     cops/make-smc-extend-step (throws if the kernel cannot be compiled).
+   model-params: scalar or length-1 MLX array. On this path the parameter
+     IS the initial state, broadcast across particles (genmlx-wys4); full
+     multi-param parameterization requires make-parameterized-extend.
+   observations-seq: seq of observation ChoiceMaps (one per timestep)
    opts:
      :particles — number of particles N (default 50)
      :tau — softmax temperature (default 1.0)
@@ -120,7 +122,7 @@
    2. Log-prob computations (scoring)
    3. Gumbel-softmax resampling (particle selection)
    4. LogSumExp (marginal likelihood)"
-  [kernel init-state model-params observations-seq
+  [kernel model-params observations-seq
    {:keys [particles tau key]
     :or {particles 50 tau 1.0}}]
   (let [obs-vec (vec observations-seq)
@@ -177,7 +179,7 @@
         _ (let [pshape (mx/shape (mx/ensure-array model-params))
                 psize (reduce * 1 pshape)]
             (when (> psize 1)
-              (throw (ex-info (str "compiled-smc-log-ml-gradient supports a scalar / "
+              (throw (ex-info (str "smc-log-ml-gradient supports a scalar / "
                                    "length-1 init-state param only; got param shape "
                                    (pr-str pshape) " (size " psize "). Multi-param "
                                    "parameterization requires make-parameterized-extend "

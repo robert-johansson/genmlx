@@ -166,7 +166,7 @@
   (testing "gradient of log-ML w.r.t. init-state"
     (try
       (let [result (cg/smc-log-ml-gradient
-                     lg-kernel (mx/scalar 0.0)
+                     lg-kernel
                      (mx/array [0.0])
                      smc-obs
                      {:particles 30 :tau 1.0 :key (rng/fresh-key 20)})]
@@ -184,7 +184,7 @@
     ;; broadcast_to shape error (or a silently-wrong gradient).
     (let [msg (try
                 (cg/smc-log-ml-gradient
-                  lg-kernel (mx/scalar 0.0)
+                  lg-kernel
                   (mx/array [0.0 1.0])          ; [P=2] param — unsupported
                   smc-obs
                   {:particles 30 :tau 1.0 :key (rng/fresh-key 21)})

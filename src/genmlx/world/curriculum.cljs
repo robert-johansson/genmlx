@@ -338,6 +338,7 @@
   (into {} (map-indexed (fn [i d] [(:family d) i]) family-defs)))
 
 (def family-by-key
+  "Family keyword → its template def."
   (into {} (map (juxt :family identity)) family-defs))
 
 ;; ===========================================================================

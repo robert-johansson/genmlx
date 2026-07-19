@@ -490,9 +490,9 @@
       (walk-forms acc' env' body))))
 
 (defn- handle-branching
-  ;; if/when/cond/and/or/case — walk every arg, but a trace anywhere in `scan`
-  ;; means execution is conditional, so flag :has-branches?. `scan` is the full
-  ;; arg list for everything except case, where the dispatch expr is skipped.
+  "if/when/cond/and/or/case — walk every arg, but a trace anywhere in `scan`
+   means execution is conditional, so flag :has-branches?. `scan` is the full
+   arg list for everything except case, where the dispatch expr is skipped."
   [acc env args scan]
   (cond-> (walk-forms acc env args)
     (some contains-gen-call? scan) (assoc :has-branches? true)))

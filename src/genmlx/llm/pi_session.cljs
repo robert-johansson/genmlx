@@ -285,5 +285,7 @@
       (set! (.-images o) (into-array imgs)))
     o))
 
-(defn messages->js [messages]
+(defn messages->js
+  "Message maps → native ChatMessage JS array (see `message->js`)."
+  [messages]
   (into-array (map message->js messages)))

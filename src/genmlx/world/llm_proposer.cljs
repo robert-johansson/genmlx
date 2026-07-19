@@ -48,6 +48,8 @@
 ;; ===========================================================================
 
 (def default-system
+  "The system prompt given identically to the loop and the one-shot control,
+   so the experiment measures only the feedback loop, never the prompt."
   (str
    "You are an expert ClojureScript programmer writing probabilistic models in GenMLX.\n"
    "A GenMLX model is a single ClojureScript function: a (fn [trace] ...) whose body is a\n"

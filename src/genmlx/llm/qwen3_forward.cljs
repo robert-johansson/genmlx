@@ -16,7 +16,9 @@
             [genmlx.mlx :as mx]
             ["fs" :as fs]))
 
-(defn load-config [dir]
+(defn load-config
+  "Parse `<dir>/config.json` into the keyword config map the forward uses."
+  [dir]
   (let [c (js/JSON.parse (.readFileSync fs (str dir "/config.json") "utf8"))]
     {:hidden       (.-hidden_size c)
      :n-layers     (.-num_hidden_layers c)

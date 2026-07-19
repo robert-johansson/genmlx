@@ -85,10 +85,25 @@
 
 (defn- q35? [m] (= :qwen3_5 (:impl m)))
 
-(defn forward            [m ids]            (if (q35? m) (q35/forward m ids)            (q3/forward m ids)))
-(defn next-token-logits  [m ids]            (if (q35? m) (q35/next-token-logits m ids)  (q3/next-token-logits m ids)))
-(defn init-cache         [m]                (if (q35? m) (q35/init-cache m)             (q3/init-cache m)))
-(defn prefill            [m ids]            (if (q35? m) (q35/prefill m ids)            (q3/prefill m ids)))
+(defn forward
+  "Full uncached forward over `ids` — family-dispatched; returns [T vocab] logits."
+  [m ids]
+  (if (q35? m) (q35/forward m ids) (q3/forward m ids)))
+
+(defn next-token-logits
+  "Logits for the token after `ids` (uncached single-shot) — family-dispatched."
+  [m ids]
+  (if (q35? m) (q35/next-token-logits m ids) (q3/next-token-logits m ids)))
+
+(defn init-cache
+  "Fresh empty per-layer KV cache for `m` — family-dispatched."
+  [m]
+  (if (q35? m) (q35/init-cache m) (q3/init-cache m)))
+
+(defn prefill
+  "Single-slab prefill of `ids`; returns [last-logits cache] — family-dispatched."
+  [m ids]
+  (if (q35? m) (q35/prefill m ids) (q3/prefill m ids)))
 
 (defn prefill-chunked
   "Chunked text prefill (genmlx-nwsr): q35-family only — blocks of `chunk`
@@ -102,7 +117,11 @@
    memory hazard."
   [m ids chunk]
   (if (q35? m) (q35/prefill-chunked m ids chunk) (q3/prefill m ids)))
-(defn step               [m cache offset id] (if (q35? m) (q35/step m cache offset id)  (q3/step m cache offset id)))
+(defn step
+  "One cached decode step: token `id` at absolute position `offset`; returns
+   [logits new-cache] — family-dispatched."
+  [m cache offset id]
+  (if (q35? m) (q35/step m cache offset id) (q3/step m cache offset id)))
 
 (defn forward-cached
   "Multi-token cached CONTINUATION from absolute position `offset`, threading

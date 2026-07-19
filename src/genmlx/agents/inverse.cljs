@@ -23,8 +23,8 @@
 
 (defn goal-agents
   "Build one agent per candidate goal: the agent that VALUES that goal gives it
-   `high` utility and every other goal `low`. Same grid/noise for all. Returns an
-   ordered map {goal -> agent} (agents carry :policy and :Q).
+   `high` utility and every other goal `low`. Same grid/noise for all. Returns a
+   map {goal -> agent} (agents carry :policy and :Q).
 
    `:fixed` is a map of utilities merged into EVERY hypothesis (terrain that is
    known and shared, not part of the inferred preference) — e.g. a hiking Hill

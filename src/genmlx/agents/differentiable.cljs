@@ -75,7 +75,7 @@
 (defn recover-params
   "Recover (utilities, alpha) by Adam on the action-loglik loss through the
    differentiable planner. Params = [theta-u(0..G-1), log-alpha] as one [G+1] MLX
-   array. Returns {:theta-u [G] MLX :alpha number :log-history [...]}.
+   array. Returns {:theta-u [G] MLX :alpha number :loss-history [...]}.
    Options: :iterations (300) :lr (0.05) :init-utils ([G] of 0.0) :init-log-alpha (0)
             :fixed-log-alpha (when set, alpha is held fixed and only utilities learn).
    `observations` is a seq of [state action] pairs (non-terminal states)."

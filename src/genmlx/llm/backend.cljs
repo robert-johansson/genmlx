@@ -113,7 +113,10 @@
 (defrecord CljsForwardModel [fwd cache branches])
 ;; fwd = {:config :weights :impl}; cache + branches = atoms (see above)
 
-(defn cljs-forward-model? [model] (instance? CljsForwardModel model))
+(defn cljs-forward-model?
+  "True when `model` is a GenMLX-owned CljsForwardModel (vs a native handle)."
+  [model]
+  (instance? CljsForwardModel model))
 
 ;; ---------------------------------------------------------------------------
 ;; Install guard — Tier-B LLM-forward capability probe (genmlx-91b3)

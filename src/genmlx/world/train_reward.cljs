@@ -289,6 +289,8 @@
 ;; ===========================================================================
 
 (def gaussian-mean-system-prompt
+  "System prompt for the gaussian-mean reward task: constrains replies to a
+   bare (fn [trace] ...) form."
   (str "You are a ClojureScript code generator for the GenMLX probabilistic "
        "programming system. Reply with ONLY a single (fn [trace] ...) form and "
        "nothing else — no prose, no markdown, no comments. Begin your reply with "
