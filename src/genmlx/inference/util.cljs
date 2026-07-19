@@ -42,7 +42,7 @@
                         {:genmlx/error :nan-weights
                          :n-particles (count log-weights)}))
 
-        (= lse-val js/Number.NEGATIVE_INFINITY)
+        (= lse-val ##-Inf)
         (throw (ex-info (str "all " (count log-weights) " particle log-weights are -Inf: "
                              "every particle is impossible under the constraints/observations, "
                              "so normalization and resampling are undefined (a resample would "

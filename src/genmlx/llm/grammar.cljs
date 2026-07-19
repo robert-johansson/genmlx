@@ -113,7 +113,10 @@
   [regex-str]
   (let [tree (regex-grammar (strip-anchors regex-str))]
     (when (insta/failure? tree)
-      (throw (js/Error. (str "Invalid regex: " regex-str "\n" (pr-str tree)))))
+      (throw (ex-info (str "Invalid regex: " regex-str "\n" (pr-str tree))
+                      {:genmlx/error :invalid-regex
+                       :regex regex-str
+                       :failure tree})))
     (insta/transform
       {:number     (fn [s] (js/parseInt s))
        :lit        (fn [c] [:lit c])
@@ -154,8 +157,11 @@
                      ;; endpoint ([\d-x]); reject loudly rather than
                      ;; charCodeAt-ing garbage.
                      (when (or (set? from) (set? to))
-                       (throw (js/Error.
-                               "Invalid regex: character-class escape cannot be a range endpoint")))
+                       (throw (ex-info
+                               "Invalid regex: character-class escape cannot be a range endpoint"
+                               {:genmlx/error :invalid-regex
+                                :from from
+                                :to to})))
                      (char-range from to))
        :class-body (fn [& items]
                      (reduce (fn [acc item]
@@ -427,7 +433,7 @@
 ;; Token mask computation
 ;; ============================================================
 
-(def ^:private neg-inf js/Number.NEGATIVE_INFINITY)
+(def ^:private neg-inf ##-Inf)
 
 ;; --- fast mask context (genmlx-4tcd) ---------------------------------------
 ;;

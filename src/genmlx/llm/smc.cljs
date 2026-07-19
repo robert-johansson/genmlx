@@ -509,7 +509,7 @@
    contract. WEIGHT SEMANTIC: the particle's :log-w is its TWISTED-target
    importance weight within the returned population (uniform after a final
    resample), NOT the trace score; the trace score is the model's own joint."
-  [gf max-tokens particle key]
+  [gf particle key]
   (let [constraints (reduce (fn [c [i tok]]
                               (cm/set-value c (keyword (str "t" i)) (mx/array tok)))
                             cm/EMPTY
@@ -530,7 +530,7 @@
                   (if (empty? (:tokens pt))
                     pt
                     (let [ki (rng/fresh-key (+ 7000 i))
-                          tr0 (particle->trace gf (count (:tokens pt)) pt ki)
+                          tr0 (particle->trace gf pt ki)
                           tr (loop [t tr0, k key, s 0]
                                (if (>= s steps)
                                  t

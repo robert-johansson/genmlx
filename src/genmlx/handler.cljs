@@ -497,7 +497,7 @@
           elem-trace (tr/make-trace
                       {:gen-fn gf :args elem-args
                        :choices old-choices :retval nil
-                       :score (mx/scalar 0.0)})
+                       :score ZERO})
           ;; Child's full OLD joint score, re-scored under old choices (the
           ;; elem-trace carries score 0, so it must be computed). An EMPTY-
           ;; selection regenerate retains every site (no sampling) and returns
@@ -523,7 +523,7 @@
           elem-trace (tr/make-trace
                       {:gen-fn gf :args elem-args
                        :choices old-i :retval nil
-                       :score (mx/scalar 0.0)})
+                       :score ZERO})
           {:keys [trace weight discard]} (p/update gf elem-trace c)]
       ;; The child update weight is non-fresh-score minus its constructed
       ;; old score of 0, i.e. exactly the non-fresh-score contribution the
@@ -550,7 +550,7 @@
   {:choices (cm/stack-choicemaps (mapv :choices results) mx/stack)
    :score (mx/stack (mapv :score results))
    :weight (when (some :weight results)
-             (mx/stack (mapv #(or (:weight %) (mx/scalar 0.0)) results)))
+             (mx/stack (mapv #(or (:weight %) ZERO) results)))
    :discard (when (some :discard results)
               (let [discards (mapv #(or (:discard %) cm/EMPTY) results)]
                 (if (every? #(= % cm/EMPTY) discards)

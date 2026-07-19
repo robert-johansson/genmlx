@@ -733,8 +733,8 @@
          p (mx/exp (:log-probs m))
          _ (mx/eval! p)]
      (mx/item (mx/idx p value))))
-  ([model addr value _given-kw given-addr given-value]
-   {:pre [(= _given-kw :given)]} ;; decorative :given keyword for readable call sites
+  ([model addr value given-kw given-addr given-value]
+   {:pre [(= given-kw :given)]} ;; decorative :given keyword for readable call sites
    (mx/item (mx/idx (observes model given-addr given-value addr) value))))
 
 (defn mutual-info

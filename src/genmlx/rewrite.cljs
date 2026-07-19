@@ -46,7 +46,7 @@
 
 (defrecord ConjugacyRule [family prior-addr obs-addrs]
   IRewriteRule
-  (-applicable? [this graph schema]
+  (-applicable? [_this graph _schema]
     ;; Defensive guard: a family present in the conjugacy table but absent from
     ;; the handler factory map has NO runtime elimination — applying the rule
     ;; anyway would prune a still-stochastic latent from the graph and let
@@ -56,7 +56,7 @@
     (and (some? (get auto/family->handler-factory family))
          (contains? (:nodes graph) prior-addr)
          (every? #(contains? (:nodes graph) %) obs-addrs)))
-  (-apply [this graph schema constraints]
+  (-apply [_this graph _schema _constraints]
     (let [factory (get auto/family->handler-factory family)
           handlers (factory prior-addr obs-addrs)
           graph' (prune-eliminated graph #{prior-addr})]
@@ -72,10 +72,10 @@
 
 (defrecord KalmanRule [chain]
   IRewriteRule
-  (-applicable? [this graph schema]
+  (-applicable? [_this graph _schema]
     (let [latents (:latent-addrs chain)]
       (every? #(contains? (:nodes graph) %) latents)))
-  (-apply [this graph schema constraints]
+  (-apply [_this graph _schema _constraints]
     (let [handlers (auto/make-auto-kalman-handlers chain)
           latents (set (:latent-addrs chain))
           graph' (prune-eliminated graph latents)]
@@ -91,9 +91,9 @@
 
 (defrecord RegressionRule [block]
   IRewriteRule
-  (-applicable? [this graph schema]
+  (-applicable? [_this graph _schema]
     (every? #(contains? (:nodes graph) %) (:latent-addrs block)))
-  (-apply [this graph schema constraints]
+  (-apply [_this graph _schema _constraints]
     (let [handlers (lg/make-lg-handlers block)
           latents (set (:latent-addrs block))
           graph' (prune-eliminated graph latents)]
@@ -108,12 +108,12 @@
 
 (defrecord RaoBlackwellRule [prior-addr conjugate-obs-addrs non-conjugate-children family]
   IRewriteRule
-  (-applicable? [this graph schema]
+  (-applicable? [_this graph _schema]
     (and (some? (get auto/family->handler-factory family))
          (contains? (:nodes graph) prior-addr)
          (seq conjugate-obs-addrs)
          (seq non-conjugate-children)))
-  (-apply [this graph schema constraints]
+  (-apply [_this graph _schema _constraints]
     ;; Don't eliminate the prior — replace its handler so conjugate obs
     ;; contribute marginal LL and update the prior's value to posterior mean.
     ;; NOTE: Currently returns posterior MEAN (deterministic), not a sample
@@ -225,7 +225,7 @@
             :rewrite-log      — sequence of applied rewrites (for debugging)}"
   [graph schema constraints rules]
   (reduce
-    (fn [{:keys [residual-graph handlers eliminated rewrite-log] :as acc} rule]
+    (fn [{:keys [residual-graph] :as acc} rule]
       (if (-applicable? rule residual-graph schema)
         (let [{:keys [graph' handlers eliminated description]}
               (-apply rule residual-graph schema constraints)]

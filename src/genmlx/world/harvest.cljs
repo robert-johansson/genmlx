@@ -116,8 +116,10 @@
            co-refine-sigma? noise-grid]
     :or   {strategy :greedy max-steps 6 plateau-eps 0.05 n-particles 2000
            beam-width 4 adaptive? true seed 1}}]
-  (when-not propose   (throw (js/Error. "harvest-task: :propose is required")))
-  (when-not init-spec (throw (js/Error. "harvest-task: :init-spec is required")))
+  (when-not propose   (throw (ex-info "harvest-task: :propose is required"
+                                      {:genmlx/error :missing-opt :opt :propose})))
+  (when-not init-spec (throw (ex-info "harvest-task: :init-spec is required"
+                                      {:genmlx/error :missing-opt :opt :init-spec})))
   (let [res   (case strategy
                 :greedy (syn/synthesize {:init-spec init-spec :observations observations
                                          :propose propose :max-steps max-steps
@@ -147,7 +149,8 @@
      :run-opts       extra `harvest-task` opts merged into every run (strategy, knobs)
      :on-run         optional `(fn [run idx task] ...)` called after each run (stream/persist)"
   [tasks proposer-for {:keys [init-spec-for run-opts on-run] :or {run-opts {}}}]
-  (when-not init-spec-for (throw (js/Error. "harvest-tasks: :init-spec-for is required")))
+  (when-not init-spec-for (throw (ex-info "harvest-tasks: :init-spec-for is required"
+                                          {:genmlx/error :missing-opt :opt :init-spec-for})))
   (vec
    (map-indexed
     (fn [idx task]

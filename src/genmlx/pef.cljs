@@ -927,6 +927,10 @@
               pair-names)]
     {:pass? (empty? failures) :failures failures}))
 
+;; Per-model PRNG key stride; run-pef and reproduce MUST share it (the repro
+;; contract: a failure artifact replays with the exact same derived key).
+(def ^:private key-stride 7919)
+
 (defn run-pef
   "Run the fuzz sweep. opts:
      :seed      — master seed (everything derives from it)
@@ -950,7 +954,7 @@
           (vswap! failures conj {:seed seed :idx i :profile-name (:name profile)
                                  :pair :materialize
                                  :details {:error (:materialize-error bundle)}})
-          (let [key (rng/fresh-key (+ (* seed 7919) i))]
+          (let [key (rng/fresh-key (+ (* seed key-stride) i))]
             (doseq [spec pair-specs
                     :when (and spec ((:applicable? spec) bundle))]
               (vswap! checks inc)
@@ -972,7 +976,7 @@
   (let [profile (get profiles (or profile-name :full) full-profile)
         bundle (model-for {:seed seed :idx idx :profile profile})
         spec (get pair-by-name pair)
-        key (rng/fresh-key (+ (* seed 7919) idx))]
+        key (rng/fresh-key (+ (* seed key-stride) idx))]
     (assoc (if spec
              (run-one-pair bundle spec key)
              {:pass? false :details {:unknown-pair pair}})

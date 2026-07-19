@@ -215,12 +215,14 @@
 ;; Public API: choices-only (recommended)
 ;; ---------------------------------------------------------------------------
 
+(def ^:private serialization-version 1)
+
 (defn save-choices
   "Serialize a trace's choices to a JSON string.
    Options:
      :gen-fn-id - optional string identifier for the gen-fn"
   [trace & {:keys [gen-fn-id]}]
-  (let [data (cond-> {:version 1
+  (let [data (cond-> {:version serialization-version
                       :format "genmlx-choices-v1"
                       :choices (choicemap->data (:choices trace))}
                gen-fn-id (assoc :gen-fn-id gen-fn-id))]
@@ -230,9 +232,9 @@
   "Parse a JSON string and assert it is serialization version 1."
   [json-str]
   (let [data (js->clj (js/JSON.parse json-str) :keywordize-keys true)]
-    (when (not= 1 (:version data))
+    (when (not= serialization-version (:version data))
       (throw (ex-info "Unsupported serialization version"
-                      {:expected 1 :got (:version data)})))
+                      {:expected serialization-version :got (:version data)})))
     data))
 
 (defn load-choices
@@ -263,7 +265,7 @@
      :gen-fn-id - optional string identifier for the gen-fn"
   [trace & {:keys [gen-fn-id]}]
   (let [score (:score trace)
-        data {:version 1
+        data {:version serialization-version
               :format "genmlx-trace-v1"
               :choices (choicemap->data (:choices trace))
               :args (mapv serialize-value (:args trace))

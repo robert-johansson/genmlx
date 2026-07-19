@@ -110,8 +110,8 @@
   [logprobs-f32 indices-i32]
   (let [n (.-length indices-i32)]
     (if (zero? n)
-      js/Number.NEGATIVE_INFINITY
-      (let [max-val (loop [i 0, m js/Number.NEGATIVE_INFINITY]
+      ##-Inf
+      (let [max-val (loop [i 0, m ##-Inf]
                       (if (< i n)
                         (let [v (aget logprobs-f32 (aget indices-i32 i))]
                           (recur (inc i) (if (> v m) v m)))
@@ -198,10 +198,10 @@
   (mx/eval! logits)
   (let [f32 (.toFloat32 logits)
         n (.-length f32)
-        m (loop [i 0 m js/Number.NEGATIVE_INFINITY]
+        m (loop [i 0 m ##-Inf]
             (if (< i n) (recur (inc i) (let [v (aget f32 i)] (if (> v m) v m))) m))]
-    (if (= m js/Number.NEGATIVE_INFINITY)
-      js/Number.NEGATIVE_INFINITY
+    (if (= m ##-Inf)
+      ##-Inf
       (let [s (loop [i 0 s 0.0]
                 (if (< i n) (recur (inc i) (+ s (js/Math.exp (- (aget f32 i) m)))) s))]
         (+ m (js/Math.log s))))))

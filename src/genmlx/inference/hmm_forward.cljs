@@ -156,7 +156,7 @@
    Returns dispatch map: {:hmm-latent handler, :hmm-obs handler}."
   [latent-addr log-trans]
   {:hmm-latent
-   (fn [state addr dist]
+   (fn [state addr _dist]
      (if (= addr latent-addr)
        ;; HMM predict: propagate belief through transition matrix
        (let [K (last (mx/shape log-trans))

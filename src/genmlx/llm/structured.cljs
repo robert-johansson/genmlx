@@ -29,6 +29,8 @@
             [genmlx.llm.schema-grammar :as sg]
             [promesa.core :as pr]))
 
+(def ^:private default-max-bytes 256)
+
 ;; ============================================================
 ;; Per-step constrained byte log-probabilities (pure, given logprobs)
 ;; ============================================================
@@ -36,9 +38,9 @@
 (defn- logsumexp-vals
   "logsumexp over a seq of JS numbers. -Inf for empty."
   [xs]
-  (let [m (reduce max js/Number.NEGATIVE_INFINITY xs)]
-    (if (= m js/Number.NEGATIVE_INFINITY)
-      js/Number.NEGATIVE_INFINITY
+  (let [m (reduce max ##-Inf xs)]
+    (if (= m ##-Inf)
+      ##-Inf
       (+ m (js/Math.log (reduce (fn [s x] (+ s (js/Math.exp (- x m)))) 0.0 xs))))))
 
 (defn- constrained-lp
@@ -88,7 +90,7 @@
    :trie (shared)."
   ([model-map schema prompt-ids] (sample model-map schema prompt-ids {}))
   ([model-map schema prompt-ids opts]
-   (let [max-bytes (:max-bytes opts 256)
+   (let [max-bytes (:max-bytes opts default-max-bytes)
          gf (gen-structured model-map schema opts)
          tr (p/simulate gf [prompt-ids max-bytes])]
      (merge {:trace tr} (decode-value schema tr)))))
@@ -122,7 +124,7 @@
                    [tp* lp*] (bytes/resolve-replay-step model trie trie-pos logprobs c)
                    valid (bytes/alive-byte-lps tp* lp* dfa dfa-state)]
                (if-not (contains? valid c)
-                 {:logp js/Number.NEGATIVE_INFINITY :text target
+                 {:logp ##-Inf :text target
                   :conforms? false :error :off-grammar :stuck-at i}
                  (let [lp (constrained-lp valid c)
                        next-dfa (grammar/dfa-advance dfa dfa-state c)
@@ -153,8 +155,8 @@
                   [tp* lp*] (bytes/resolve-replay-step model trie trie-pos logprobs c)
                   b-valid (bytes/alive-byte-lps tp* lp* base-dfa b-state)
                   c-valid (bytes/alive-byte-lps tp* lp* cond-dfa c-state)
-                  base'   (if (contains? b-valid c) (+ base (constrained-lp b-valid c)) js/Number.NEGATIVE_INFINITY)
-                  cond*'  (if (contains? c-valid c) (+ cond* (constrained-lp c-valid c)) js/Number.NEGATIVE_INFINITY)
+                  base'   (if (contains? b-valid c) (+ base (constrained-lp b-valid c)) ##-Inf)
+                  cond*'  (if (contains? c-valid c) (+ cond* (constrained-lp c-valid c)) ##-Inf)
                   [next-pos next-lps] (bytes/trie-advance model trie tp* lp* c true)]
               (recur (inc i) next-pos
                      (grammar/dfa-advance base-dfa b-state c)
@@ -181,7 +183,7 @@
          cond-schema (sg/constrain-schema schema partial-value)
          base-dfa    (grammar/compile-regex (sg/schema->regex schema))
          cond-dfa    (grammar/compile-regex (sg/schema->regex cond-schema))
-         max-bytes   (:max-bytes opts 256)
+         max-bytes   (:max-bytes opts default-max-bytes)
          tr          (p/simulate (gen-structured model-map cond-schema opts*) [prompt-ids max-bytes])
          text        (apply str (:retval tr))
          {base :base cond-lp :cond} (dual-density model trie prompt-ids text base-dfa cond-dfa)

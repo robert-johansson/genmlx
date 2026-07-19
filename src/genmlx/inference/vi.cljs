@@ -245,7 +245,7 @@
   "P-Wake objective: trains the model to match the guide's proposals.
    Equivalent to minimizing KL(q || p).
    Returns (fn [samples] -> MLX scalar)."
-  [log-p-fn log-q-fn]
+  [log-p-fn _log-q-fn]
   (fn [samples]
     (let [vmapped-p (mx/vmap log-p-fn)]
       ;; Maximize E_q[log p(z)] — the log-q term is constant w.r.t. model params

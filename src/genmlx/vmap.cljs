@@ -6,6 +6,7 @@
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [ZERO]]
             [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
             [genmlx.handler :as h]
@@ -148,7 +149,7 @@
 (defn- mx-sum-by
   "Sum (f r) over results, starting from a scalar-0.0 accumulator."
   [f results]
-  (reduce (fn [acc r] (mx/add acc (f r))) (mx/scalar 0.0) results))
+  (reduce (fn [acc r] (mx/add acc (f r))) ZERO results))
 
 (defn- capture-nested-meta
   "Per-element vector of each inner trace's OWN combinator metadata (nil entries
@@ -189,7 +190,7 @@
    (let [t (tr/make-trace
             {:gen-fn kernel :args args
              :choices choices :retval nil
-             :score (if element-scores (nth element-scores i) (mx/scalar 0.0))})
+             :score (if element-scores (nth element-scores i) ZERO)})
          m (when nested-meta (nth nested-meta i))]
      (if m (vary-meta t merge m) t))))
 
@@ -225,7 +226,7 @@
         ;; Fast path: run kernel body once with batched handler
         (let [key (rng/fresh-key)
               result (rt/run-handler h/batched-simulate-transition
-                                     {:choices cm/EMPTY :score (mx/scalar 0.0)
+                                     {:choices cm/EMPTY :score ZERO
                                       :key key :batch-size n :batched? true
                                       ;; Trained params live on the kernel's
                                       ;; metadata; omitting them made the fast
@@ -269,8 +270,8 @@
         ;; Fast path: batched generate with no constraints (all sites simulated)
         (let [key (rng/fresh-key)
               result (rt/run-handler h/batched-generate-transition
-                                     {:choices cm/EMPTY :score (mx/scalar 0.0)
-                                      :weight (mx/scalar 0.0)
+                                     {:choices cm/EMPTY :score ZERO
+                                      :weight ZERO
                                       :key key :constraints cm/EMPTY
                                       :batch-size n :batched? true
                                       ;; See simulate fast path (genmlx-v740).
@@ -332,8 +333,8 @@
           ;; the true total old score so both cases stay exact:
           ;; W = Σ w_i + Σ constructed_old_i - old_total.
           constructed-old (if old-element-scores
-                            (reduce mx/add (mx/scalar 0.0) old-element-scores)
-                            (mx/scalar 0.0))
+                            (reduce mx/add ZERO old-element-scores)
+                            ZERO)
           weight (mx/subtract (mx/add (mx-sum-by :weight results) constructed-old)
                               (:score trace))
           discard (let [discards (mapv :discard results)]
@@ -382,8 +383,8 @@
           ;; stripped; only a GENERAL retained-only kernel on an externally-stripped
           ;; trace (no longer produced anywhere) would mis-weight.
           constructed-old (if old-element-scores
-                            (reduce mx/add (mx/scalar 0.0) old-element-scores)
-                            (mx/scalar 0.0))
+                            (reduce mx/add ZERO old-element-scores)
+                            ZERO)
           weight (mx/subtract (mx/add (mx-sum-by :weight results) constructed-old)
                               (:score trace))
           element-scores (mapv (comp :score :trace) results)]
@@ -441,7 +442,7 @@
                                          old-element-scores i old-nested-meta)]
            (mx/add acc (p/project (:kernel this) elem-trace
                                   (extract-element-selection selection i)))))
-       (mx/scalar 0.0)
+       ZERO
        (range n)))))
 
 ;; ---------------------------------------------------------------------------

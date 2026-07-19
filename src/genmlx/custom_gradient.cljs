@@ -8,10 +8,8 @@
   (:require [genmlx.protocols :as p]
             [genmlx.trace :as tr]
             [genmlx.choicemap :as cm]
-            [genmlx.mlx :as mx]))
-
-;; Deterministic GF: score and all weights/projections are zero.
-(def ^:private ZERO (mx/scalar 0.0))
+            [genmlx.mlx :as mx]
+            [genmlx.mlx.constants :refer [ZERO]]))
 
 (defn- wrap-with-custom-grad
   "Wrap forward-fn so MLX autograd uses gradient-fn for backward pass.
@@ -51,13 +49,13 @@
                       :score ZERO})))
 
   p/IGenerate
-  (generate [this args constraints]
+  (generate [this args _constraints]
     ;; Deterministic: no stochastic choices to constrain
     {:trace (p/simulate this args)
      :weight ZERO})
 
   p/IAssess
-  (assess [this args choices]
+  (assess [this args _choices]
     {:retval (apply forward-fn args)
      :weight ZERO})
 
@@ -68,18 +66,18 @@
      :retval (apply forward-fn args)})
 
   p/IUpdate
-  (update [this trace constraints]
+  (update [this trace _constraints]
     {:trace (p/simulate this (:args trace))
      :weight ZERO
      :discard cm/EMPTY})
 
   p/IRegenerate
-  (regenerate [this trace selection]
+  (regenerate [this trace _selection]
     {:trace (p/simulate this (:args trace))
      :weight ZERO})
 
   p/IProject
-  (project [this trace selection]
+  (project [this _trace _selection]
     ZERO)
 
   p/IHasArgumentGrads

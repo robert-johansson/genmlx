@@ -252,10 +252,13 @@
    Throws with descriptive error if result is nil (Metal graph too large)."
   [result method-name total-steps]
   (when (nil? result)
-    (throw (js/Error.
+    (throw (ex-info
             (str "Fused " method-name " compilation failed: Metal graph too large for "
                  total-steps " total steps. Reduce samples/burn/thin or use the "
-                 "block-compiled version instead.")))))
+                 "block-compiled version instead.")
+            {:genmlx/error :fused-graph-too-large
+             :method method-name
+             :total-steps total-steps}))))
 
 (defn- safe-compile-chain
   "Build a fused chain function with error handling.
@@ -267,10 +270,14 @@
   (try
     (build-fn)
     (catch :default e
-      (throw (js/Error.
+      (throw (ex-info
               (str "Fused " method-name " Metal compilation failed ("
                    total-steps " total steps). " (.-message e)
-                   ". Use the block-compiled version instead."))))))
+                   ". Use the block-compiled version instead.")
+              {:genmlx/error :fused-graph-too-large
+               :method method-name
+               :total-steps total-steps}
+              e)))))
 
 (defn- run-blocks
   "Drive a block-compiled chain phase: run `n-blocks` iterations of `step`,
@@ -1077,10 +1084,14 @@
     ;; Auto-fallback: vectorized graphs are larger (N chains), so check before work
     (when (and (nil? chain-fn)
                (not (can-fuse? :mh total-steps {:tensor-native? false})))
-      (throw (js/Error.
+      (throw (ex-info
               (str "fused-vectorized-mh: chain too large for single Metal graph ("
                    total-steps " total steps x " n-chains " chains). "
-                   "Reduce samples/burn/thin or use vectorized-compiled-mh instead."))))
+                   "Reduce samples/burn/thin or use vectorized-compiled-mh instead.")
+              {:genmlx/error :fused-graph-too-large
+               :method "vectorized-mh"
+               :total-steps total-steps
+               :n-chains n-chains})))
     (with-device device
       (fn []
         (let [raw-score-fn (u/make-batched-score-fn model args observations addresses)

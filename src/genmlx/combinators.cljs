@@ -3146,17 +3146,17 @@
 
 (extend-type MaskCombinator
   p/IUpdateWithArgs
-  (update-with-args [this trace new-args argdiffs constraints]
+  (update-with-args [this _trace _new-args _argdiffs _constraints]
     (throw-update-with-args-unsupported this)))
 
 (extend-type MixCombinator
   p/IUpdateWithArgs
-  (update-with-args [this trace new-args argdiffs constraints]
+  (update-with-args [this _trace _new-args _argdiffs _constraints]
     (throw-update-with-args-unsupported this)))
 
 (extend-type RecurseCombinator
   p/IUpdateWithArgs
-  (update-with-args [this trace new-args argdiffs constraints]
+  (update-with-args [this _trace _new-args _argdiffs _constraints]
     (throw-update-with-args-unsupported this)))
 
 ;; ---------------------------------------------------------------------------

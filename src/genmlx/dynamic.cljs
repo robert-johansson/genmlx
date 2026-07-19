@@ -484,12 +484,12 @@
     {:trace (make-compiled-trace gf (:args trace) result)
      :weight weight}))
 
-(defn- run-assess-compiled [gf args key {:keys [constraints]}]
+(defn- run-assess-compiled [gf args _key {:keys [constraints]}]
   (let [cfn (:compiled-assess (:schema gf))
         r (cfn (vec args) constraints)]
     {:retval (:retval r) :weight (:score r)}))
 
-(defn- run-project-compiled [gf _args key {:keys [trace selection]}]
+(defn- run-project-compiled [gf _args _key {:keys [trace selection]}]
   (let [cfn (:compiled-project (:schema gf))]
     (cfn (vec (:args trace)) (:choices trace) selection)))
 
@@ -565,7 +565,7 @@
                          (fn [rt] (run-body gf rt args)))]
     {:retval (:retval handler-result) :weight (:score handler-result)}))
 
-(defn- run-project-prefix [gf args key {:keys [trace selection]}]
+(defn- run-project-prefix [gf _args key {:keys [trace selection]}]
   (let [pfx (:compiled-prefix-project (:schema gf))
         result (pfx (vec (:args trace)) (:choices trace) selection)
         replay (cops/make-replay-project-transition (:values result))
@@ -1753,5 +1753,5 @@
    Returns the default value as an MLX array (no param store available
    outside gen body execution). Inside gen bodies, use the param local
    binding from the gen macro instead."
-  [pname default-value]
+  [_pname default-value]
   (if (mx/array? default-value) default-value (mx/scalar default-value)))

@@ -39,7 +39,7 @@
           ;; Standard distribution with noise transform
           (let [noise-fn (:noise-fn nt)
                 transform-fn (:transform nt)]
-            (fn [{:keys [values score weight key] :as state} args-vec constraints]
+            (fn [{:keys [values score weight key]} args-vec constraints]
               (let [constraint (cm/get-submap constraints addr)]
                 (if (cm/has-value? constraint)
                   ;; Constrained: use value, score + weight, no key split
@@ -66,7 +66,7 @@
           ;; depends on dist-args, so use args-noise-fn
           (let [args-noise-fn (:args-noise-fn nt)
                 transform-fn (:transform nt)]
-            (fn [{:keys [values score weight key] :as state} args-vec constraints]
+            (fn [{:keys [values score weight key]} args-vec constraints]
               (let [constraint (cm/get-submap constraints addr)]
                 (if (cm/has-value? constraint)
                   ;; Constrained: use value, score + weight
@@ -90,7 +90,7 @@
 
           ;; Delta ONLY when the dist-type really is delta (genmlx-b210)
           (= dist-type :delta)
-          (fn [{:keys [values score weight key] :as state} args-vec constraints]
+          (fn [{:keys [values score weight key]} args-vec constraints]
             (let [constraint (cm/get-submap constraints addr)]
               (if (cm/has-value? constraint)
                 ;; Constrained delta: log-prob is 0 if value matches, -inf otherwise

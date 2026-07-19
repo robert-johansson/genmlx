@@ -26,7 +26,7 @@
    The old 2^31 space put the 50% birthday-collision point at ~65k draws —
    reachable in one long session since auto-key mints a fresh key per GFI op
    (genmlx-3hov); 2^53 moves it to ~1.1e8 draws."
-  ([] (.randomKey c (js/Math.floor (* (js/Math.random) 9007199254740991))))
+  ([] (.randomKey c (js/Math.floor (* (js/Math.random) js/Number.MAX_SAFE_INTEGER))))
   ([seed] (.randomKey c seed)))
 
 (defn valid-key?

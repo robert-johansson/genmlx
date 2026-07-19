@@ -184,7 +184,7 @@
    Runs model body ONCE for all N particles, returns mean surrogate.
    Optional baseline subtracts from the REINFORCE multiplier for variance reduction."
   [gf args cost-fn n key & [baseline]]
-  (let [{:keys [retval reinforce-lp] :as result} (vadev-execute gf args n key)
+  (let [{:keys [reinforce-lp] :as result} (vadev-execute gf args n key)
         costs (cost-fn result)
         reinforce-mult (if baseline
                          (mx/stop-gradient (mx/subtract costs baseline))

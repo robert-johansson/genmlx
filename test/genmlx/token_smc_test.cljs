@@ -158,7 +158,7 @@
       result (run-smc 31 8)]
   (assert-true "V3: every exported particle trace has assess == score (exact)"
                (every? (fn [pt]
-                         (let [tr (tsmc/particle->trace ccmodel 2 pt (rng/fresh-key 9))
+                         (let [tr (tsmc/particle->trace ccmodel pt (rng/fresh-key 9))
                                {:keys [weight]} (p/assess (dyn/with-key ccmodel (rng/fresh-key 9))
                                                           [] (:choices tr))]
                            (< (js/Math.abs (- (mx/realize (:score tr)) (mx/realize weight))) 1e-4)))

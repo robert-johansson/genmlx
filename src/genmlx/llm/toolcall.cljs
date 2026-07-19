@@ -328,7 +328,7 @@
                               (recur (inc j) :envelope "" nil nil))))))))]
           (recur (rest ts) mode tail value remaining))))))
 
-(def ^:private neg-inf (- js/Infinity))
+(def ^:private neg-inf ##-Inf)
 
 (defn- ids-mask-logits
   "Mask logits to exactly `id-arrays` (JS arrays of token ids): -inf

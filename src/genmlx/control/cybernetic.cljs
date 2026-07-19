@@ -44,9 +44,9 @@
             [genmlx.choicemap :as cm]
             [genmlx.gen :refer [gen]]))
 
-(def ^:private EPS 1e-6)
+(def ^:private eps 1e-6)
 
-(defn- clip01 [p] (-> p (max EPS) (min (- 1.0 EPS))))
+(defn- clip01 [p] (-> p (max eps) (min (- 1.0 eps))))
 
 (defn- ->num [x] (if (number? x) x (mx/item x)))
 

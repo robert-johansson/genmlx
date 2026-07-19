@@ -232,11 +232,11 @@
                       :score ZERO})))
 
   p/IGenerate
-  (generate [this args constraints]
+  (generate [this args _constraints]
     {:trace (p/simulate this args) :weight ZERO})
 
   p/IAssess
-  (assess [this args choices]
+  (assess [this args _choices]
     {:retval (run-forward layer-ref args) :weight ZERO})
 
   p/IPropose
@@ -245,18 +245,18 @@
      :retval (run-forward layer-ref args)})
 
   p/IUpdate
-  (update [this trace constraints]
+  (update [this trace _constraints]
     {:trace (p/simulate this (:args trace))
      :weight ZERO
      :discard cm/EMPTY})
 
   p/IRegenerate
-  (regenerate [this trace selection]
+  (regenerate [this trace _selection]
     {:trace (p/simulate this (:args trace))
      :weight ZERO})
 
   p/IProject
-  (project [this trace selection]
+  (project [this _trace _selection]
     ZERO)
 
   p/IHasArgumentGrads

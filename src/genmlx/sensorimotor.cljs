@@ -334,7 +334,7 @@
 
    Returns: the operation index per particle."
   (dyn/auto-key
-    (gen [t kernel-args]
+    (gen [_t kernel-args]
       (let [_percept (splice :percept (:percept-suite kernel-args)
                               [(:retina kernel-args)])
             op-idx   (trace :operation
@@ -361,7 +361,7 @@
 
    Returns: nil (orchestration extracts weight from the vtrace)."
   (dyn/auto-key
-    (gen [t kernel-args]
+    (gen [_t kernel-args]
       (let [_percept (splice :percept (:percept-suite kernel-args)
                               [(:retina kernel-args)])
             _outcome (trace :expected-consequent
