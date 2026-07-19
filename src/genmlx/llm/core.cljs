@@ -210,16 +210,17 @@
                        (if (and (some? p) (>= p 0) (< p vocab)) p eos)))
          pad-row (pad-onehot-row vocab pad)
          pad-tok (mx/scalar pad mx/int32)
+         ;; [K]-shaped (per-lane) vs [] (shared scalar) value?
+         batched? (fn [a] (pos? (count (mx/shape a))))
          ;; Site values can MIX shapes: a site constrained with a shared
          ;; scalar observation traces [], sampled sites trace [K] (and the
          ;; cache stays B=1 through a constrained prefix — the first sampled
          ;; token tiles it). Broadcast scalars up before stacking.
          stack-toks (fn [toks]
-                      (let [k    (some #(let [sh (mx/shape %)]
-                                          (when (pos? (count sh)) (first sh)))
+                      (let [k    (some #(when (batched? %) (first (mx/shape %)))
                                        toks)
                             toks (if k
-                                   (mapv #(if (pos? (count (mx/shape %)))
+                                   (mapv #(if (batched? %)
                                             % (mx/broadcast-to % [k]))
                                          toks)
                                    toks)
@@ -250,7 +251,7 @@
                          hs'  (when hook ((:advance hook) hs tok))
                          done? (or (= (inc i) max-tokens)
                                    (and check-every
-                                        (pos? (count (mx/shape tok)))
+                                        (batched? tok)
                                         (zero? (mod (inc i) check-every))
                                         (all-dead? act')))]
                      (if done?
@@ -261,7 +262,7 @@
                        (let [fed (mx/where act' tok pad-tok)]
                          (llm/sweep-tick! i sweep-every)
                          (recur (inc i)
-                                (if (pos? (count (mx/shape fed)))
+                                (if (batched? fed)
                                   (llm/forward-step-batched model fed)
                                   (llm/forward-step model (mx/item fed)))
                                 act' hs' (conj toks tok))))))

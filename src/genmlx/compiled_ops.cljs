@@ -33,60 +33,45 @@
   (let [{:keys [addr compiled-args dist-type]} site-spec
         nt (get compiled/noise-transforms-full dist-type)]
     (when nt
-      (let [log-prob-fn (:log-prob nt)]
+      (let [log-prob-fn (:log-prob nt)
+            ;; Shared constrained/sample logic for both noise sources,
+            ;; mirroring build-regenerate-site-step's make-noise-step factoring
+            ;; (genmlx-b210): the branches differ only in how noise is drawn.
+            make-noise-step
+            (fn [draw-noise]
+              (let [transform-fn (:transform nt)]
+                (fn [{:keys [values score weight key]} args-vec constraints]
+                  (let [constraint (cm/get-submap constraints addr)]
+                    (if (cm/has-value? constraint)
+                      ;; Constrained: use value, score + weight, no key split
+                      (let [value (cm/get-value constraint)
+                            eval-args (mapv #(% values args-vec) compiled-args)
+                            lp (apply log-prob-fn value eval-args)]
+                        {:values (assoc values addr value)
+                         :score (mx/add score lp)
+                         :weight (mx/add weight lp)
+                         :key key})
+                      ;; Unconstrained: sample via noise transform
+                      (let [eval-args (mapv #(% values args-vec) compiled-args)
+                            [k1 k2] (rng/split key)
+                            noise (draw-noise eval-args k2)
+                            value (apply transform-fn noise eval-args)
+                            lp (apply log-prob-fn value eval-args)]
+                        {:values (assoc values addr value)
+                         :score (mx/add score lp)
+                         :weight weight
+                         :key k1}))))))]
         (cond
           (:noise-fn nt)
           ;; Standard distribution with noise transform
-          (let [noise-fn (:noise-fn nt)
-                transform-fn (:transform nt)]
-            (fn [{:keys [values score weight key]} args-vec constraints]
-              (let [constraint (cm/get-submap constraints addr)]
-                (if (cm/has-value? constraint)
-                  ;; Constrained: use value, score + weight, no key split
-                  (let [value (cm/get-value constraint)
-                        eval-args (mapv #(% values args-vec) compiled-args)
-                        lp (apply log-prob-fn value eval-args)]
-                    {:values (assoc values addr value)
-                     :score (mx/add score lp)
-                     :weight (mx/add weight lp)
-                     :key key})
-                  ;; Unconstrained: sample via noise transform
-                  (let [eval-args (mapv #(% values args-vec) compiled-args)
-                        [k1 k2] (rng/split key)
-                        noise (noise-fn k2)
-                        value (apply transform-fn noise eval-args)
-                        lp (apply log-prob-fn value eval-args)]
-                    {:values (assoc values addr value)
-                     :score (mx/add score lp)
-                     :weight weight
-                     :key k1})))))
+          (let [noise-fn (:noise-fn nt)]
+            (make-noise-step (fn [_eval-args k] (noise-fn k))))
 
           (:args-noise-fn nt)
           ;; Dynamic-shape distribution (e.g., iid-gaussian): noise shape
           ;; depends on dist-args, so use args-noise-fn
-          (let [args-noise-fn (:args-noise-fn nt)
-                transform-fn (:transform nt)]
-            (fn [{:keys [values score weight key]} args-vec constraints]
-              (let [constraint (cm/get-submap constraints addr)]
-                (if (cm/has-value? constraint)
-                  ;; Constrained: use value, score + weight
-                  (let [value (cm/get-value constraint)
-                        eval-args (mapv #(% values args-vec) compiled-args)
-                        lp (apply log-prob-fn value eval-args)]
-                    {:values (assoc values addr value)
-                     :score (mx/add score lp)
-                     :weight (mx/add weight lp)
-                     :key key})
-                  ;; Unconstrained: sample via args-noise-fn
-                  (let [eval-args (mapv #(% values args-vec) compiled-args)
-                        [k1 k2] (rng/split key)
-                        noise (args-noise-fn eval-args k2)
-                        value (apply transform-fn noise eval-args)
-                        lp (apply log-prob-fn value eval-args)]
-                    {:values (assoc values addr value)
-                     :score (mx/add score lp)
-                     :weight weight
-                     :key k1})))))
+          (let [args-noise-fn (:args-noise-fn nt)]
+            (make-noise-step (fn [eval-args k] (args-noise-fn eval-args k))))
 
           ;; Delta ONLY when the dist-type really is delta (genmlx-b210)
           (= dist-type :delta)
@@ -124,19 +109,19 @@
       (when (and (every? some? step-fns) retval-fn)
         (fn compiled-generate [key args-vec constraints]
           (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                result
+                {:keys [values score weight]}
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args constraints))
                  {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                  step-fns)]
-            {:values (:values result)
-             :score (:score result)
-             :weight (:weight result)
+            {:values values
+             :score score
+             :weight weight
              ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
              ;; RAW args, matching M2 simulate + the handler: an arg-derived
              ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)}))))))
+             :retval (retval-fn values args-vec)}))))))
 
 (defn make-branch-rewritten-generate
   "Build a compiled generate for models with rewritable branches (L1-M4).
@@ -148,7 +133,7 @@
       (when (every? some? step-fns)
         (fn compiled-branch-generate [key args-vec constraints]
           (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                result
+                {:keys [values score weight]}
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args constraints))
@@ -159,13 +144,13 @@
             ;; Strip the reserved branch-cond bookkeeping keys so the trace
             ;; choicemap holds only real addresses (genmlx-gc4w); the simulate
             ;; path already does this via unpack-result.
-            {:values (select-keys (:values result) addrs)
-             :score (:score result)
-             :weight (:weight result)
+            {:values (select-keys values addrs)
+             :score score
+             :weight weight
              ;; retval-fn proven truthy by prepare-branch-sites
              ;; RAW args, matching M2 simulate + the handler: an arg-derived
              ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)}))))))
+             :retval (retval-fn values args-vec)}))))))
 
 (defn make-compiled-prefix-generate
   "Build a compiled prefix generate function from a gen schema and source.
@@ -186,9 +171,7 @@
                         (step-fn state mlx-args constraints))
                       {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                       step-fns)]
-                 {:values (:values result)
-                  :score (:score result)
-                  :weight (:weight result)}))
+                 (select-keys result [:values :score :weight])))
          :addrs addrs}))))
 
 (defn get-compiled-generate
@@ -244,19 +227,19 @@
       (when (and (every? some? step-fns) retval-fn)
         (fn compiled-update [key args-vec constraints old-choices]
           (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                result
+                {:keys [values score discard]}
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args constraints old-choices))
                  {:values {} :score (mx/scalar 0.0) :discard {} :key key}
                  step-fns)]
-            {:values (:values result)
-             :score (:score result)
-             :discard (:discard result)
+            {:values values
+             :score score
+             :discard discard
              ;; retval-fn proven truthy by the outer guard (every? some? + retval-fn)
              ;; RAW args, matching M2 simulate + the handler: an arg-derived
              ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)}))))))
+             :retval (retval-fn values args-vec)}))))))
 
 (defn get-compiled-update
   "Returns the compiled-update function for a gen-fn, or nil."
@@ -274,7 +257,7 @@
       (when (every? some? step-fns)
         (fn compiled-branch-update [key args-vec constraints old-choices]
           (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                result
+                {:keys [values score discard]}
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args constraints old-choices))
@@ -282,12 +265,12 @@
                   :score (mx/scalar 0.0) :discard {} :key key}
                  step-fns)]
             ;; Strip reserved branch-cond keys from the trace choicemap (genmlx-gc4w)
-            {:values (select-keys (:values result) addrs)
-             :score (:score result)
-             :discard (:discard result)
+            {:values (select-keys values addrs)
+             :score score
+             :discard discard
              ;; RAW args, matching M2 simulate + the handler: an arg-derived
              ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)}))))))
+             :retval (retval-fn values args-vec)}))))))
 
 (defn make-compiled-prefix-update
   "Build a compiled prefix update function.
@@ -304,9 +287,7 @@
                         (step-fn state mlx-args constraints old-choices))
                       {:values {} :score (mx/scalar 0.0) :discard {} :key key}
                       step-fns)]
-                 {:values (:values result)
-                  :score (:score result)
-                  :discard (:discard result)}))
+                 (select-keys result [:values :score :discard])))
          :addrs addrs}))))
 
 (defn make-replay-update-transition
@@ -355,16 +336,16 @@
       (when (and (every? some? step-fns) retval-fn)
         (fn compiled-assess [args-vec choices]
           (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                result
+                {:keys [values score]}
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args choices))
                  {:values {} :score (mx/scalar 0.0)}
                  step-fns)]
-            {:score (:score result)
+            {:score score
              ;; RAW args, matching M2 simulate + the handler: an arg-derived
              ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)}))))))
+             :retval (retval-fn values args-vec)}))))))
 
 (defn make-branch-rewritten-assess
   "Build a compiled assess for branch-rewritten models (L1-M4).
@@ -376,16 +357,16 @@
       (when (every? some? step-fns)
         (fn compiled-branch-assess [args-vec choices]
           (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                result
+                {:keys [values score]}
                 (reduce
                  (fn [state step-fn]
                    (step-fn state mlx-args choices))
                  {:values (seed-conds args-vec) :score (mx/scalar 0.0)}
                  step-fns)]
-            {:score (:score result)
+            {:score score
              ;; RAW args, matching M2 simulate + the handler: an arg-derived
              ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)}))))))
+             :retval (retval-fn values args-vec)}))))))
 
 (defn make-compiled-prefix-assess
   "Build a compiled prefix assess function.
@@ -402,8 +383,7 @@
                         (step-fn state mlx-args choices))
                       {:values {} :score (mx/scalar 0.0)}
                       step-fns)]
-                 {:values (:values result)
-                  :score (:score result)}))
+                 (select-keys result [:values :score])))
          :addrs addrs}))))
 
 (defn make-replay-assess-transition
@@ -511,8 +491,7 @@
                         (step-fn state mlx-args old-choices selection))
                       {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
                       step-fns)]
-                 {:values (:values result)
-                  :weight (:weight result)}))
+                 (select-keys result [:values :weight])))
          :addrs addrs}))))
 
 (defn make-replay-project-transition
@@ -635,19 +614,19 @@
   (when-let [{:keys [step-fns retval-fn]} (prepare-regen-parts schema source)]
     (fn compiled-regenerate [key args-vec old-choices selection]
       (let [mlx-args (compiled/ensure-mlx-args args-vec)
-            result
+            {:keys [values score weight]}
             (reduce
              (fn [state step-fn]
                (step-fn state mlx-args old-choices selection))
              {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
              step-fns)]
-        {:values (:values result)
-         :score (:score result)
-         :weight (:weight result)
+        {:values values
+         :score score
+         :weight weight
          ;; retval-fn proven truthy by prepare-regen-parts
          ;; RAW args, matching M2 simulate + the handler: an arg-derived
          ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-         :retval (retval-fn (:values result) args-vec)}))))
+         :retval (retval-fn values args-vec)}))))
 
 (defn make-cone-regenerate
   "Cone-restricted compiled regenerate (genmlx-ltx2). For a SINGLE-site
@@ -928,7 +907,7 @@
             (when (every? some? step-fns)
               (fn compiled-branch-regenerate [key args-vec old-choices selection]
                 (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                      result
+                      {:keys [values score weight]}
                       (reduce
                        (fn [state step-fn]
                          (step-fn state mlx-args old-choices selection))
@@ -936,12 +915,12 @@
                         :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                        step-fns)]
                   ;; Strip reserved branch-cond keys from the trace choicemap (genmlx-gc4w)
-                  {:values (select-keys (:values result) addrs)
-                   :score (:score result)
-                   :weight (:weight result)
+                  {:values (select-keys values addrs)
+                   :score score
+                   :weight weight
                    ;; RAW args, matching M2 simulate + the handler: an arg-derived
                    ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-                   :retval (retval-fn (:values result) args-vec)})))))))))
+                   :retval (retval-fn values args-vec)})))))))))
 
 (defn make-compiled-prefix-regenerate
   "Build a compiled prefix regenerate function.
@@ -961,9 +940,7 @@
                         (step-fn state mlx-args old-choices selection))
                       {:values {} :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
                       step-fns)]
-                 {:values (:values result)
-                  :score (:score result)
-                  :weight (:weight result)}))
+                 (select-keys result [:values :score :weight])))
          :addrs addrs}))))
 
 (defn make-replay-regenerate-transition

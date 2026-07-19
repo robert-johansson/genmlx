@@ -67,6 +67,21 @@
     (mx/clear-cache!)
     (mx/sweep-dead-arrays!)))
 
+(defn- log-loss!
+  "Shared log-boundary step of the training loops: at a log boundary (see
+   log-iter?) materialize the loss, invoke `callback` (when present) and conj!
+   the loss value onto the `losses` transient; otherwise return `losses`
+   untouched. Mutates the transient and runs the callback side effect."
+  [losses i log-every loss-arr callback params]
+  (if (log-iter? i log-every)
+    (do
+      (mx/materialize! loss-arr)
+      (let [loss-val (mx/item loss-arr)]
+        (when callback
+          (callback {:iter i :loss loss-val :params params}))
+        (conj! losses loss-val)))
+    losses))
+
 ;; ---------------------------------------------------------------------------
 ;; Compiled optimization step (WP-0)
 ;; ---------------------------------------------------------------------------
@@ -159,14 +174,7 @@
               [np nm nv loss-arr] (opt-step params m v t-scalar)
 
               ;; Materialize loss only at log boundaries — avoids per-step eval cost
-              losses' (if (log-iter? i log-every)
-                        (do
-                          (mx/materialize! loss-arr)
-                          (let [loss-val (mx/item loss-arr)]
-                            (when callback
-                              (callback {:iter i :loss loss-val :params np}))
-                            (conj! losses loss-val)))
-                        losses)]
+              losses' (log-loss! losses i log-every loss-arr callback np)]
 
           (maybe-cleanup! i)
 
@@ -239,14 +247,8 @@
               ;; Break lazy graph — params and moments carried to next iteration
               _ (mx/materialize! new-params new-m new-v)
 
-              ;; Log loss at boundaries
-              loss-val (mx/item loss)
-              losses' (if (log-iter? i log-every)
-                        (do
-                          (when callback
-                            (callback {:iter i :loss loss-val :params new-params}))
-                          (conj! losses loss-val))
-                        losses)]
+              ;; Log loss at boundaries (loss already materialized above)
+              losses' (log-loss! losses i log-every loss callback new-params)]
 
           (maybe-cleanup! i)
 
@@ -536,14 +538,7 @@
               [np nm nv loss-arr] (opt-step params m v t-scalar noise uniforms)
 
               ;; Materialize loss only at log boundaries — avoids per-step eval cost
-              losses' (if (log-iter? i log-every)
-                        (do
-                          (mx/materialize! loss-arr)
-                          (let [loss-val (mx/item loss-arr)]
-                            (when callback
-                              (callback {:iter i :loss loss-val :params np}))
-                            (conj! losses loss-val)))
-                        losses)]
+              losses' (log-loss! losses i log-every loss-arr callback np)]
 
           (maybe-cleanup! i)
 

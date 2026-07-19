@@ -661,6 +661,15 @@
     {:pass? (and (empty? bad) (:pass? shape-run))
      :details {:constrained (vec bad) :shapes (:details shape-run)}}))
 
+(defn- mean [xs] (/ (reduce + xs) (count xs)))
+
+(defn- sample-sd
+  "Sample standard deviation: ddof 1, denominator max(1, n-1)."
+  [xs]
+  (let [m (mean xs)]
+    (js/Math.sqrt (/ (reduce + (map #(let [d (- % m)] (* d d)) xs))
+                     (max 1 (dec (count xs)))))))
+
 (defn- p5-analytical
   "P5a: on models WITHOUT an analytical plan the analytical dispatcher's
    decline must be invisible — identical results to strip-analytical under
@@ -689,9 +698,8 @@
                                     {:samples 300 :key (rng/fresh-key (+ 1000 i))}
                                     model args obs))))
                             (range n-seeds))
-            m (/ (reduce + estimates) n-seeds)
-            sd (js/Math.sqrt (/ (reduce + (map #(let [d (- % m)] (* d d)) estimates))
-                                (max 1 (dec n-seeds))))
+            m (mean estimates)
+            sd (sample-sd estimates)
             band (+ (* 6 sd) 0.15)]
         (if (empty? (leaf-paths obs))
           {:pass? (close? w 0.0 eps) :details {:mode :fired-empty-obs}}
@@ -726,13 +734,9 @@
                                  {:samples 400 :key (rng/fresh-key (+ 3000 i))}
                                  model args full-obs))))
                          (range n-seeds))
-            mean (fn [xs] (/ (reduce + xs) (count xs)))
-            sd (fn [xs] (let [m (mean xs)]
-                          (js/Math.sqrt (/ (reduce + (map #(let [d (- % m)] (* d d)) xs))
-                                           (max 1 (dec (count xs)))))))
             gap (js/Math.abs (- (mean smc-est) (mean is-est)))
-            band (+ (* 6 (js/Math.sqrt (+ (js/Math.pow (sd smc-est) 2)
-                                          (js/Math.pow (sd is-est) 2))))
+            band (+ (* 6 (js/Math.sqrt (+ (js/Math.pow (sample-sd smc-est) 2)
+                                          (js/Math.pow (sample-sd is-est) 2))))
                     0.2)]
         {:pass? (<= gap band)
          :details {:smc (mean smc-est) :is (mean is-est) :gap gap :band band}}))))

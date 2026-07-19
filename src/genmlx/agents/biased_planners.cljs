@@ -90,6 +90,11 @@
         z  (reduce + es)]
     (mapv #(/ % z) es)))
 
+(def ^:private tie-eps
+  "Float slack for the hard-argmax tie set: Q-values within tie-eps of the
+   max count as tied (uniform tie-break in the :hard backup)."
+  1e-9)
+
 ;; ===========================================================================
 ;; Section 2 — the delay-indexed biased EU recursion (MDP)
 ;; ===========================================================================
@@ -131,7 +136,7 @@
                       ;; argmax over the policy row; uniform tie-break, value read
                       ;; from the value row at the argmax set.
                       (let [m    (apply max q-pol)
-                            idxs (filterv #(> (nth q-pol %) (- m 1e-9)) (range A))]
+                            idxs (filterv #(> (nth q-pol %) (- m tie-eps)) (range A))]
                         (/ (reduce + (map #(nth q-val %) idxs)) (count idxs))))))
         eu      (exact/with-cache
                   (fn [s a t d]
@@ -548,7 +553,7 @@
                       :soft (let [w (softmax-vec (mapv #(* alpha %) q-pol))]
                               (reduce + (map * w q-val)))
                       :hard (let [m    (apply max q-pol)
-                                  idxs (filterv #(> (nth q-pol %) (- m 1e-9)) (range A))]
+                                  idxs (filterv #(> (nth q-pol %) (- m tie-eps)) (range A))]
                               (/ (reduce + (map #(nth q-val %) idxs)) (count idxs))))))
         eu      (exact/with-cache
                   (fn [belief s a t d]

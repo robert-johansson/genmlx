@@ -669,6 +669,26 @@
         (let [arr (.scalar c v)]
           (if (= dtype float32) arr (.astype c arr dtype)))))))
 
+(defn- from-flat
+  "Construct an array from flat data + shape at the given dtype (shared by
+   array's 2- and 3-arities).
+   uint32 must NOT round-trip through Float32Array + astype: values above
+   the 24-bit mantissa are silently rounded (genmlx-st0y — corrupted
+   deserialized PRNG keys). The static class constructor is exact
+   (module-level fromUint32 does not exist; the static takes a BigInt64Array
+   shape)."
+  [flat-data sh dtype]
+  (cond
+    (= dtype int32)
+    (.fromInt32 c (js/Int32Array.from (clj->js flat-data)) (clj->js sh))
+    (= dtype uint32)
+    (.fromUint32 M (js/Uint32Array.from (clj->js flat-data))
+                 (js/BigInt64Array.from (clj->js sh) js/BigInt))
+    :else
+    (let [f32 (js/Float32Array.from (clj->js flat-data))
+          arr (.fromFloat32 c f32 (clj->js sh))]
+      (if (= dtype float32) arr (.astype c arr dtype)))))
+
 (defn array
   ([v]
    (cond
@@ -688,33 +708,10 @@
            f32 (js/Float32Array.from (clj->js flat-data))]
        (.fromFloat32 c f32 (clj->js shape-or-dtype)))
      (let [[flat-data sh] (infer-shape v)]
-       (cond
-         (= shape-or-dtype int32)
-         (.fromInt32 c (js/Int32Array.from (clj->js flat-data)) (clj->js sh))
-         ;; uint32 must NOT round-trip through Float32Array + astype: values
-         ;; above the 24-bit mantissa are silently rounded (genmlx-st0y —
-         ;; corrupted deserialized PRNG keys). The static class constructor
-         ;; is exact (module-level fromUint32 does not exist; the static
-         ;; takes a BigInt64Array shape).
-         (= shape-or-dtype uint32)
-         (.fromUint32 M (js/Uint32Array.from (clj->js flat-data))
-                        (js/BigInt64Array.from (clj->js sh) js/BigInt))
-         :else
-         (let [f32 (js/Float32Array.from (clj->js flat-data))
-               arr (.fromFloat32 c f32 (clj->js sh))]
-           (if (= shape-or-dtype float32) arr (.astype c arr shape-or-dtype)))))))
+       (from-flat flat-data sh shape-or-dtype))))
   ([v shape-vec dtype]
    (let [[flat-data _] (infer-shape v)]
-     (cond
-       (= dtype int32)
-       (.fromInt32 c (js/Int32Array.from (clj->js flat-data)) (clj->js shape-vec))
-       (= dtype uint32)
-       (.fromUint32 M (js/Uint32Array.from (clj->js flat-data))
-                      (js/BigInt64Array.from (clj->js shape-vec) js/BigInt))
-       :else
-       (let [f32 (js/Float32Array.from (clj->js flat-data))
-             arr (.fromFloat32 c f32 (clj->js shape-vec))]
-         (if (= dtype float32) arr (.astype c arr dtype)))))))
+     (from-flat flat-data shape-vec dtype))))
 
 (defn astype [a dtype] (.astype c a dtype))
 

@@ -1422,7 +1422,7 @@
 (defmethod dc/dist-log-prob :wishart [d x]
   (let [{:keys [df scale-matrix k]} (:params d)
         x (mx/ensure-array x)
-        x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
+        x-2d (as-square x)
         ;; Recompute V-inv and log-det-V from scale-matrix (not precomputed)
         ;; so gradient tape is preserved for differentiating w.r.t. V.
         V-inv (mx/inv scale-matrix)
@@ -1466,7 +1466,7 @@
 (defmethod dc/dist-log-prob :inv-wishart [d x]
   (let [{:keys [df scale-matrix k]} (:params d)
         x (mx/ensure-array x)
-        x-2d (if (= 1 (mx/ndim x)) (mx/reshape x [k k]) x)
+        x-2d (as-square x)
         X-inv (mx/inv x-2d)
         ;; Recompute log-det from raw matrices (not precomputed) so gradient
         ;; tape is preserved for differentiating w.r.t. Psi and X.

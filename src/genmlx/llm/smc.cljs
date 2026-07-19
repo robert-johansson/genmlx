@@ -346,7 +346,7 @@
         lanes (llm/branch-from model root)
         vocab (first (mx/shape logits0))
         pad-id (or eos-id 0)
-        zeros-k (fn [] (let [z (mx/zeros [n])] (mx/materialize! z) z))]
+        zeros-k (fn [] (mat (mx/zeros [n])))]
     (if (zero? max-tokens)
       {:particles (vec (repeat n {:tokens [] :log-w (mx/scalar 0.0)
                                   :finished? true :dfa (ginit constraint)}))
@@ -424,8 +424,7 @@
                                 {:tokens tokens' :dfa dfa' :finished? done?
                                  :inc inc-w :fed (if done? pad-id tok-id)}))))
                         (range n))
-                  log-w' (let [w (mx/add log-w (mx/array (mapv :inc stepped)))]
-                           (mx/materialize! w) w)
+                  log-w' (mat (mx/add log-w (mx/array (mapv :inc stepped))))
                   tokens' (mapv :tokens stepped)
                   dfas' (mapv :dfa stepped)
                   finished' (mapv :finished? stepped)

@@ -331,7 +331,7 @@
      ;; how many SELECTED programs were scored by non-reproducible importance sampling
      ;; (a non-conjugate model): >0 means that prompt's pick is not deterministic.
      :n-selected-noisy-is (count (filter #(and (= :program (:kind %))
-                                               (not (contains? #{:exact :kalman} (:method %))))
+                                               (not (deterministic-score? %)))
                                          selected))
      :drop-reasons      (into (sorted-map) (frequencies (map :reason verdicts)))}))
 

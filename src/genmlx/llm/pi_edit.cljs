@@ -49,14 +49,15 @@
    unterminated block contributes no span."
   [text]
   (loop [from 0, spans []]
-    (let [open (str/index-of text "<tool_call>\n" from)]
+    (let [open (str/index-of text tc/tool-call-open-tag from)]
       (if (nil? open)
         spans
-        (let [close (str/index-of text "</tool_call>" (+ open 12))]
+        (let [close (str/index-of text tc/tool-call-close-tag
+                                  (+ open (count tc/tool-call-open-tag)))]
           (if (nil? close)
             spans
-            (recur (+ close 12)
-                   (conj spans {:start open :end (+ close 12)}))))))))
+            (let [end (+ close (count tc/tool-call-close-tag))]
+              (recur end (conj spans {:start open :end end})))))))))
 
 (defn strip-tool-calls
   "`text` with complete tool-call block spans removed and trailing

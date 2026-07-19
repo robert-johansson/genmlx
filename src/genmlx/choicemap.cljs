@@ -80,7 +80,7 @@
 (defn get-value
   "Get the leaf value from a choice map node."
   [cm]
-  (when (and (choicemap? cm) (-has-value? cm))
+  (when (has-value? cm)
     (-get-value cm)))
 
 (defn get-submap

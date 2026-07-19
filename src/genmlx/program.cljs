@@ -761,6 +761,26 @@
         {:edges active :name nm :index i}))
     (subsets (enumerate-edges var-names)))))
 
+(defn- suffstats
+  "Precompute the pairwise sufficient statistics shared by both structure
+   scorers: X'X (:all-dots), X'y (:xty-dots) and y'y (:yty) dot-product maps
+   over the transition columns."
+  [transitions var-names]
+  (let [col-vecs (into {}
+                       (map (fn [v] [v (mapv #(get-in % [:prev v]) transitions)])
+                            var-names))
+        obs-vecs (into {}
+                       (map (fn [v] [v (mapv #(get-in % [:next v]) transitions)])
+                            var-names))]
+    {:all-dots (into {}
+                     (for [a var-names, b var-names]
+                       [[a b] (dot (get col-vecs a) (get col-vecs b))]))
+     :xty-dots (into {}
+                     (for [pred var-names, tgt var-names]
+                       [[pred tgt] (dot (get col-vecs pred) (get obs-vecs tgt))]))
+     :yty (into {} (map (fn [v] [v (dot (get obs-vecs v) (get obs-vecs v))])
+                        var-names))}))
+
 (defn score-all-structures
   "Score all 2^(K*(K-1)) directed graphs with precomputed sufficient statistics.
 
@@ -785,20 +805,7 @@
          beta-var (* beta-prior-std beta-prior-std)
          n (count transitions)
          known-sigma (:sigma opts)
-         col-vecs (into {}
-                        (map (fn [v] [v (mapv #(get-in % [:prev v]) transitions)])
-                             var-names))
-         obs-vecs (into {}
-                        (map (fn [v] [v (mapv #(get-in % [:next v]) transitions)])
-                             var-names))
-         all-dots (into {}
-                        (for [a var-names, b var-names]
-                          [[a b] (dot (get col-vecs a) (get col-vecs b))]))
-         xty-dots (into {}
-                        (for [pred var-names, tgt var-names]
-                          [[pred tgt] (dot (get col-vecs pred) (get obs-vecs tgt))]))
-         yty (into {} (map (fn [v] [v (dot (get obs-vecs v) (get obs-vecs v))])
-                           var-names))
+         {:keys [all-dots xty-dots yty]} (suffstats transitions var-names)
          all-structs (enumerate-all-structures var-names)]
      (mapv
       (fn [structure]
@@ -901,13 +908,7 @@
          beta-var (* beta-prior-std beta-prior-std)
          n (count transitions)
          known-sigma (:sigma opts)
-         col-vecs (into {} (map (fn [v] [v (mapv #(get-in % [:prev v]) transitions)]) var-names))
-         obs-vecs (into {} (map (fn [v] [v (mapv #(get-in % [:next v]) transitions)]) var-names))
-         all-dots (into {} (for [a var-names, b var-names]
-                             [[a b] (dot (get col-vecs a) (get col-vecs b))]))
-         xty-dots (into {} (for [pred var-names, tgt var-names]
-                             [[pred tgt] (dot (get col-vecs pred) (get obs-vecs tgt))]))
-         yty (into {} (map (fn [v] [v (dot (get obs-vecs v) (get obs-vecs v))]) var-names))
+         {:keys [all-dots xty-dots yty]} (suffstats transitions var-names)
          t0 (js/Date.now)
          per-variable
          (into {}

@@ -154,6 +154,15 @@
 
 (def ^:private cljs-closing "\n</parameter>\n")
 
+(def ^:private printable-byte-codes
+  "The printable-byte class of a :cljs value: printable ASCII (32-126) plus
+   newline (10) and tab (9). Single source for the code predicate, the
+   per-byte candidate walk (cljs-value-chars) and the char-set predicate
+   (printable-value-char?)."
+  (vec (concat (range 32 127) [10 9])))
+
+(def ^:private printable-byte-code? (set printable-byte-codes))
+
 (defn- cljs-support
   "Build the reader-leg lookup tables when some param declares :cljs true;
    nil otherwise. Throws when a param name is :cljs in one tool and plain
@@ -176,8 +185,7 @@
           (let [t (nth token-index i)]
             (when (seq t)
               (when (and (= 1 (count t))
-                         (let [cc (.charCodeAt t 0)]
-                           (or (<= 32 cc 126) (= cc 10) (= cc 9))))
+                         (printable-byte-code? (.charCodeAt t 0)))
                 (when-not (.has byte-ids t) (.set byte-ids t (array)))
                 (.push (.get byte-ids t) i))
               (dotimes [k n-close]
@@ -191,6 +199,7 @@
          :closing-ids closing-ids}))))
 
 (def ^:private value-open-chars ["(" "[" "{"])
+(def ^:private value-open-char? (set value-open-chars))
 
 (defn cljs-value-chars
   "The allowed next BYTES for a :cljs value prefix `v` (exposed for tests).
@@ -207,10 +216,10 @@
                     (when (and (not= :invalid (ceval/cljs-arg-status v'))
                                (not (str/ends-with? v' "\n</parameter>")))
                       c))))
-          (concat (range 32 127) [10 9]))))
+          printable-byte-codes)))
 
 (def ^:private printable-value-char?
-  (let [ok (set (into (mapv #(js/String.fromCharCode %) (range 32 127)) ["\n" "\t"]))]
+  (let [ok (set (mapv #(js/String.fromCharCode %) printable-byte-codes))]
     (fn [c] (contains? ok c))))
 
 (def ^:private value-top-k 64)
@@ -224,7 +233,7 @@
   (let [n (count t)]
     (and (pos? n)
          (every? printable-value-char? t)
-         (or (not blank?) (contains? #{"(" "[" "{"} (subs t 0 1)))
+         (or (not blank?) (contains? value-open-char? (subs t 0 1)))
          (loop [j 0 v' v]
            (if (>= j n)
              true
@@ -441,6 +450,14 @@
 ;; tests verify the grammar against a second implementation of the dialect)
 ;; ---------------------------------------------------------------------------
 
+(def tool-call-open-tag
+  "Literal opener of a tool-call block (trailing newline included)."
+  "<tool_call>\n")
+
+(def tool-call-close-tag
+  "Literal closer of a tool-call block."
+  "</tool_call>")
+
 (defn- parse-block
   "Parse the inside of one block (text between <tool_call>\\n and
    </tool_call>). Returns {:name .. :args {pname value}} or {:error ..}."
@@ -472,14 +489,14 @@
                     (into {} (map (fn [t] [(:name t) (set (map :name (:params t)))])
                                   tools)))]
      (loop [s text calls [] errors []]
-       (let [open (str/index-of s "<tool_call>\n")]
+       (let [open (str/index-of s tool-call-open-tag)]
          (if (nil? open)
            {:calls calls
             :errors (cond-> errors
                       (str/includes? s "<tool_call>")
                       (conj "unterminated/misformatted <tool_call> opener"))}
-           (let [after (subs s (+ open 12))
-                 close (str/index-of after "</tool_call>")]
+           (let [after (subs s (+ open (count tool-call-open-tag)))
+                 close (str/index-of after tool-call-close-tag)]
              (if (nil? close)
                {:calls calls :errors (conj errors "unclosed <tool_call>")}
                (let [inside (subs after 0 close)
@@ -494,6 +511,6 @@
                                  (not (every? (get declared (:name parsed))
                                               (keys (:args parsed)))))
                             (conj (str "undeclared parameter(s) for " (:name parsed))))]
-                 (recur (subs after (+ close 12))
+                 (recur (subs after (+ close (count tool-call-close-tag)))
                         (if (:error parsed) calls (conj calls (dissoc parsed :error)))
                         (into errors errs)))))))))))

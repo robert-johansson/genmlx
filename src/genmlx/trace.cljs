@@ -77,6 +77,12 @@
   [trace st]
   (vary-meta trace assoc ::score-type st))
 
+(defn- norm-score-type
+  "Normalize a score-type tag for combination: anything outside
+   score-type-rank counts as :joint."
+  [st]
+  (if (contains? score-type-rank st) st :joint))
+
 (defn combine-score-types
   "Compose a composite trace's score-type from its parts (spliced
    sub-traces, combinator elements). nil counts as :joint (untagged).
@@ -92,11 +98,9 @@
    MCMC-around-an-enumerate-splice pattern, exact_test 41). Top-level
    :collapsed tags are assigned directly by enumerate, never derived."
   ([] :joint)
-  ([a] (if (contains? score-type-rank a) a :joint))
+  ([a] (norm-score-type a))
   ([a b]
-   (let [a (if (contains? score-type-rank a) a :joint)
-         b (if (contains? score-type-rank b) b :joint)]
-     (max-key score-type-rank a b))))
+   (max-key score-type-rank (norm-score-type a) (norm-score-type b))))
 
 (defn assert-joint!
   "Throw unless trace is joint-scored. Consumers whose math requires joint

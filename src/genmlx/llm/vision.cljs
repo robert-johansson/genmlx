@@ -81,6 +81,17 @@
   [opt]
   (if (map? opt) (:label opt) opt))
 
+(defn- normalize-label
+  "Shared normalization for VLM answers and cell-type labels: lowercase,
+   strip everything but alphanumerics and spaces, collapse whitespace. Both
+   sides of the match go through this, so \"Fire Truck!\" == \"fire truck\"."
+  [s]
+  (-> (or s "")
+      str/lower-case
+      (str/replace #"[^a-z0-9 ]" "")
+      (str/replace #"\s+" " ")
+      str/trim))
+
 (defn classify-cell
   "Classify a single cell image into one of `options`. Returns a promise of the
    selected option label (lowercased, alphabetic-only canonical form).
@@ -110,11 +121,7 @@
     ;; taking only the first word made multi-word labels ("fire truck")
     ;; unmatchable in label->index (genmlx-xwxh). label->index normalizes
     ;; cell-type labels the same way.
-      (-> (or (.-text result) "")
-          str/lower-case
-          (str/replace #"[^a-z0-9 ]" "")
-          (str/replace #"\s+" " ")
-          str/trim))))
+      (normalize-label (.-text result)))))
 
 (defn classify-grid
   "Classify all cells of an N×M grid. Returns a promise of
@@ -156,17 +163,6 @@
   "Trace address for cell (r, c). Keyword like `:r0-c1`."
   [r c]
   (keyword (str "r" r "-c" c)))
-
-(defn- normalize-label
-  "Shared normalization for VLM answers and cell-type labels: lowercase,
-   strip everything but alphanumerics and spaces, collapse whitespace. Both
-   sides of the match go through this, so \"Fire Truck!\" == \"fire truck\"."
-  [s]
-  (-> (or s "")
-      str/lower-case
-      (str/replace #"[^a-z0-9 ]" "")
-      (str/replace #"\s+" " ")
-      str/trim))
 
 (defn- word-contained?
   "Whole-word containment in either direction between two normalized strings:

@@ -155,17 +155,18 @@
    change-of-variables term must be explicit, never a silent 0 (CLAUDE.md:
    no no-op that lies about what it does)."
   [tt h-result in-choices aux-choices]
-  (cond
-    (contains? h-result :log-det-jacobian)
-    (let [j (:log-det-jacobian h-result)] (if (mx/array? j) j (mx/scalar j)))
-    (:jacobian-fn tt)
-    (let [j ((:jacobian-fn tt) in-choices aux-choices)] (if (mx/array? j) j (mx/scalar j)))
-    (:volume-preserving? tt) ZERO
-    :else (throw (ex-info (str "trace-translator: no Jacobian for a non-"
+  (letfn [(->ldj [j] (if (mx/array? j) j (mx/scalar j)))]
+    (cond
+      (contains? h-result :log-det-jacobian)
+      (->ldj (:log-det-jacobian h-result))
+      (:jacobian-fn tt)
+      (->ldj ((:jacobian-fn tt) in-choices aux-choices))
+      (:volume-preserving? tt) ZERO
+      :else (throw (ex-info (str "trace-translator: no Jacobian for a non-"
                                "volume-preserving move. Return :log-det-jacobian "
                                "from h, set :jacobian-fn (e.g. via jacobian-logdet), "
                                "or pass :volume-preserving? true for discrete/copy-only moves.")
-                          {:genmlx/error :translator-missing-jacobian}))))
+                            {:genmlx/error :translator-missing-jacobian})))))
 
 (defn- leaf-paths*
   "All leaf address paths of a choicemap (depth-first)."

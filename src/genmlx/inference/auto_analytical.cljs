@@ -555,11 +555,7 @@
   "Build address-based handlers for all detected Kalman chains.
    Returns a merged map of {addr handler-fn}."
   [chains]
-  (reduce
-   (fn [handlers chain]
-     (merge handlers (make-auto-kalman-handlers chain)))
-   {}
-   chains))
+  (into {} (mapcat make-auto-kalman-handlers) chains))
 
 ;; ---------------------------------------------------------------------------
 ;; MVN-MVN conjugate update (multivariate Normal-Normal)
@@ -701,15 +697,34 @@
     (fn [prior-addr obs-addrs] (make-mvn-handlers-core prior-addr obs-addrs :generate))
     (fn [prior-addr obs-addrs] (make-family-handlers family :generate prior-addr obs-addrs))))
 
+(def ^:private conjugate-families
+  "All conjugate families with generate/regenerate handler factories."
+  [:normal-normal :normal-iid-normal :beta-bernoulli :gamma-poisson
+   :gamma-exponential :dirichlet-categorical :mvn-normal])
+
 (def family->handler-factory
   "Map from conjugate family keyword to handler factory function."
-  {:normal-normal (make-auto-handlers-for :normal-normal)
-   :normal-iid-normal (make-auto-handlers-for :normal-iid-normal)
-   :beta-bernoulli (make-auto-handlers-for :beta-bernoulli)
-   :gamma-poisson (make-auto-handlers-for :gamma-poisson)
-   :gamma-exponential (make-auto-handlers-for :gamma-exponential)
-   :dirichlet-categorical (make-auto-handlers-for :dirichlet-categorical)
-   :mvn-normal (make-auto-handlers-for :mvn-normal)})
+  (into {} (map (juxt identity make-auto-handlers-for)) conjugate-families))
+
+(defn- build-handlers-with
+  "Shared builder behind build-auto-handlers / build-regenerate-handlers /
+   build-update-handlers: group conjugate pairs by prior (dropping multi-parent
+   and mixed-family pairs first) and merge each prior group's handlers from
+   `factory-map`; families absent from the map are skipped."
+  [factory-map conjugate-pairs]
+  (let [grouped (cnj/group-by-prior
+                 (cnj/drop-mixed-family-priors
+                  (cnj/drop-multi-parent-pairs conjugate-pairs)))]
+    (reduce
+     (fn [handlers [prior-addr pairs]]
+       (let [family (:family (first pairs))
+             factory (get factory-map family)
+             obs-addrs (mapv :obs-addr pairs)]
+         (if factory
+           (merge handlers (factory prior-addr obs-addrs))
+           handlers)))
+     {}
+     grouped)))
 
 (defn build-auto-handlers
   "Build address-based handlers from detected conjugate pairs.
@@ -717,19 +732,7 @@
    so two priors claiming one obs would silently mis-marginalize, genmlx-b470).
    Returns a merged map of {addr handler-fn} for all conjugate sites."
   [conjugate-pairs]
-  (let [grouped (cnj/group-by-prior
-                 (cnj/drop-mixed-family-priors
-                  (cnj/drop-multi-parent-pairs conjugate-pairs)))]
-    (reduce
-     (fn [handlers [prior-addr pairs]]
-       (let [family (:family (first pairs))
-             factory (get family->handler-factory family)
-             obs-addrs (mapv :obs-addr pairs)]
-         (if factory
-           (merge handlers (factory prior-addr obs-addrs))
-           handlers)))
-     {}
-     grouped)))
+  (build-handlers-with family->handler-factory conjugate-pairs))
 
 ;; ---------------------------------------------------------------------------
 ;; Regenerate-specific handlers (WP-0, L3.5)
@@ -755,32 +758,14 @@
 
 (def regenerate-family->handler-factory
   "Map from conjugate family keyword to regenerate-specific handler factory."
-  {:normal-normal (make-regenerate-handlers-for :normal-normal)
-   :normal-iid-normal (make-regenerate-handlers-for :normal-iid-normal)
-   :beta-bernoulli (make-regenerate-handlers-for :beta-bernoulli)
-   :gamma-poisson (make-regenerate-handlers-for :gamma-poisson)
-   :gamma-exponential (make-regenerate-handlers-for :gamma-exponential)
-   :dirichlet-categorical (make-regenerate-handlers-for :dirichlet-categorical)
-   :mvn-normal (make-regenerate-handlers-for :mvn-normal)})
+  (into {} (map (juxt identity make-regenerate-handlers-for)) conjugate-families))
 
 (defn build-regenerate-handlers
   "Build regenerate-specific address-based handlers from detected conjugate pairs.
    Multi-parent obs pairs are dropped first (see build-auto-handlers).
    Returns a merged map of {addr handler-fn}."
   [conjugate-pairs]
-  (let [grouped (cnj/group-by-prior
-                 (cnj/drop-mixed-family-priors
-                  (cnj/drop-multi-parent-pairs conjugate-pairs)))]
-    (reduce
-     (fn [handlers [prior-addr pairs]]
-       (let [family (:family (first pairs))
-             factory (get regenerate-family->handler-factory family)
-             obs-addrs (mapv :obs-addr pairs)]
-         (if factory
-           (merge handlers (factory prior-addr obs-addrs))
-           handlers)))
-     {}
-     grouped)))
+  (build-handlers-with regenerate-family->handler-factory conjugate-pairs))
 
 ;; Regenerate-specific Kalman handlers
 
@@ -792,11 +777,7 @@
 (defn- build-regenerate-kalman-handlers
   "Build regenerate-specific Kalman handlers for all chains."
   [chains]
-  (reduce
-   (fn [handlers chain]
-     (merge handlers (make-regenerate-kalman-handlers chain)))
-   {}
-   chains))
+  (into {} (mapcat make-regenerate-kalman-handlers) chains))
 
 ;; ---------------------------------------------------------------------------
 ;; Unified regenerate handler builder (from conjugate-pairs)
@@ -834,12 +815,11 @@
 
 (def update-family->handler-factory
   "Map from conjugate family keyword to update-specific handler factory.
-   No :mvn-normal — MVN analytical update is unimplemented (decline to joint)."
-  {:normal-normal     (make-update-handlers-for :normal-normal)
-   :normal-iid-normal (make-update-handlers-for :normal-iid-normal)
-   :beta-bernoulli    (make-update-handlers-for :beta-bernoulli)
-   :gamma-poisson     (make-update-handlers-for :gamma-poisson)
-   :gamma-exponential (make-update-handlers-for :gamma-exponential)})
+   SCALAR families only — no :mvn-normal (MVN analytical update is
+   unimplemented; decline to joint) and no :dirichlet-categorical."
+  (into {} (map (juxt identity make-update-handlers-for))
+        [:normal-normal :normal-iid-normal :beta-bernoulli
+         :gamma-poisson :gamma-exponential]))
 
 (defn build-update-handlers
   "Build update-specific address-based handlers from conjugate pairs (scalar
@@ -848,19 +828,7 @@
    are skipped — callers must decline the analytical-update path for models that
    contain them. Returns a merged map of {addr handler-fn}."
   [conjugate-pairs]
-  (let [grouped (cnj/group-by-prior
-                 (cnj/drop-mixed-family-priors
-                  (cnj/drop-multi-parent-pairs conjugate-pairs)))]
-    (reduce
-     (fn [handlers [prior-addr pairs]]
-       (let [family (:family (first pairs))
-             factory (get update-family->handler-factory family)
-             obs-addrs (mapv :obs-addr pairs)]
-         (if factory
-           (merge handlers (factory prior-addr obs-addrs))
-           handlers)))
-     {}
-     grouped)))
+  (build-handlers-with update-family->handler-factory conjugate-pairs))
 
 ;; ---------------------------------------------------------------------------
 ;; Utility: check if any conjugate obs is constrained

@@ -34,9 +34,7 @@
 (defn update-params
   "Apply a map of updates {name -> new-value} to the store."
   [store updates]
-  (reduce (fn [s [k v]] (set-param s k v))
-          store
-          updates))
+  (reduce-kv set-param store updates))
 
 (defn param-names
   "List all parameter names in the store."

@@ -241,12 +241,7 @@
   (let [m (count chains)
         n (count (first chains))
         ;; Extract scalar values
-        chain-vals (mapv (fn [chain]
-                           (mapv (fn [s]
-                                   (mx/materialize! s)
-                                   (if (mx/array? s) (mx/item s) s))
-                                 chain))
-                         chains)
+        chain-vals (mapv chain->doubles chains)
         ;; Sum of squared deviations of xs from their mean mu
         ss (fn [xs mu] (reduce + (map #(let [d (- % mu)] (* d d)) xs)))
         ;; Chain means

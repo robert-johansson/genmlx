@@ -145,6 +145,14 @@
 ;; ===========================================================================
 
 (defn- pick-int [u lo hi] (+ lo (int (* u (inc (- hi lo))))))   ; uniform int in [lo,hi]
+(defn- rand-sign
+  "-1 or +1 from a uniform draw (u < 0.5 -> -1)."
+  [u]
+  (if (< u 0.5) -1 1))
+(defn- mean
+  "Arithmetic mean of a non-empty seq of numbers, or nil if empty."
+  [xs]
+  (when (seq xs) (/ (reduce + xs) (count xs))))
 (def ^:private group-names ["a" "b" "c" "d"])
 
 (defn- sample-sigma
@@ -183,7 +191,7 @@
     :sample (fn [seed]
               (let [us (uniforms seed 4)
                     n  (pick-int (nth us 0) 5 8)
-                    slope (round1 (* (if (< (nth us 2) 0.5) -1 1) (+ 0.6 (* (nth us 1) 1.8))))
+                    slope (round1 (* (rand-sign (nth us 2)) (+ 0.6 (* (nth us 1) 1.8))))
                     intercept (round1 (* 4.0 (- (nth us 3) 0.5)))]
                 {:n n :slope slope :intercept intercept
                  :sigma (sample-sigma (nth (uniforms (mix-seed seed 5) 1) 0))
@@ -268,7 +276,7 @@
                     nf (pick-int (nth us 0) 3 4)
                     nl (pick-int (nth us 1) 3 4)
                     level (round1 (* 4.0 (- (nth us 2) 0.5)))
-                    slope (round1 (* (if (< (nth us 3) 0.5) -1 1)
+                    slope (round1 (* (rand-sign (nth us 3))
                                      (+ 0.7 (* (nth (uniforms (mix-seed seed 6) 1) 0) 1.5))))
                     base  (round1 (* 4.0 (- (nth (uniforms (mix-seed seed 7) 1) 0) 0.5)))]
                 {:nf nf :nl nl :level level :slope slope :base base
@@ -306,7 +314,7 @@
                     sl (vec (for [k (range g)]
                               (let [u (nth (uniforms (mix-seed seed 10 k) 2) 0)
                                     s (nth (uniforms (mix-seed seed 10 k) 2) 1)]
-                                (round1 (* (if (< s 0.5) -1 1) (+ 0.6 (* u 1.8)))))))
+                                (round1 (* (rand-sign s) (+ 0.6 (* u 1.8)))))))
                     it (vec (for [k (range g)]
                               (round1 (* 4.0 (- (nth (uniforms (mix-seed seed 11 k) 1) 0) 0.5)))))]
                 {:g g :pp pp :groups gs :slopes sl :intercepts it
@@ -527,9 +535,9 @@
          by-complexity (into (sorted-map)
                              (for [[c ts] (group-by :complexity tasks)]
                                [c {:n (count ts)
-                                   :mean-gap (when (seq ts) (/ (reduce + (map :gap ts)) (count ts)))
-                                   :mean-struct-gap (when (seq ts) (/ (reduce + (map :struct-gap ts)) (count ts)))
-                                   :mean-n-latents (when (seq ts) (/ (reduce + (map :n-latents ts)) (count ts)))}]))]
+                                   :mean-gap (mean (map :gap ts))
+                                   :mean-struct-gap (mean (map :struct-gap ts))
+                                   :mean-n-latents (mean (map :n-latents ts))}]))]
      {:tasks tasks :train-tasks train :eval-tasks evals :eval-task-ids eval-ids
       :by-family (into (sorted-map)
                        (for [[fam {:keys [tasks drops]}] per-fam]
