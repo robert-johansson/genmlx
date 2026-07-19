@@ -59,10 +59,10 @@
              (dc/dist-log-prob dist value))]
     [value (-> state
              (assoc :key k1)
-             (update :choices #(cm/set-choice % [addr] value))
-             (update :score #(mx/add % lp))
+             (update :choices cm/set-choice [addr] value)
+             (update :score mx/add lp)
              (cond-> (not reparam?)
-               (update :reinforce-lp #(mx/add % lp))))]))
+               (update :reinforce-lp mx/add lp)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; ADEV execution (sequential)
@@ -154,10 +154,10 @@
         lp (dc/dist-log-prob dist value)]
     [value (-> state
              (assoc :key k1)
-             (update :choices #(cm/set-value % addr value))
-             (update :score #(mx/add % lp))
+             (update :choices cm/set-value addr value)
+             (update :score mx/add lp)
              (cond-> (not reparam?)
-               (update :reinforce-lp #(mx/add % lp))))]))
+               (update :reinforce-lp mx/add lp)))]))
 
 (defn vadev-execute
   "Execute a generative function under the batched ADEV handler.
@@ -313,7 +313,7 @@
               bl (mx/scalar (or baseline 0.0))
               [loss grad] (mx/tidy-run
                             #(vg params key bl)
-                            (fn [[l g]] [l g]))
+                            identity)
               loss-val (mx/item loss)
               new-baseline (ema-update baseline-decay baseline loss-val)
               [new-params new-opt-st] (learn/adam-step params grad opt-st {:lr lr})]

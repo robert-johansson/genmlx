@@ -74,19 +74,16 @@
     (source-mask [sources] S)
 
     (and (sequential? sources) (every? number? sources))
-    (let [flat (make-array S)]
-      (dotimes [i S] (aset flat i 0))
-      (doseq [id sources] (aset flat id 1))
-      [(mx/array (vec flat) [1 S] mx/int32) false])
+    (let [flat (reduce #(assoc %1 %2 1) (vec (repeat S 0)) sources)]
+      [(mx/array flat [1 S] mx/int32) false])
 
     (sequential? sources)
     (let [B    (count sources)
-          flat (make-array (* B S))]
-      (dotimes [i (* B S)] (aset flat i 0))
-      (doseq [[b ids] (map-indexed vector sources)
-              id ids]
-        (aset flat (+ (* b S) id) 1))
-      [(mx/array (vec flat) [B S] mx/int32) true])
+          flat (reduce (fn [v [b ids]]
+                         (reduce #(assoc %1 (+ (* b S) %2) 1) v ids))
+                       (vec (repeat (* B S) 0))
+                       (map-indexed vector sources))]
+      [(mx/array flat [B S] mx/int32) true])
 
     :else
     (throw (ex-info "bfs sources: id, seq of ids, seq of id-seqs, or mask"

@@ -272,7 +272,7 @@
               ;; 0-d scores stay plain numbers (legacy format); [N]-shaped
               ;; batched scores serialize as array data — mx/realize on
               ;; them used to throw (item needs size 1; genmlx-000i).
-              :score (if (and (mx/array? score) (pos? (count (mx/shape score))))
+              :score (if (and (mx/array? score) (seq (mx/shape score)))
                        (mlx-value->data score)
                        (mx/realize score))
               ;; Declare the score's encoding (genmlx-lbae): a marginal

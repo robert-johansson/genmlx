@@ -62,7 +62,7 @@
   (cond
     (cm/has-value? choice-map)
     (let [v (cm/get-value choice-map)]
-      (if (and (mx/array? v) (pos? (count (mx/shape v))))
+      (if (and (mx/array? v) (seq (mx/shape v)))
         (cm/->Value (leaf-fn v))
         choice-map))  ;; scalar constraints stay unchanged
 
@@ -92,7 +92,7 @@
     ;; return value) are particle-invariant — permutation is identity, and
     ;; a gather on a 0-d array is an MLX shape error that aborts the
     ;; process through NAPI.
-    (if (pos? (count (mx/shape state)))
+    (if (seq (mx/shape state))
       (mx/take-idx state indices)
       state)
 

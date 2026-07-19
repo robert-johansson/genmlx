@@ -15,6 +15,9 @@
    The only effectful operations are in the 'Effectful Operations' section:
    eval!, materialize!, item, ->clj, realize, async-eval!.
    Everything else builds lazy graph nodes or reads metadata.
+   Note: item, ->clj, realize, and the tidy helpers dispatch GPU work but
+   deliberately omit the ! suffix — they mirror the MLX API names (item,
+   tolist, ...) and hundreds of call sites read as value extraction.
 
    Most ops are direct references to Rust NAPI exports (genmlx.rs).
    Rust's Either<&MxArray, f64> handles both array and JS number inputs,
@@ -82,7 +85,7 @@
    live-core wrapper is `native-core-report`."
   [core-module version]
   (let [present (into {} (map (fn [k] [k (fn? (aget core-module k))])) required-core-caps)
-        missing (->> present (remove (comp true? val)) (mapv key))]
+        missing (->> present (remove val) (mapv key))]
     {:module-loaded? (some? core-module)
      :version        version
      :capabilities   present
@@ -565,8 +568,10 @@
    (.take c a (ensure-int-indices indices) axis)))
 
 (defn idx
-  ([a i]      (take-idx a (if (number? i) (scalar i int32) i) 0))
-  ([a i axis] (take-idx a (if (number? i) (scalar i int32) i) axis)))
+  ;; take-idx's ensure-int-indices already coerces a number i to an int32
+  ;; scalar, so idx is take-idx with an explicit default axis.
+  ([a i]      (take-idx a i 0))
+  ([a i axis] (take-idx a i axis)))
 
 (defn take-along-axis [a indices axis]
   (.takeAlongAxis c a indices axis))
@@ -671,7 +676,7 @@
      ;; JS arrays (#js [...]) included so NESTED JS arrays shape correctly via
      ;; infer-shape, not just flat ones. The old flat-only (js/Array.isArray v)
      ;; branch coerced #js [#js [..] #js [..]] to NaN — see infer-shape.
-     (or (vector? v) (seq? v) (sequential? v) (js/Array.isArray v))
+     (or (sequential? v) (js/Array.isArray v))
      (with-alloc-retry
        #(let [[flat-data sh] (infer-shape v)
               f32 (js/Float32Array.from (clj->js flat-data))]
@@ -846,16 +851,16 @@
    premise was false: the nil was being consumed as a PRNG key. See genmlx-yo6y.)"
   [args]
   (to-array
-   (vec (map-indexed
-         (fn [i a]
-           (when (nil? a)
-             (throw (ex-info (str "value-and-grad/grad: argument " i " is nil. "
-                                  "Pass a concrete MLX value — a nil PRNG key or "
-                                  "placeholder is not supported (thread a real key "
-                                  "via rng/ensure-key before the autograd boundary).")
-                             {:arg-index i :args-count (count args)})))
-           a)
-         args))))
+   (map-indexed
+    (fn [i a]
+      (when (nil? a)
+        (throw (ex-info (str "value-and-grad/grad: argument " i " is nil. "
+                             "Pass a concrete MLX value — a nil PRNG key or "
+                             "placeholder is not supported (thread a real key "
+                             "via rng/ensure-key before the autograd boundary).")
+                        {:arg-index i :args-count (count args)})))
+      a)
+    args)))
 
 (defn- ->argnum-vec
   "Normalize an argnums spec (int or vector) to a vector of arg indices."
@@ -982,12 +987,11 @@
       (.evalArrays c (to-array valid)))))
 
 (defn materialize!
-  "Evaluate MLX arrays. Safely ignores non-MxArray values.
+  "Evaluate MLX arrays. Safely ignores non-MxArray values (eval! filters
+   non-arrays and no-ops on an empty argument list).
    EFFECTFUL: triggers GPU dispatch via eval!."
   [& arrs]
-  (let [mx-arrs (filterv array? arrs)]
-    (when (seq mx-arrs)
-      (apply eval! mx-arrs))))
+  (apply eval! arrs))
 
 (defn synchronize!
   "Block until all already-dispatched GPU work on the default stream completes.
@@ -1094,7 +1098,7 @@
    Named for backward compatibility; use get-active-memory for clarity."
   [] (.getActiveMemory c))
 
-(declare ^:private buffer-count-pressure?)
+(declare ^:private buffer-count-pressure!)
 
 (defn sweep-dead-arrays!
   "Collect dead MxArray wrappers (forced GC) and drop the Metal buffer cache.
@@ -1106,10 +1110,10 @@
    the deferred cleanup never firing, because every in-loop sweep site
    no-ops (genmlx-q6lh). Under hysteretic buffer-count pressure the wall is
    the greater evil, so the sweep fires anyway — once per climb past the
-   high watermark (buffer-count-pressure? disarms until the count falls
+   high watermark (buffer-count-pressure! disarms until the count falls
    below the low watermark), so an all-live count cannot make it thrash."
   []
-  (when (or (not (in-tidy?)) (buffer-count-pressure?))
+  (when (or (not (in-tidy?)) (buffer-count-pressure!))
     (jsc-cleanup!)
     (.clearCache c)))
 
@@ -1215,7 +1219,7 @@
 (def ^:private count-check-interval 4096)
 (def ^:private ^:mutable proactive-armed? true)
 
-(defn- buffer-count-pressure?
+(defn- buffer-count-pressure!
   "Hysteretic buffer-count pressure check. Returns true (and DISARMS) when the
    live Metal buffer count first crosses the HIGH watermark @buffer-count-
    threshold. Stays false until the count later falls below the LOW watermark
@@ -1223,7 +1227,9 @@
    interval when a high count is due to LIVE buffers a sweep cannot reclaim (it
    would drop little, stay above LOW, and stay disarmed) — while still firing
    once per genuine dead-buffer climb (a sweep frees them, count drops below LOW,
-   re-arm). Shared by all three sweep sites; they cooperate via this one state."
+   re-arm). Shared by all three sweep sites; they cooperate via this one state.
+   The ! marks the arm/disarm latch mutation — this is a check-and-latch, not a
+   pure predicate."
   []
   (if-not count-tracking-available?
     ;; Buffer-COUNT pressure is a Metal-specific concept (the ~499k-buffer wall,
@@ -1267,7 +1273,7 @@
   (set! allocs-since-count-check (inc allocs-since-count-check))
   (when (>= allocs-since-count-check count-check-interval)
     (set! allocs-since-count-check 0)
-    (when (buffer-count-pressure?)
+    (when (buffer-count-pressure!)
       (count-sweep!))))
 
 (defn auto-cleanup!
@@ -1280,8 +1286,8 @@
        (cond
          ;; Count pressure: tiny-array loops hit the ~499000 buffer wall while
          ;; memory stays trivially low, so this branch fires where the memory
-         ;; branch below never would. Hysteretic — see buffer-count-pressure?.
-         (buffer-count-pressure?)
+         ;; branch below never would. Hysteretic — see buffer-count-pressure!.
+         (buffer-count-pressure!)
          (count-sweep!)
 
          (> (get-active-memory) resource-pressure-threshold)
@@ -1302,7 +1308,7 @@
     (cond
       ;; Count pressure first — covers GFI inference loops that churn tiny
       ;; arrays (the ex-crashers) at low memory. Hysteretic; see auto-cleanup!.
-      (and (not (in-tidy?)) (buffer-count-pressure?))
+      (and (not (in-tidy?)) (buffer-count-pressure!))
       (count-sweep!)
 
       ;; Same in-tidy? gate as the count branch and auto-cleanup!: a tidy
@@ -1526,7 +1532,7 @@
      (fn? x) x
      (keyword? x) x
      (map? x) x
-     (or (vector? x) (seq? x) (sequential? x)) (array x)
+     (sequential? x) (array x)
      (string? x) (throw (array-conversion-error x))
      (nil? x) (throw (array-conversion-error x))
      (and (number? x) (js/isNaN x)) (throw (array-conversion-error x))
@@ -1538,7 +1544,7 @@
      (fn? x) x
      (keyword? x) x
      (map? x) x
-     (or (vector? x) (seq? x) (sequential? x)) (array x dtype)
+     (sequential? x) (array x dtype)
      (string? x) (throw (array-conversion-error x))
      (nil? x) (throw (array-conversion-error x))
      (and (number? x) (js/isNaN x)) (throw (array-conversion-error x))

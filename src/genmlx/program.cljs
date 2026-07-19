@@ -659,8 +659,8 @@
    (let [scoring (or (:scoring opts) :analytical)
          structures (or (:structures opts)
                         (enumerate-2var-structures (first var-names) (second var-names)))
-         scored (vec
-                 (for [s structures]
+         scored (mapv
+                 (fn [s]
                    (let [source (build-transition-source var-names (:edges s) opts)]
                      (println (str "  scoring: " (:name s) "..."))
                      (if (= scoring :analytical)
@@ -675,7 +675,8 @@
                              (assoc s :log-ml lml :source source))
                            (do
                              (println "    FAILED to compile")
-                             (assoc s :log-ml ##-Inf :source source))))))))]
+                             (assoc s :log-ml ##-Inf :source source)))))))
+                 structures)]
      (->> (compute-posterior scored)
           (sort-by :posterior >)
           vec))))
@@ -804,7 +805,7 @@
         (let [edges (:edges structure)
               lml (reduce
                    (fn [total target]
-                     (let [sources (vec (filter #(contains? edges [% target]) var-names))
+                     (let [sources (filterv #(contains? edges [% target]) var-names)
                            preds (into [target] sources)
                            [t1 t2 t3] (log-ml-suffstat-terms
                                        target preds n all-dots xty-dots yty
@@ -976,7 +977,7 @@
   ([csv-path col-map opts]
    (let [{:keys [id-col time-col] :or {id-col "id" time-col "week"}} opts
          fs (js/require "fs")
-         content (.toString (.readFileSync fs csv-path "utf8"))
+         content (.readFileSync fs csv-path "utf8")
          lines (str/split-lines content)
          header (parse-csv-line (first lines))
          header-lower (mapv str/lower-case header)

@@ -670,7 +670,7 @@
        (mx/log (mx/stack #js [(mx/scalar 1.0) (mx/scalar 1.5) w]))))"
   [weights]
   (let [as-mx (mapv #(if (number? %) (mx/scalar %) %) weights)
-        stacked (mx/stack (clj->js as-mx) -1)
+        stacked (mx/stack as-mx -1)
         logits (mx/log (mx/maximum stacked (mx/scalar 1e-30)))]
     (categorical logits)))
 
@@ -1513,7 +1513,7 @@
          [[] 0]
          (range k))
         ;; Build A matrix
-        A (mx/reshape (mx/stack (mapv (fn [row] (mx/stack (vec row))) A-data)) [k k])
+        A (mx/reshape (mx/stack (mapv mx/stack A-data)) [k k])
         ;; W = L * A * A^T * L^T
         LA (mx/matmul cholesky-L A)
         W (mx/matmul LA (mx/transpose LA))]

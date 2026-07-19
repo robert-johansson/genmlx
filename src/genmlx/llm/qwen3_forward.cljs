@@ -159,20 +159,20 @@
                       (mx/dequantize wq scales biases
                                      {:bits t-bits :group-size gs}))]
               (mx/materialize! w)
-              w)))]
+              w)))
+        skip-fn (or skip? (constantly false))]
     (reduce-kv
      (fn [m k v]
-       (let [base    (when (.endsWith k ".weight")
-                       (subs k 0 (- (count k) (count ".weight"))))
-             sb      (when (or (.endsWith k ".scales") (.endsWith k ".biases"))
-                       (subs k 0 (- (count k) (count ".scales")))) ; same length
-             skip-fn (or skip? (constantly false))]
+       (let [base (when (str/ends-with? k ".weight")
+                    (subs k 0 (- (count k) (count ".weight"))))
+             sb   (when (or (str/ends-with? k ".scales") (str/ends-with? k ".biases"))
+                    (subs k 0 (- (count k) (count ".scales"))))] ; same length
          (cond
            ;; packed-by-request: weight AND its scales/biases pass through
            (and base (skip-fn base))  (assoc m k v)
            (and sb (skip-fn sb))      (assoc m k v)
            ;; folded into the dequantized weight below
-           (or (.endsWith k ".scales") (.endsWith k ".biases")) m
+           (or (str/ends-with? k ".scales") (str/ends-with? k ".biases")) m
            (and base (contains? weights (str base ".scales")))
            (assoc m k (dequant k base v (get weights (str base ".scales"))
                               (get weights (str base ".biases"))))

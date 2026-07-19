@@ -66,7 +66,7 @@
 ;; ---------------------------------------------------------------------------
 (def stats (atom {:calls 0 :samples 0 :gen-time 0.0 :prompt-tokens 0 :completion-tokens 0 :errors 0}))
 (defn counting-call [req]
-  (let [resp (lp/call-server server-url req)]
+  (let [resp (lp/call-server! server-url req)]
     ;; NB the worker's JSON keys keywordize with UNDERSCORES (gen_time_s, completion_tokens).
     (swap! stats #(-> %
                       (update :calls inc)

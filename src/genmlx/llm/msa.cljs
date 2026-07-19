@@ -91,7 +91,7 @@
              ;; chars in the variable name.
              esc (str/replace var-name #"[.*+?^${}()|\[\]\\]" (fn [m] (str "\\" m)))
              head-re (re-pattern (str "^\\s*" esc "\\s*[=:]\\s*"))]
-         (if-let [line (some #(when (re-find head-re (str %)) %) lines)]
+         (if-let [line (some #(when (re-find head-re %) %) lines)]
            (let [expr (-> line
                           (str/replace head-re "")
                           str/trim

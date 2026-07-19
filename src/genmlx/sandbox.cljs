@@ -118,7 +118,7 @@
 
 (defn- stderr-tail [r]
   (let [e (.-stderr r)]
-    (when (and e (seq e))
+    (when (seq e)
       (let [t (str/trim e)]
         (subs t (max 0 (- (count t) 300)))))))
 

@@ -41,7 +41,8 @@
 
    Same 6-fn interface as qwen3-forward (load-model/forward/next-token-logits/
    prefill/step/init-cache) so genmlx.llm.forward / CljsForwardModel drive it."
-  (:require [genmlx.mlx :as mx]
+  (:require [clojure.string :as str]
+            [genmlx.mlx :as mx]
             [genmlx.llm.qwen3-forward :as q3]
             ["fs" :as fs]))
 
@@ -83,7 +84,7 @@
      :n-active      (.-num_experts_per_tok tc)
      :moe-inter     (.-moe_intermediate_size tc)
      :sparse-step   (or (.-decoder_sparse_step tc) 1)
-     :mlp-only      (set (vec (or (.-mlp_only_layers tc) #js [])))
+     :mlp-only      (set (or (.-mlp_only_layers tc) #js []))
      :model-type    (.-model_type c)}))
 
 (defn- moe-layer?
@@ -165,7 +166,7 @@
         qz   (q3/load-quantization dir)]
     (when (and moe? qz)
       (doseq [[base _] (:overrides qz)]
-        (when (.includes base ".switch_mlp.")
+        (when (str/includes? base ".switch_mlp.")
           (throw (ex-info (str "qwen35 load-model: per-tensor quantization "
                                "override on packed expert tensor " base
                                " — gather-qmm runs experts at the GLOBAL "
@@ -173,7 +174,7 @@
                                "per-projection expert quantization support.")
                           {:base base :quantization qz})))))
     (let [raw     (q3/load-weights dir (when (and moe? qz)
-                                         {:skip? #(.includes % ".switch_mlp.")}))
+                                         {:skip? #(str/includes? % ".switch_mlp.")}))
           raw     (if overlay (overlay-weights raw overlay) raw)
           weights (q3/prepare-weight-transposes! raw)
           cfg     (cond-> cfg
@@ -513,7 +514,7 @@
                            (reduce #(assoc %1 %2 dim) s (range off (min limit half) 3)))
                          (vec (repeat half 0))
                          [[1 (* 3 (nth sec 1)) 1] [2 (* 3 (nth sec 2)) 2]])
-        sel  (vec (map #(nth sel-half (mod % half)) (range rope-dims)))
+        sel  (mapv #(nth sel-half (mod % half)) (range rope-dims))
         idx  (mx/astype (mx/broadcast-to (mx/array sel [1 1 rope-dims] mx/int32)
                                          [1 T rope-dims])
                         mx/int32)

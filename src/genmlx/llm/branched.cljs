@@ -178,8 +178,8 @@
       {:trace trace :weight (mx/scalar 0.0)}            ; nothing selected -> identity
       (let [s (track! (llm/branch-from model (nth old-branches k)))
             ;; new ledger SHARES the unchanged prefix [0,k) (same branch ids/logits/dfas)
-            pre-br (vec (subvec old-branches 0 k)), pre-lo (vec (subvec old-logits 0 k))
-            pre-tk (vec (subvec old-toks 0 k)),     pre-df (vec (subvec old-dfas 0 k))
+            pre-br (subvec old-branches 0 k), pre-lo (subvec old-logits 0 k)
+            pre-tk (subvec old-toks 0 k),     pre-df (subvec old-dfas 0 k)
             pre-ch (reduce (fn [c i] (cm/set-value c (t-addr i) (leaf oc i))) cm/EMPTY (range k))
             pre-sc (reduce (fn [sc i] (mx/add sc (masked-lp constraint (nth old-dfas i) (nth old-logits i) (leaf oc i))))
                            (mx/scalar 0.0) (range k))]
@@ -281,7 +281,7 @@
             accept? (u/accept-mh? w ak)
             winner (if accept? (:trace result) t)
             loser  (if accept? t (:trace result))]
-        (doseq [b (set/difference (suffix-ids loser k) (suffix-ids winner k))] (dispose! model b))
+        (run! #(dispose! model %) (set/difference (suffix-ids loser k) (suffix-ids winner k)))
         (mx/force-gc!)
         (recur winner nk (inc i) (if accept? (inc accepts) accepts)
                (max max-live (or (branch-scope-live) 0)))))))

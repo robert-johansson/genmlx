@@ -79,7 +79,7 @@
     (cond
       (:error r) r
       (fn? v) {:fn v}
-      (and (var? v) (fn? (deref v))) {:fn (deref v)}
+      (and (var? v) (fn? @v)) {:fn @v}
       :else {:error "Result is not a function"})))
 
 ;; ===========================================================================
@@ -93,7 +93,7 @@
   "Extract ClojureScript code from LLM output text (peels markdown fences / prose)."
   [text]
   (cond
-    (not (seq text))
+    (empty? text)
     ""
 
     ;; Fenced code block
@@ -155,7 +155,8 @@
          f (:fn r)]
      (if (:error r)
        {:accuracy 0.0 :total total :correct 0 :failures [] :error (:error r)}
-       (let [results (map-indexed
+       (let [results (into []
+                           (map-indexed
                        (fn [i {:keys [state action expected]}]
                          (try
                            (let [actual (f state action)]
@@ -167,8 +168,8 @@
                            (catch :default e
                              {:correct false
                               :index i :state state :action action
-                              :expected expected :actual (str "ERROR: " (.-message e))})))
-                       transitions)
+                              :expected expected :actual (str "ERROR: " (.-message e))}))))
+                           transitions)
              correct (count (filter :correct results))
              failures (vec (remove :correct results))]
          {:accuracy (if (zero? total) 1.0 (/ correct total))
@@ -199,7 +200,7 @@
   [form sym]
   (cond
     (= form sym) true
-    (sequential? form) (some #(form-contains? % sym) form)
+    (sequential? form) (boolean (some #(form-contains? % sym) form))
     :else false))
 
 (defn- count-occurrences
@@ -218,8 +219,8 @@
     (and (sequential? form) (= 'case (first form)))
     (let [branches (drop 2 form)
           values (take-nth 2 (rest branches))]
-      (some map? values))
-    (sequential? form) (some returns-map-literals? form)
+      (boolean (some map? values)))
+    (sequential? form) (boolean (some returns-map-literals? form))
     :else false))
 
 (def ^:private occurrence-weights

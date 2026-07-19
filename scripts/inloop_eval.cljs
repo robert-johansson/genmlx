@@ -62,7 +62,7 @@
 
 (def stats (atom {:calls 0 :samples 0 :gen-time 0.0 :completion-tokens 0 :errors 0}))
 (defn counting-call [req]
-  (let [resp (lp/call-server server-url req)]
+  (let [resp (lp/call-server! server-url req)]
     (swap! stats #(-> % (update :calls inc) (update :samples + (count (:completions resp)))
                       (update :gen-time + (or (:gen_time_s resp) 0))
                       (update :completion-tokens + (or (:completion_tokens resp) 0))

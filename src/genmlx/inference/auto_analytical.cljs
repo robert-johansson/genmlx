@@ -389,12 +389,13 @@
         ;; (noise-var recorded). Steps not yet executed will naturally
         ;; use the updated predecessor belief when they run.
        (if-let [nv (get noise-vars j)]
-         (let [prev-belief (get-in st [:auto-kalman-beliefs (:latent (nth steps (dec j)))])
-               transition (:transition (nth steps (dec j)))
-               new-belief (kalman-predict-belief prev-belief transition nv)]
+         (let [prev-step (nth steps (dec j))
+               latent-j (:latent (nth steps j))
+               prev-belief (get-in st [:auto-kalman-beliefs (:latent prev-step)])
+               new-belief (kalman-predict-belief prev-belief (:transition prev-step) nv)]
            (-> st
-               (assoc-in [:auto-kalman-beliefs (:latent (nth steps j))] new-belief)
-               (update :choices cm/set-value (:latent (nth steps j)) (:mean new-belief))))
+               (assoc-in [:auto-kalman-beliefs latent-j] new-belief)
+               (update :choices cm/set-value latent-j (:mean new-belief))))
          (reduced st)))
      state
      (range (inc step-idx) n))))

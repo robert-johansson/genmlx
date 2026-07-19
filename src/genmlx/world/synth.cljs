@@ -104,16 +104,12 @@
 ;; bare name resolving to a let-binding, an s-expression as itself).
 ;; ===========================================================================
 
-(defn- render-arg
-  "Render one distribution argument FORM to source text."
-  [a]
-  (pr-str a))
-
 (defn- render-dist
-  "Render a (dist/NAME args...) constructor call from a site's :dist and :args."
+  "Render a (dist/NAME args...) constructor call from a site's :dist and :args.
+   Arg forms are emitted with pr-str."
   [{:keys [dist args]}]
   (str "(dist/" dist
-       (when (seq args) (str " " (str/join " " (map render-arg args))))
+       (when (seq args) (str " " (str/join " " (map pr-str args))))
        ")"))
 
 (defn- render-site
@@ -362,7 +358,8 @@
                (let [s  (reduce #(set-noise %1 %2 g) spec (map :addr (:obs spec)))
                      fb (check (render s) observations opts)]
                  (when (scored? fb) {:evidence (:evidence fb) :feedback fb :sigma g :spec' s}))))
-       (reduce (fn [a b] (if (or (nil? a) (> (:evidence b) (:evidence a))) b a)) nil)))
+       (sort-by :evidence >)
+       first))
 
 (defn- score-candidates
   "Render + check every proposed candidate against the observations. A candidate may

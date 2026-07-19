@@ -90,7 +90,7 @@
       (throw (ex-info "pi-provider: no model loaded" {:genmlx/error :no-model})))
     (assoc model-map :path model-path)))
 
-(defn- session! [sid]
+(defn- session-or-throw [sid]
   (or (get-in @state* [:sessions sid])
       (throw (ex-info (str "pi-provider: unknown session " sid)
                       {:genmlx/error :unknown-session :sid sid}))))
@@ -105,8 +105,8 @@
       (do
         ;; swap: dispose all session branches of the old resident first
         (when-let [old (:model-map @state*)]
-          (doseq [[_ s] sessions]
-            (llm/dispose-branch! (:model old) (:branch-id s))))
+          (run! #(llm/dispose-branch! (:model old) (:branch-id %))
+                (vals sessions)))
         (swap! state* assoc :model-map nil :model-path nil :sessions {}
                :grammar-cache {} :token-index nil)
         (p/let [mm (llm/load-model path {:cljs-forward? true})]
@@ -129,7 +129,7 @@
         ;; other and disposal stays independent. The committed tokens (and
         ;; images-key) ride along so the fork's first turn DELTA-PREFILLS
         ;; over the shared prefix instead of cold-replaying it.
-        src (when fork-from (session! fork-from))
+        src (when fork-from (session-or-throw fork-from))
         _ (when (and src (:busy? src))
             (throw (ex-info (str "pi-provider: cannot fork session " fork-from
                                  " mid-turn — its branch is ahead of its "
@@ -172,7 +172,7 @@
    unchanged. Runs before EVERY sampling step; must be pure graph
    construction (masking via mx/where etc.) — no eval!/item inside."
   [sid f]
-  (session! sid)
+  (session-or-throw sid)
   (swap! state* assoc-in [:sessions sid :logit-mask] f)
   nil)
 
@@ -346,13 +346,14 @@
    as errors on the JSON for the shim to coerce)."
   [text sid-counter]
   (let [{:keys [calls errors]} (tc/parse-tool-calls text)]
-    {:toolCalls (vec (map-indexed
-                      (fn [i {tool-name :name :keys [args]}]
-                        {:id (str "call_" sid-counter "_" (inc i))
-                         :name tool-name
-                         :arguments args
-                         :status "ok"})
-                      calls))
+    {:toolCalls (into []
+                      (map-indexed
+                       (fn [i {tool-name :name :keys [args]}]
+                         {:id (str "call_" sid-counter "_" (inc i))
+                          :name tool-name
+                          :arguments args
+                          :status "ok"}))
+                      calls)
      :toolCallErrors (vec errors)}))
 
 (defn- finish-payload
@@ -468,7 +469,7 @@
 
 (defn- turn-stream* [sid messages-json config-json on-delta images-arr verifier]
   (-> (p/let [{:keys [model tokenizer]} (resident)
-              session (session! sid)
+              session (session-or-throw sid)
               _ (when (:busy? session)
                   (throw (ex-info (str "pi-provider: session " sid " has a turn in flight")
                                   {:genmlx/error :turn-in-flight :sid sid})))
@@ -558,7 +559,7 @@
 
                 :else
                 ;; text-only rebuild (edited/compacted/regenerated history)
-                (let [b (if (zero? (count committed))
+                (let [b (if (empty? committed)
                           (:branch-id session)
                           (do (llm/dispose-branch! model (:branch-id session))
                               (let [b (fresh-branch! model)]
@@ -571,7 +572,7 @@
               ;; <think> (the opener may be followed by a newline token, so
               ;; sniff the tail rather than only the last token)
               in-think0   (boolean (and think? (some? think-start)
-                                        (some #(= % think-start) (take-last 3 prompt))))
+                                        (some #{think-start} (take-last 3 prompt))))
               t0          (js/Date.now)]
           (letfn [(decode-toks [toks]
                     (llm/decode tokenizer (js/Uint32Array.from (into-array toks))))
@@ -615,7 +616,7 @@
                                          :sid sid}))))
                   (step [{:keys [i logits key gen fed sampled reasoning in-think?
                                  pending vis] :as st}]
-                    (let [sess (session! sid)]
+                    (let [sess (session-or-throw sid)]
                       (cond
                         @(:abort? sess) (finish st "aborted")
                         (>= i max-new)  (finish st "length")
@@ -687,15 +688,16 @@
                                                    :extra {:bestOfK k}}))
                               (p/let [texts (p/all (mapv #(decode-toks (:gen %)) lanes))]
                                 (let [candidates
-                                      (vec (map-indexed
-                                            (fn [j text]
-                                              (let [{:keys [toolCalls toolCallErrors]}
-                                                    (toolcalls-for-final text sid)]
-                                                {:index j :text text
-                                                 :finishReason (:reason (nth lanes j))
-                                                 :toolCalls toolCalls
-                                                 :toolCallErrors toolCallErrors}))
-                                            texts))]
+                                      (into []
+                                            (map-indexed
+                                             (fn [j text]
+                                               (let [{:keys [toolCalls toolCallErrors]}
+                                                     (toolcalls-for-final text sid)]
+                                                 {:index j :text text
+                                                  :finishReason (:reason (nth lanes j))
+                                                  :toolCalls toolCalls
+                                                  :toolCallErrors toolCallErrors})))
+                                            texts)]
                                   (p/let [widx (call-verifier
                                                 verifier candidates
                                                 (or (.-verifierTimeoutMs config) 10000))]
@@ -761,11 +763,10 @@
 
 (def engine
   "The #js turn-engine API consumed by genmlx-host.ts (GenmlxTurnEngine)."
-  #js {:loadModel  (fn [path] (load-model!* path))
-       :newSession (fn [opts-json] (new-session* opts-json))
-       :turnStream (fn [sid messages-json config-json on-delta images verifier]
-                     (turn-stream* sid messages-json config-json on-delta images verifier))
-       :abort      (fn [sid] (abort* sid))
-       :dispose    (fn [sid] (dispose* sid))})
+  #js {:loadModel  load-model!*
+       :newSession new-session*
+       :turnStream turn-stream*
+       :abort      abort*
+       :dispose    dispose*})
 
 engine

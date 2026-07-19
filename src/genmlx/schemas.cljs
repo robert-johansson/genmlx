@@ -20,17 +20,15 @@
 ;; Predicates for custom schema types
 ;; ---------------------------------------------------------------------------
 
-(defn choicemap?
+(def choicemap?
   "True if x satisfies IChoiceMap (Node, Value, TensorChoiceMap, ...).
    Protocol-based so tensor-backed choicemaps pass validated GFI paths."
-  [x]
-  (cm/choicemap? x))
+  cm/choicemap?)
 
-(defn trace?
+(def trace?
   "True for any trace representation (Trace, TensorTrace, VectorizedTrace).
    Protocol-based via tr/ITrace."
-  [x]
-  (tr/trace? x))
+  tr/trace?)
 
 ;; Named leaf schemas — reference these instead of repeating the [:fn ...] form.
 (def ChoiceMap

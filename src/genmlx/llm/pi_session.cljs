@@ -58,7 +58,7 @@
     (when (empty? numbered)
       (throw (ex-info "pi-session: empty session file"
                       {:genmlx/error :bad-session-header})))
-    (let [[[hline htext]] [(first numbered)]
+    (let [[hline htext] (first numbered)
           h (parse-line htext hline)]
       (when-not (= "session" (.-type h))
         (throw (ex-info (str "pi-session: first line is not a session header "

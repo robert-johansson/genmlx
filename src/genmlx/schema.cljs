@@ -596,7 +596,10 @@
   "Infer which gen-fn parameter determines the loop count.
    Returns index into params vector, or -1."
   [count-form params]
-  (let [pv (vec params)]
+  (let [pv  (vec params)
+        idx (fn [sym]
+              (or (first (keep-indexed (fn [i p] (when (= p sym) i)) pv))
+                  -1))]
     (cond
       (integer? count-form)
       -1
@@ -607,11 +610,11 @@
            (symbol? (first count-form))
            (= "count" (name (first count-form)))
            (symbol? (second count-form)))
-      (.indexOf pv (second count-form))
+      (idx (second count-form))
 
       ;; Plain symbol that is a param
       (symbol? count-form)
-      (.indexOf pv count-form)
+      (idx count-form)
 
       :else -1)))
 

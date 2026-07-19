@@ -63,7 +63,8 @@
             [genmlx.inference.util :as u]
             [genmlx.inference.smc :as ismc]
             [genmlx.llm.backend :as llm]
-            [genmlx.llm.grammar :as gram]))
+            [genmlx.llm.grammar :as gram]
+            [promesa.core :as pr]))
 
 ;; ===========================================================================
 ;; Decoder abstraction
@@ -291,7 +292,7 @@
              :ess-trajectory (:ess st) :decoder decoder :root root})
           (let [[kt kr knext] (rng/split-n key 3)
                 kts (rng/split-n kt n)
-                ps' (vec (map-indexed (fn [i pt] (step-particle pt t (nth kts i))) (:ps st)))
+                ps' (into [] (map-indexed (fn [i pt] (step-particle pt t (nth kts i)))) (:ps st))
                 ess (u/compute-ess (mapv :log-w ps'))
                 st' (assoc st :ps ps' :ess (conj (:ess st) ess))
                 resample? (< ess (* ess-threshold (max 1 alive)))
@@ -471,7 +472,7 @@
     (when id (try (llm/dispose-branch! model id) (catch :default _ nil)))))
 
 (defn- dispose-all! [decoder result]
-  (doseq [pt (:particles result)] (dec-dispose! decoder (:handle pt)))
+  (run! #(dec-dispose! decoder (:handle %)) (:particles result))
   (dec-dispose! decoder (:root result)))
 
 (defn- export-particles [result _model-map]
@@ -491,11 +492,9 @@
   [model-map result]
   (let [tokenizer (:tokenizer model-map)
         ps (:particles result)]
-    (-> (js/Promise.all
-         (to-array (map #(llm/decode tokenizer (js/Uint32Array.from (to-array (:tokens %)))) ps)))
-        (.then (fn [texts]
-                 (assoc result :particles
-                        (mapv (fn [pt t] (assoc pt :text t)) ps (vec texts))))))))
+    (pr/let [texts (pr/all (mapv #(llm/decode tokenizer (js/Uint32Array.from (to-array (:tokens %)))) ps))]
+      (assoc result :particles
+             (mapv (fn [pt t] (assoc pt :text t)) ps (vec texts))))))
 
 ;; ===========================================================================
 ;; Rejuvenation (v1: at filter end, via the constrained gf's regenerate —
@@ -605,8 +604,7 @@
           result (try (run-filter decoder opts prompt-ids)
                       (catch :default e
                         ;; twist/proposal threw: dispose every live handle, rethrow
-                        (doseq [h (vec (dec-live-handles decoder))]
-                          (dec-dispose! decoder h))
+                        (run! #(dec-dispose! decoder %) (vec (dec-live-handles decoder)))
                         (throw e)))
           result (rejuvenate-particles result (:rejuvenation opts))
           out {:particles (export-particles result model-map)
@@ -629,8 +627,7 @@
           (f result)
           (finally (dispose-all! decoder result))))
       (catch :default e
-        (doseq [h (vec (dec-live-handles decoder))]
-          (dec-dispose! decoder h))
+        (run! #(dec-dispose! decoder %) (vec (dec-live-handles decoder)))
         (throw e)))))
 
 (defn live-handles

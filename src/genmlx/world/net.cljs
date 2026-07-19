@@ -149,5 +149,5 @@
      ;; p/handle (not p/finally): under nbb a `p/finally` teardown followed by a
      ;; downstream `p/catch` double-settles — the catch handler runs yet the promise
      ;; stays rejected (genmlx-tb5f). p/handle stops on BOTH arms, re-raises once.
-     (-> (p/let [r (f url)] r)
+     (-> (p/do (f url))
          (p/handle (fn [r e] (stop) (if e (throw e) r)))))))

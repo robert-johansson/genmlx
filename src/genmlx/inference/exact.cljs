@@ -524,7 +524,7 @@
                                   axes))
         ;; Remap :dim values: after marginalization, remaining axes get
         ;; contiguous dims based on their relative order
-        kept-sorted (sort-by :dim (filterv #(keep-set (:addr %)) axes))
+        kept-sorted (sort-by :dim (filter #(keep-set (:addr %)) axes))
         kept-axes (into [] (map-indexed (fn [i ax] (assoc ax :dim i))) kept-sorted)
         margd (if (empty? marg-positions)
                 log-probs

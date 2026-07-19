@@ -44,7 +44,7 @@
       (= k auto-key-sentinel) (rng/fresh-key)
       k k
       :else (throw (ex-info "No PRNG key on gen-fn. Use (dyn/with-key gf key) or (dyn/auto-key gf)."
-                            {:gen-fn (.-source this)})))))
+                            {:gen-fn (:source this)})))))
 
 (defn- find-unused-constraints
   "Return set of top-level constraint keys not consumed by the trace, or nil."
@@ -56,7 +56,7 @@
           trace-keys (when (instance? cm/Node result-choices)
                        (set (keys (:m result-choices))))
           unused (set/difference constraint-keys (or trace-keys #{}))]
-      (when (seq unused) unused))))
+      (not-empty unused))))
 
 ;; ---------------------------------------------------------------------------
 ;; Trace construction helpers

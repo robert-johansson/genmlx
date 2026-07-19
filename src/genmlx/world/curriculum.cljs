@@ -364,7 +364,7 @@
   (->> (distinct (conj sigma-grid true-sigma))
        (map (fn [g] (assoc (score (build g) observations) :sigma g)))
        (filter (comp some? :ev))
-       (sort-by (comp - :ev))
+       (sort-by :ev >)
        first))
 
 (defn calibrate
@@ -583,6 +583,7 @@
         [{:edit :add-structure :desc (str "adopt " (name family) " structure")
           :spec' gold-spec}]
         ;; refinement: tune the shared observation scale over the grid.
-        (for [g sigma-grid :when (not= g (last (:args (first (:obs spec)))))]
-          {:edit :set-noise :desc (str "shared obs scale -> " g)
-           :spec' (reduce #(syn/set-noise %1 %2 g) spec (map :addr (:obs spec)))})))))
+        (let [cur-scale (last (:args (first (:obs spec))))]
+          (for [g sigma-grid :when (not= g cur-scale)]
+            {:edit :set-noise :desc (str "shared obs scale -> " g)
+             :spec' (reduce #(syn/set-noise %1 %2 g) spec (map :addr (:obs spec)))}))))))

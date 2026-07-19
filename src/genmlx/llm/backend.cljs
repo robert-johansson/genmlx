@@ -147,7 +147,7 @@
                  :next-token-logits (fn? fwd/next-token-logits)
                  :prefill           (fn? fwd/prefill)
                  :step              (fn? fwd/step)}
-        missing (->> present (remove (comp true? val)) (mapv key))]
+        missing (->> present (remove val) (mapv key))]
     (when (seq missing)
       (throw (ex-info
                (str "genmlx.llm.backend: the GenMLX-owned forward is missing "
@@ -166,7 +166,7 @@
   [model]
   (let [present {:forward          (fn? (.-forward model))
                  :forwardWithCache (fn? (.-forwardWithCache model))}
-        missing (->> present (remove (comp true? val)) (mapv key))]
+        missing (->> present (remove val) (mapv key))]
     (when (seq missing)
       (throw (ex-info
                (str "genmlx.llm.backend: the loaded mlx-node model is missing "
@@ -806,7 +806,7 @@
                    carry' (mx/index lp (dec t))
                    pieces (into [] (remove nil?) [head body])]
                ;; break the block's [T vocab] graph before the next iteration
-               (doseq [p pieces] (mx/materialize! p))
+               (apply mx/materialize! pieces)
                (mx/materialize! carry')
                (when many?
                  (fwd/materialize-cache! cache')

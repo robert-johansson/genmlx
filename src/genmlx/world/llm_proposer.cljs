@@ -20,7 +20,7 @@
    is the north-star thesis; this namespace is where the loop meets a real generator.
 
    NATIVE-FREE, like the oracle spine it complements. The policy LLM lives OUT-OF-PROCESS
-   (a resident `scripts/llm_server.py` mlx-lm worker); `call-server` is the one I/O
+   (a resident `scripts/llm_server.py` mlx-lm worker); `call-server!` is the one I/O
    boundary (a synchronous curl — the driver is synchronous, and an LLM call is a genuine
    I/O boundary). The pure core — `extract-form`, `parse-spec`, the prompt builders, and
    `make-proposer` itself (which takes an injected `:call-llm`) — needs no model and is
@@ -32,7 +32,7 @@
      3. extract-form — LLM completion -> a (fn [trace] ...) code string (the slips kept)
      4. parse-spec — code string -> a synth spec (the inverse of synth/render)
      5. make-proposer / one-shot-candidates — the injected proposer + the control
-     6. call-server — the out-of-process mlx-lm bridge (the sole I/O)"
+     6. call-server! — the out-of-process mlx-lm bridge (the sole I/O)"
   (:require [genmlx.world.synth :as syn]
             [genmlx.codegen.eval :as ce]
             [clojure.string :as str]))
@@ -194,11 +194,11 @@
   [completion]
   (when (string? completion)
     (let [t  (-> completion strip-think strip-fence str/trim)
-          fi (.search t (js/RegExp. "\\(fn\\*?[\\s\\[]"))]
+          fi (.search t #"\(fn\*?[\s\[]")]
       (if (>= fi 0)
         (let [f (balanced-from t fi)]
           (when (and f (ce/valid-cljs? f)) f))
-        (let [li (.search t (js/RegExp. "\\(let\\*?[\\s\\[]"))]
+        (let [li (.search t #"\(let\*?[\s\[]")]
           (when (>= li 0)
             (let [b (balanced-from t li)
                   w (when b (str "(fn [trace] " b ")"))]
@@ -323,7 +323,7 @@
   "The distinct (fn [trace] ...) code strings a batch of completions contains — the shared
    extract+dedup contract for both candidate builders (slips kept; nils dropped)."
   [completions]
-  (->> completions (map extract-form) (filter some?) distinct))
+  (->> completions (keep extract-form) distinct))
 
 (defn completions->candidates
   "Map raw LLM completions to driver/search candidates: extract the form (slips kept),
@@ -353,7 +353,7 @@
 
    opts:
      :call-llm     (fn [{:system :prompt :n :temperature :max_tokens :seed}]
-                       -> {:completions [str ...] ...})   REQUIRED (inject `call-server`,
+                       -> {:completions [str ...] ...})   REQUIRED (inject `call-server!`,
                    or a mock in tests).
      :task-desc    natural-language description of the data/goal (no structure given away)
      :observations the {:addr value} data, rendered into the prompt + used for the check
@@ -393,8 +393,8 @@
             ;; Strip the internal :feedback (the driver re-checks + selects).
             (mapv #(dissoc % :feedback) acc')
             ;; revise: re-prompt the most-progressed failed candidate with its own error.
-            (let [worst (last (sort-by (comp progress-level :feedback) checked))]
-              (recur (inc r) (:code worst) (:feedback worst)
+            (let [most-progressed (apply max-key (comp progress-level :feedback) checked)]
+              (recur (inc r) (:code most-progressed) (:feedback most-progressed)
                      (into seen (map :code checked)) acc'))))))))
 
 (defn one-shot-candidates
@@ -410,7 +410,7 @@
     (mapv (fn [code] {:code code}) (extract-distinct (:completions resp)))))
 
 ;; ===========================================================================
-;; 6. call-server — the out-of-process mlx-lm bridge (the sole I/O boundary)
+;; 6. call-server! — the out-of-process mlx-lm bridge (the sole I/O boundary)
 ;; ===========================================================================
 
 (def ^:private cp (js/require "child_process"))
@@ -419,7 +419,7 @@
 (def ^:private node-path (js/require "path"))
 (def ^:private req-counter (atom 0))
 
-(defn call-server
+(defn call-server!
   "Synchronous POST <url>/generate with the request map (`{:system :prompt :n
    :temperature :max_tokens :seed}`); returns the parsed worker response
    `{:completions [...] :gen-time-s :prompt-tokens :completion-tokens :model}`.

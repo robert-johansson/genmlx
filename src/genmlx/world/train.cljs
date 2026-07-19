@@ -325,7 +325,7 @@
      ;; p/handle (not p/finally): under nbb a `p/finally` teardown followed by a
      ;; downstream `p/catch` double-settles — the catch handler runs yet the promise
      ;; stays rejected. p/handle disposes on BOTH arms and re-raises exactly once.
-     (-> (p/let [r (f trainer)] r)
+     (-> (p/do (f trainer))
          (p/handle (fn [r e] (dispose! trainer) (if e (throw e) r)))))))
 
 ;; ===========================================================================

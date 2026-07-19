@@ -58,11 +58,9 @@
    :0/weight, :0/bias, :1/weight, etc."
   [layers]
   (let [all-params (into {}
-                     (mapcat (fn [[i layer]]
-                               (map (fn [[k v]]
-                                      [(keyword (str i "/" (name k))) v])
-                                    (:params layer)))
-                             (map-indexed vector layers)))]
+                     (for [[i layer] (map-indexed vector layers)
+                           [k v] (:params layer)]
+                       [(keyword (str i "/" (name k))) v]))]
     {:params all-params
      :forward (fn [x] (apply-layers x layers))
      :type :sequential
@@ -326,8 +324,8 @@
             b2s  (mx/scalar beta2)
             b2cs (mx/scalar (- 1.0 beta2))
             lrs  (mx/scalar lr)
-            epss (mx/scalar eps)]
-        (let [{:keys [params m' v']}
+            epss (mx/scalar eps)
+            {:keys [params m' v']}
               (reduce (fn [acc [k p]]
                         (let [g  (get grads k)
                               mk (mx/add (mx/multiply b1s (get m k (mx/zeros (mx/shape p))))
@@ -343,8 +341,8 @@
                               (assoc-in [:m' k] mk)
                               (assoc-in [:v' k] vk))))
                       {:params {} :m' m :v' v} params)]
-          (swap! state assoc :m m' :v v')
-          params)))))
+        (swap! state assoc :m m' :v v')
+        params))))
 
 (defn optimizer
   "Create an optimizer function: (fn [params grads] -> new-params).

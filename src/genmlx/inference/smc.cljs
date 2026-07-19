@@ -109,7 +109,7 @@
   (let [{:keys [probs]} (u/normalize-log-weights log-weights)
         ;; Deterministic part: floor(N * w_i) copies of each particle
         scaled    (mapv #(* n %) probs)
-        floors    (mapv #(js/Math.floor %) scaled)
+        floors    (mapv js/Math.floor scaled)
         n-det     (reduce + floors)
         ;; Build deterministic indices
         det-indices (into []
@@ -119,7 +119,7 @@
         n-resid   (- n n-det)]
     (if (zero? n-resid)
       det-indices
-      (let [residuals  (mapv #(- %1 %2) scaled floors)
+      (let [residuals  (mapv - scaled floors)
             resid-sum  (reduce + residuals)
             resid-probs (mapv #(/ % resid-sum) residuals)
             ;; Use systematic resampling on the residuals

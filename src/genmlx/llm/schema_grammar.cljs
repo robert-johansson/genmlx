@@ -44,13 +44,14 @@
 ;; Note: : " space , - ^ are NOT structural outside a class and stay bare.
 (def ^:private re-special #{"\\" "[" "]" "(" ")" "." "*" "+" "?" "|" "{" "}"})
 
+(def ^:private re-escape-map
+  (into {} (map (fn [c] [c (str "\\" c)])) re-special))
+
 (defn re-quote
   "Escape a literal string so it matches itself under the grammar.cljs regex
    reader. Only the structural metacharacters are backslash-escaped."
   [s]
-  (->> s
-       (map (fn [c] (let [c (str c)] (if (re-special c) (str "\\" c) c))))
-       (apply str)))
+  (str/escape s re-escape-map))
 
 ;; ============================================================
 ;; Canonical EDN serialization (schema-agnostic, for literal values)

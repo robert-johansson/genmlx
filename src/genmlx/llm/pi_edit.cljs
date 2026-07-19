@@ -49,11 +49,11 @@
    unterminated block contributes no span."
   [text]
   (loop [from 0, spans []]
-    (let [open (.indexOf text "<tool_call>\n" from)]
-      (if (neg? open)
+    (let [open (str/index-of text "<tool_call>\n" from)]
+      (if (nil? open)
         spans
-        (let [close (.indexOf text "</tool_call>" (+ open 12))]
-          (if (neg? close)
+        (let [close (str/index-of text "</tool_call>" (+ open 12))]
+          (if (nil? close)
             spans
             (recur (+ close 12)
                    (conj spans {:start open :end (+ close 12)}))))))))
@@ -85,7 +85,7 @@
           (let [total' (+ total (count piece))]
             (pr/recur (inc i) pending total' (conj acc total'))))))))
 
-(defn- check-turn! [messages k]
+(defn- check-turn [messages k]
   (let [msg (nth messages k nil)]
     (when-not (map? msg)
       (throw (ex-info (str "pi-edit: no message at index " k)
@@ -106,7 +106,7 @@
    to {:render <pa/render-turn map> :boundary-token b :keep-tokens :exact?}.
    b is span-relative; keep-tokens = span[0..b)."
   [tokenizer messages k boundary opts]
-  (check-turn! messages k)
+  (check-turn messages k)
   (pr/let [render (pa/render-turn tokenizer messages k opts)]
     (let [[s e]     (:span render)
           span-toks (subvec (:full render) s e)]
@@ -173,7 +173,7 @@
    (resample-turn model-map messages k boundary {}))
   ([model-map messages k boundary opts]
    (let [{:keys [model tokenizer]} model-map
-         msg (check-turn! messages k)
+         msg (check-turn messages k)
          eid (ps/message-entry-id msg)]
      (when (some :images messages)
        (throw (ex-info "pi-edit: image-bearing sessions are not editable in v1 (VLM replay is a follow-up)"

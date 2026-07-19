@@ -96,7 +96,7 @@
                        {:genmlx/error :images-unsupported :file file
                         :turns (mapv :index with-img)})))
      {:points  (mapv #(attach-meta % (:header session) file)
-                     (remove (set with-img) points))
+                     (remove imaged? points))
       :skipped (count with-img)})))
 
 (defn sessions->prompts

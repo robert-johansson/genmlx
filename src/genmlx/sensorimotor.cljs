@@ -54,7 +54,7 @@
 
    See PLAN_SENSORIMOTOR_NARS_GENMLX.md §3.2 and math-verifier Claim 1."
   [{:keys [alpha beta last-time] :as impl} now decay-rate]
-  (let [decay (Math/pow decay-rate (- now last-time))]
+  (let [decay (js/Math.pow decay-rate (- now last-time))]
     (assoc impl
       :alpha     (+ 1.0 (* (- alpha 1.0) decay))
       :beta      (+ 1.0 (* (- beta  1.0) decay))
@@ -285,22 +285,20 @@
                       {:genmlx/error :degenerate-particles :n-particles n})))
     (when (= max-w js/Number.POSITIVE_INFINITY)
       (throw (ex-info "a particle log-weight is +Inf — normalization is undefined"
-                      {:genmlx/error :infinite-weight :n-particles n}))))
-  (let [n      (count log-weights)
-        max-w  (apply max log-weights)
-        shifted (mapv #(Math/exp (- % max-w)) log-weights)
-        z      (apply + shifted)
-        norm   (mapv #(/ % z) shifted)
-        cumsum (vec (reductions + norm))
-        pairs  (mapv vector cumsum (range n))]
-    ;; Floating-point drift may put cumsum[n-1] just under 1.0; clamp the
-    ;; final position by including the n-1 fallback only when no bucket
-    ;; matches (rare; if it fires often, the weights are degenerate).
-    (vec
-      (for [i (range n)]
-        (let [pos (/ (+ i u) n)]
-          (or (some (fn [[c idx]] (when (<= pos c) idx)) pairs)
-              (dec n)))))))
+                      {:genmlx/error :infinite-weight :n-particles n})))
+    (let [shifted (mapv #(js/Math.exp (- % max-w)) log-weights)
+          z      (apply + shifted)
+          norm   (mapv #(/ % z) shifted)
+          cumsum (vec (reductions + norm))
+          pairs  (mapv vector cumsum (range n))]
+      ;; Floating-point drift may put cumsum[n-1] just under 1.0; clamp the
+      ;; final position by including the n-1 fallback only when no bucket
+      ;; matches (rare; if it fires often, the weights are degenerate).
+      (vec
+       (for [i (range n)]
+         (let [pos (/ (+ i u) n)]
+           (or (some (fn [[c idx]] (when (<= pos c) idx)) pairs)
+               (dec n))))))))
 
 ;; =============================================================================
 ;; The kernels: action-kernel + consequent-kernel

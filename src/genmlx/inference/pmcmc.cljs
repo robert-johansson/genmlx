@@ -96,7 +96,7 @@
         init-vals (or init-params
                       (let [trace (:trace (p/generate model args observations))]
                         (extract-param-vals trace param-addrs)))
-        _ (doseq [v init-vals] (mx/materialize! v))
+        _ (apply mx/materialize! init-vals)
         [est-key loop-key] (rng/split loop-key)
         init-log-ml (estimate-log-joint model args
                       (build-constraints param-addrs init-vals observations)
@@ -117,7 +117,7 @@
                                (mx/add pval (mx/multiply (rng/normal ki [])
                                                          (mx/scalar std))))
                              params stds propose-keys)
-              _ (doseq [v proposed] (mx/materialize! v))
+              _ (apply mx/materialize! proposed)
               ;; IS estimate of log p(θ', y)
               constraints (build-constraints param-addrs proposed observations)
               proposed-log-ml (estimate-log-joint model args constraints

@@ -97,24 +97,24 @@
    Disables the model's reasoning trace and the default repetition penalty so
    short single-word answers come through cleanly."
   [vlm image-bytes options]
-  (pr/let [opts-text (str/join "\n" (map option->line options))
-           prompt (str "What is shown in this image? Answer with EXACTLY ONE of:\n"
-                       opts-text
-                       "\n\nOutput ONLY the single word, nothing else.")
-           messages (clj->js [{:role "user" :content prompt :images [image-bytes]}])
-           config #js {:maxNewTokens 8
-                       :reasoningEffort "none"
-                       :repetitionPenalty 1.0}
-           result (.chatSessionStart vlm messages config)]
+  (let [opts-text (str/join "\n" (map option->line options))
+        prompt (str "What is shown in this image? Answer with EXACTLY ONE of:\n"
+                    opts-text
+                    "\n\nOutput ONLY the single word, nothing else.")
+        messages (clj->js [{:role "user" :content prompt :images [image-bytes]}])
+        config #js {:maxNewTokens 8
+                    :reasoningEffort "none"
+                    :repetitionPenalty 1.0}]
+    (pr/let [result (.chatSessionStart vlm messages config)]
     ;; Keep the WHOLE answer (lowercased, alphanumerics + single spaces):
     ;; taking only the first word made multi-word labels ("fire truck")
     ;; unmatchable in label->index (genmlx-xwxh). label->index normalizes
     ;; cell-type labels the same way.
-    (-> (or (.-text result) "")
-        str/lower-case
-        (str/replace #"[^a-z0-9 ]" "")
-        (str/replace #"\s+" " ")
-        str/trim)))
+      (-> (or (.-text result) "")
+          str/lower-case
+          (str/replace #"[^a-z0-9 ]" "")
+          (str/replace #"\s+" " ")
+          str/trim))))
 
 (defn classify-grid
   "Classify all cells of an N×M grid. Returns a promise of

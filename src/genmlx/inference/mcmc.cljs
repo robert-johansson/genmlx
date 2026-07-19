@@ -689,7 +689,7 @@
    consistency with the fused path."
   [samples-vec]
   {:samples (mx/stack (mapv mx/array samples-vec))
-   :final-params (mx/array (last samples-vec))
+   :final-params (mx/array (peek samples-vec))
    :chain-fn nil
    :acceptance-rate nil})
 

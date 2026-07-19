@@ -61,7 +61,7 @@
         all-ids (->> (vals enriched-children)
                      (map :all-token-ids)
                      (reduce into (:token-ids node #{})))
-        sorted-arr (js/Int32Array. (clj->js (vec (sort all-ids))))]
+        sorted-arr (js/Int32Array. (into-array (sort all-ids)))]
     (assoc node
            :children enriched-children
            :all-token-ids all-ids

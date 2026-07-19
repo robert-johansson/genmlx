@@ -216,7 +216,7 @@
                ;; method-selection labels :exact (count-trace-sites==0); scoring
                ;; it by one joint draw is NOT the marginal log p(obs). Require real
                ;; sites; otherwise score by IS, labeled honestly as :handler-is.
-               eliminable? (pos? (count (:trace-sites (:schema gf))))]
+               eliminable? (seq (:trace-sites (:schema gf)))]
            (if (and (#{:exact :kalman} method) eliminable?)
              {:log-ml (score-exact gf obs-cm) :method method}
              {:log-ml (score-is gf obs-cm n-particles)

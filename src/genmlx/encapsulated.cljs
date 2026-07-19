@@ -419,7 +419,7 @@
   (assert (instance? EncapsulatedGF enc-gf)
           "pseudo-marginal-mh: :enc-gf must be an EncapsulatedGF (see `encapsulated`)")
   (let [addr (:addr enc-gf)
-        rk (rng/ensure-key (or key (rng/fresh-key)))
+        rk (rng/ensure-key key)
         obs (cm/set-value cm/EMPTY addr y)
         ;; Initialise the trace at theta0 (draws the initial stored xi/omega).
         keyed (fn [k] (vary-meta enc-gf assoc :genmlx.dynamic/key k))

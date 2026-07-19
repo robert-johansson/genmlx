@@ -1011,7 +1011,7 @@
                     ;; the FD gradient is undefined — skip that address rather than
                     ;; report a spurious law violation on a domain artifact. The
                     ;; interior comparison (the real AD-vs-FD check) is unchanged.
-                    (if (and (js/isFinite score-plus) (js/isFinite score-minus))
+                    (if (and (js/Number.isFinite score-plus) (js/Number.isFinite score-minus))
                       (let [fd-grad (/ (- score-plus score-minus) (* 2 h))
                             analytical (ev (get grads addr))]
                         (approx= analytical fd-grad 0.05))
@@ -1262,8 +1262,7 @@
                ;; Case 1: constrain c only. Proposal samples a, b from priors.
                ;; weight = lp(c|a,b). Factorization: weight = score - lp(a) - lp(b).
                (let [ok1
-                     (every? true?
-                             (for [seed (range 5)]
+                     (every? (fn [seed]
                                (let [m (dyn/with-key model (rng/fresh-key seed))
                                      {:keys [trace weight]} (p/generate m []
                                                                         (cm/choicemap :c (mx/scalar 3.0)))
@@ -1276,12 +1275,12 @@
                                      lp-b (ev (dist/log-prob (dist/laplace (mx/scalar a) 1)
                                                              (mx/scalar b)))
                                      log-q (+ lp-a lp-b)]
-                                 (approx= w (- s log-q) 0.01))))
+                                 (approx= w (- s log-q) 0.01)))
+                             (range 5))
                      ;; Case 2: constrain a and c. Only b unconstrained.
                      ;; weight = lp(a) + lp(c|a,b). Factorization: weight = score - lp(b|a).
                      ok2
-                     (every? true?
-                             (for [seed (range 5)]
+                     (every? (fn [seed]
                                (let [m (dyn/with-key model (rng/fresh-key seed))
                                      constraints (cm/choicemap :a (mx/scalar 0.7)
                                                                :c (mx/scalar 3.0))
@@ -1292,7 +1291,8 @@
                                ;; log q(b) = lp(b|a=0.7)
                                      log-q (ev (dist/log-prob (dist/laplace (mx/scalar 0.7) 1)
                                                               (mx/scalar b)))]
-                                 (approx= w (- s log-q) 0.01))))]
+                                 (approx= w (- s log-q) 0.01)))
+                             (range 5))]
                  (and ok1 ok2))))}
 
    ;; ===================================================================
@@ -2111,9 +2111,8 @@
                                   _ (mx/materialize! x eps)]
                               [(cm/set-value tcm :x (mx/add x eps))
                                (cm/set-value acm :eps (mx/negative eps))]))]
-               (every? true?
-                 (for [seed (range 20)]
-                   (let [k (rng/fresh-key seed)
+               (every? (fn [seed]
+                 (let [k (rng/fresh-key seed)
                          [k1 k2] (rng/split k)
                          x-val (mx/realize (rng/normal k1 []))
                          eps-val (mx/realize (rng/normal k2 []))
@@ -2123,8 +2122,9 @@
                          [tcm2 acm2] (inv-fn tcm1 acm1)
                          x-rt (choice-num tcm2 :x)
                          eps-rt (choice-num acm2 :eps)]
-                     (and (approx= x-val x-rt 1e-6)
-                          (approx= eps-val eps-rt 1e-6)))))))}
+                   (and (approx= x-val x-rt 1e-6)
+                        (approx= eps-val eps-rt 1e-6))))
+                       (range 20))))}
 
    {:name :involutive-mh-weight-formula
     :from "[T] Eq 3.15 — symmetric translator weight"
@@ -2147,9 +2147,8 @@
                                   x))))
                    obs (cm/choicemap :y (mx/scalar 2.0))
                    test-points [[1.0 0.5] [0.5 -0.3] [2.0 -1.0] [1.6 0.1]]]
-               (every? true?
-                 (for [[x-val eps-val] test-points]
-                   (let [;; Score at x
+               (every? (fn [[x-val eps-val]]
+                 (let [;; Score at x
                          choices-old (cm/choicemap :x (mx/scalar x-val) :y (mx/scalar 2.0))
                          {:keys [trace]} (p/generate model [] choices-old)
                          _ (mx/materialize! (:score trace))
@@ -2168,7 +2167,8 @@
                          {:keys [weight]} (p/update model trace choices-new)
                          _ (mx/materialize! weight)
                          actual (ev weight)]
-                     (approx= actual expected 1e-4))))))}
+                   (approx= actual expected 1e-4)))
+                       test-points)))}
 
    {:name :involutive-mh-convergence
     :from "[T] Eq 3.17 — involutive MCMC acceptance produces correct posterior"
@@ -2268,11 +2268,11 @@
                                                          (mx/divide (transl/read-choice in :x) (mx/scalar 2.0)))
                                     :aux cm/EMPTY :log-det-jacobian (mx/scalar (- (js/Math.log 2)))})
                    ttr (transl/trace-translator {:p2 P2 :h h})]
-               (every? true?
-                       (for [seed (range 6)]
+               (every? (fn [seed]
                          (let [in-tr (p/simulate (dyn/with-key P1 (rng/fresh-key seed)) [])
                                {:keys [weight]} (transl/apply-translator ttr in-tr [] (rng/fresh-key (+ 50 seed)))]
-                           (approx= (ev weight) 0.0 1e-4))))))}
+                           (approx= (ev weight) 0.0 1e-4)))
+                       (range 6))))}
 
    {:name :translator-bijection-roundtrip
     :from "[T] §3.7 — the split/merge bijection is invertible"
@@ -2317,8 +2317,7 @@
                                             (cm/set-value :u  (mx/divide (mx/subtract m2 m1) (mx/scalar 2.0))))
                                  :aux cm/EMPTY
                                  :log-det-jacobian (mx/scalar (- (js/Math.log 2)))}))})]
-               (every? true?
-                       (for [seed (range 6)]
+               (every? (fn [seed]
                          (let [in-tr (p/simulate (dyn/with-key P1 (rng/fresh-key seed)) [])
                                s (transl/apply-translator split in-tr [] (rng/fresh-key (+ 70 seed)))
                                m (transl/apply-translator mrg (:trace s) [] (rng/fresh-key (+ 90 seed)))
@@ -2334,7 +2333,8 @@
                                 (approx= (+ (ev (:log-det-jacobian s))
                                             (ev (:log-det-jacobian m))) 0.0 1e-9)
                                 ;; (c) detailed balance: the two weights sum to 0
-                                (approx= (+ (ev (:weight s)) (ev (:weight m))) 0.0 1e-4)))))))}
+                                (approx= (+ (ev (:weight s)) (ev (:weight m))) 0.0 1e-4))))
+                       (range 6))))}
 
    {:name :reversible-jump-detailed-balance
     :from "[T] §3.7.4, Eq 3.12 — split/merge reversible-jump weights are reciprocal"
@@ -2414,7 +2414,7 @@
         {:name (:name law) :pass? ok? :theorem (:theorem law)})
       (catch :default e
         {:name (:name law) :pass? false :theorem (:theorem law)
-         :error (.-message e)}))))
+         :error (ex-message e)}))))
 
 (defn verify
   "Run GFI laws against a model. Returns structured report.
@@ -2434,10 +2434,11 @@
                    :else laws)
         results (mapv
                  (fn [law]
-                   (let [trials (for [_ (range n-trials)]
-                                  (try
-                                    ((:check law) {:model model :args args})
-                                    (catch :default _ false)))
+                   (let [trials (mapv (fn [_]
+                                        (try
+                                          ((:check law) {:model model :args args})
+                                          (catch :default _ false)))
+                                      (range n-trials))
                          passes (count (filter true? trials))
                          fails (- n-trials passes)]
                      {:name (:name law)

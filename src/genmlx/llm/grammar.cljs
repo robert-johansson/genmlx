@@ -25,7 +25,8 @@
             [genmlx.dist :as dist]
             [genmlx.handler :as h]
             [genmlx.dispatch :as dispatch]
-            [clojure.set :as set]))
+            [clojure.set :as set]
+            [clojure.string :as str]))
 
 ;; ============================================================
 ;; Character sets
@@ -93,8 +94,8 @@
    Anchors anywhere ELSE are now a loud parse error (excluded from lit);
    match a literal ^ or $ by escaping it."
   [s]
-  (let [s (if (.startsWith s "^") (subs s 1) s)]
-    (if (and (.endsWith s "$")
+  (let [s (if (str/starts-with? s "^") (subs s 1) s)]
+    (if (and (str/ends-with? s "$")
              ;; unescaped: an even number of backslashes precedes the $
              (even? (count (re-find #"\\*$" (subs s 0 (dec (count s)))))))
       (subs s 0 (dec (count s)))
@@ -120,7 +121,7 @@
     (insta/transform
       {:number     (fn [s] (js/parseInt s))
        :lit        (fn [c] [:lit c])
-       :dot        (fn [] [:class printable-chars])
+       :dot        (constantly [:class printable-chars])
        :escape     (fn [c]
                      (case c
                        "d" [:class digit-chars]
@@ -167,14 +168,14 @@
                      (reduce (fn [acc item]
                                (if (set? item) (into acc item) (conj acc item)))
                              #{} items))
-       :neg        (fn [] :neg)
+       :neg        (constantly :neg)
        :class      (fn [& args]
                      (if (= (first args) :neg)
                        [:class (set/difference printable-chars (second args))]
                        [:class (first args)]))
-       :star       (fn [] :star)
-       :plus       (fn [] :plus)
-       :opt        (fn [] :opt)
+       :star       (constantly :star)
+       :plus       (constantly :plus)
+       :opt        (constantly :opt)
        :repeat-exact (fn [n] [:repeat n n])
        :repeat-range (fn [n & [m]] [:repeat n (or m max-unbounded-repeat)])
        :quant      (fn [node & [q]]
@@ -416,7 +417,7 @@
   "Convert a BPE token string to actual text."
   [decoder tok-str]
   (when tok-str
-    (apply str (map #(get decoder (str %) (str %)) tok-str))))
+    (apply str (map #(get decoder % %) tok-str))))
 
 (defn build-token-index
   "Build a vector mapping token-id → decoded text string.
@@ -464,7 +465,7 @@
   (let [m (js/Map.)]
     (dotimes [i (count token-index)]
       (let [t (nth token-index i)]
-        (when (and t (pos? (count t)))
+        (when (seq t)
           (let [c (.charAt t 0)
                 arr (or (.get m c) (let [a (array)] (.set m c a) a))]
             (.push arr i)))))

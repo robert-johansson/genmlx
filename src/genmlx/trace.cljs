@@ -96,7 +96,7 @@
   ([a b]
    (let [a (if (contains? score-type-rank a) a :joint)
          b (if (contains? score-type-rank b) b :joint)]
-     (if (>= (score-type-rank a) (score-type-rank b)) a b))))
+     (max-key score-type-rank a b))))
 
 (defn assert-joint!
   "Throw unless trace is joint-scored. Consumers whose math requires joint

@@ -472,15 +472,15 @@
                     (into {} (map (fn [t] [(:name t) (set (map :name (:params t)))])
                                   tools)))]
      (loop [s text calls [] errors []]
-       (let [open (.indexOf s "<tool_call>\n")]
-         (if (neg? open)
+       (let [open (str/index-of s "<tool_call>\n")]
+         (if (nil? open)
            {:calls calls
             :errors (cond-> errors
-                      (>= (.indexOf s "<tool_call>") 0)
+                      (str/includes? s "<tool_call>")
                       (conj "unterminated/misformatted <tool_call> opener"))}
            (let [after (subs s (+ open 12))
-                 close (.indexOf after "</tool_call>")]
-             (if (neg? close)
+                 close (str/index-of after "</tool_call>")]
+             (if (nil? close)
                {:calls calls :errors (conj errors "unclosed <tool_call>")}
                (let [inside (subs after 0 close)
                      parsed (parse-block inside)

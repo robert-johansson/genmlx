@@ -266,7 +266,7 @@
         nW    (inc D)                       ; W_0..W_D
         S     (* 2 nW)                       ; + G_0..G_D
         A     2                              ; 0 = wait, 1 = work
-        w-idx (fn [w] w)
+        w-idx identity
         g-idx (fn [w] (+ nW w))
         ns-fn (fn [s a]
                 (if (< s nW)

@@ -94,7 +94,7 @@
                      (update :completion-tokens + (or (:completion_tokens resp) 0))
                      (update :errors + (if (:error resp) 1 0))))))
 (defn- counting-call [arm req]
-  (let [resp (lp/call-server server-url req)]
+  (let [resp (lp/call-server! server-url req)]
     (when (:error resp) (println "    [llm error/" arm "]" (:error resp)))
     (bump! arm resp) resp))
 (defn- mock-call

@@ -473,7 +473,7 @@
      :else (mapcat (fn [[k sub]] (leaf-paths sub (conj prefix k)))
                    (cm/-submaps cmap)))))
 
-(defn- get-path [cmap path] (cm/get-choice cmap path))
+(def ^:private get-path cm/get-choice)
 
 (defn- subset-choicemap
   "Choicemap holding the simulated values at a deterministic subset of leaf

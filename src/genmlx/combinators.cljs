@@ -924,7 +924,7 @@
         old-args (:args trace)
         [old-n init-state & extra] old-args
         prev-state (if (seq (:retval trace))
-                     (last (:retval trace))
+                     (peek (:retval trace))
                      init-state)
         ;; Attach PRNG key — must use :genmlx.dynamic/key (not ::key)
         keyed-kern (vary-meta kern assoc :genmlx.dynamic/key key)

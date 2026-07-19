@@ -285,8 +285,8 @@
         cols (mapv #(if (= 1 (count %)) (vec (repeat k (first %))) %) cols)]
     (mapv (fn [l]
             (let [full (mapv #(nth % l) cols)
-                  idx  (.indexOf (clj->js full) eos-id)]
-              (if (neg? idx) full (subvec full 0 (inc idx)))))
+                  pre  (count (take-while #(not= % eos-id) full))]
+              (if (= pre (count full)) full (subvec full 0 (inc pre)))))
           (range k))))
 
 (defn decode-vtrace

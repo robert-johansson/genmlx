@@ -106,9 +106,10 @@
     (let [mh-opts {:samples (opt opts 200 :samples)
                    :burn (opt opts 100 :burn)
                    :key (:key opts)}
-          traces (mcmc/mh mh-opts model args data)]
-      {:trace (last traces)
-       :posterior (extract-posterior (last traces) data)
+          traces (mcmc/mh mh-opts model args data)
+          final (last traces)]
+      {:trace final
+       :posterior (extract-posterior final data)
        :log-ml nil
        :samples traces})
 
