@@ -46,7 +46,7 @@
 
    GOTCHA (load-bearing, empirically confirmed): a `Bun.serve` `fetch` handler MUST
    return a plain `Response` or a NATIVE `Promise` (`.then` chain). A promesa
-   (`p/let`/`p/then`) promise is NOT `instanceof js/Promise`, so Bun does NOT await
+   (`pr/let`/`pr/then`) promise is NOT `instanceof js/Promise`, so Bun does NOT await
    it — it falls through to a default HTTP 200 'Welcome to Bun' page (worse than a
    hang: the client then JSON-parses HTML and fails downstream). `serve!` therefore
    reads the request body via a native `.then` chain. Client-side promesa is fine.
@@ -55,7 +55,7 @@
    `request` returns a promise and the rollout loop is a promesa loop; the per-step
    decision math between crossings stays pure and synchronous (CLAUDE.md's
    'sync math, async events')."
-  (:require [promesa.core :as p]))
+  (:require [promesa.core :as pr]))
 
 (def ^:private Bun (.-Bun js/globalThis))
 
@@ -87,8 +87,8 @@
                  #js {:method  "POST"
                       :headers #js {"content-type" "application/json"}
                       :body    (js/JSON.stringify (clj->js payload))})
-       (p/then (fn [resp] (.json resp)))
-       (p/then (fn [j] (js->clj j :keywordize-keys true))))))
+       (pr/then (fn [resp] (.json resp)))
+       (pr/then (fn [j] (js->clj j :keywordize-keys true))))))
 
 ;; ===========================================================================
 ;; B. SERVER LIFECYCLE — the RESOURCE BOUNDARY (scaffolding for the peer side)
@@ -96,7 +96,7 @@
 ;;
 ;; The ONE mutable boundary of this face: a live Bun.serve listener (a process-level
 ;; OS resource). It is created, used within a scope, and torn down — never escaping
-;; pure flow. `with-server` is the blessed scope (p/handle teardown); `serve!` is
+;; pure flow. `with-server` is the blessed scope (pr/handle teardown); `serve!` is
 ;; the escape hatch. A leaked listener never lets the process exit, so teardown is a
 ;; first-class requirement (a leak would wedge the slow-tier test cap like a hang).
 
@@ -146,8 +146,8 @@
   ([handler f] (with-server handler {} f))
   ([handler opts f]
    (let [{:keys [url stop]} (serve! handler opts)]
-     ;; p/handle (not p/finally): under nbb a `p/finally` teardown followed by a
-     ;; downstream `p/catch` double-settles — the catch handler runs yet the promise
-     ;; stays rejected (genmlx-tb5f). p/handle stops on BOTH arms, re-raises once.
-     (-> (p/do (f url))
-         (p/handle (fn [r e] (stop) (if e (throw e) r)))))))
+     ;; pr/handle (not pr/finally): under nbb a `pr/finally` teardown followed by a
+     ;; downstream `pr/catch` double-settles — the catch handler runs yet the promise
+     ;; stays rejected (genmlx-tb5f). pr/handle stops on BOTH arms, re-raises once.
+     (-> (pr/do (f url))
+         (pr/handle (fn [r e] (stop) (if e (throw e) r)))))))

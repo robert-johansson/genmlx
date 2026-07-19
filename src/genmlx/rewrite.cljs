@@ -15,7 +15,7 @@
   (:require [clojure.set :as set]
             [genmlx.dep-graph :as dep-graph]
             [genmlx.affine :as affine]
-            [genmlx.conjugacy :as conj-detect]
+            [genmlx.conjugacy :as cnj]
             [genmlx.inference.auto-analytical :as auto]
             [genmlx.linear-gaussian :as lg]
             [genmlx.handler :as h]))
@@ -183,8 +183,8 @@
         ;; scalar elimination — drop those pairs entirely (genmlx-b470).
         ;; Decline priors conjugate to >1 obs family (no correct single-family
         ;; scalar elimination — genmlx-1thx) in addition to multi-parent obs.
-        remaining-pairs (conj-detect/drop-mixed-family-priors
-                         (conj-detect/drop-multi-parent-pairs
+        remaining-pairs (cnj/drop-mixed-family-priors
+                         (cnj/drop-multi-parent-pairs
                           (vec (remove (fn [p]
                                          (or (contains? claimed (:prior-addr p))
                                              (contains? claimed (:obs-addr p))))

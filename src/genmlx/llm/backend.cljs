@@ -13,7 +13,7 @@
             ;; jq6l: the owned VLM prefill (vision tower + M-RoPE decoder
             ;; prefill) — the images route of forward-prefill on the owned path.
             [genmlx.llm.qwen35-vision-forward :as vfwd]
-            [promesa.core :as p]
+            [promesa.core :as pr]
             ["fs" :as fs]))
 
 ;; ---------------------------------------------------------------------------
@@ -235,9 +235,9 @@
    remains separate."
   ([model-path] (load-model model-path {}))
   ([model-path opts]
-   (p/let [model-type (detect-model-type model-path)
-           tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
-                                      (str model-path "/tokenizer.json"))]
+   (pr/let [model-type (detect-model-type model-path)
+            tokenizer (.fromPretrained (.-Qwen3Tokenizer mlx-core)
+                                       (str model-path "/tokenizer.json"))]
      ;; genmlx-5luk (re-gated, mlx-2h4l): on Metal, refuse a crashing native MoE
      ;; forward BEFORE the native .load below, so callers get a CATCHABLE
      ;; rejection instead of the uncatchable SIGTRAP the native MoE prefill raises
@@ -245,11 +245,11 @@
      ;; MoE forward is verified safe, so unsupported-native-moe? is false there and
      ;; load proceeds. Opt in with {:allow-native-moe? true} to bypass on Metal.
      (if (unsupported-native-moe? model-type opts)
-       ;; Return a REJECTED promise, not (throw …): a throw inside this p/let body
+       ;; Return a REJECTED promise, not (throw …): a throw inside this pr/let body
        ;; is wrapped by promesa/nbb and loses the ex-info data, so a caller's
-       ;; p/catch would see the message but not :genmlx/error. p/rejected carries
+       ;; pr/catch would see the message but not :genmlx/error. pr/rejected carries
        ;; the ex-info object through intact.
-       (p/rejected
+       (pr/rejected
         (ex-info
          (str "genmlx.llm/load-model: model_type \"" model-type "\" is not "
               "supported on this Metal backend — its native MoE forward crashes "
@@ -278,7 +278,7 @@
                       (atom {:next-id 1 :branches {}}))
               :tokenizer tokenizer
               :type (keyword model-type)})
-           (p/let [model (load-upstream-model model-type model-path)]
+           (pr/let [model (load-upstream-model model-type model-path)]
              ;; Tier-B (upstream path): assert the loaded instance exposes the
              ;; native forward methods — catches the genmlx-7siy stale prebuilt.
              (assert-upstream-forward! model)
@@ -1005,7 +1005,7 @@
                              :always       (conj {:role "user" :content prompt})))
          config   (clj->js (cond-> {:maxNewTokens max-tokens :temperature temperature}
                              reasoning-effort (assoc :reasoningEffort reasoning-effort)))]
-     (p/let [result (.chatSessionStart model messages config)]
+     (pr/let [result (.chatSessionStart model messages config)]
        (.-text result)))))
 
 (defn generate-text-raw+
@@ -1054,7 +1054,7 @@
                   ;; garbage in JSONL). gen-ms is captured before the decode,
                   ;; per the docstring (through the last decoded token).
                   (let [gen-ms (- (.now js/Date) t0)]
-                    (p/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
+                    (pr/let [text (decode tokenizer (js/Uint32Array.from (clj->js acc)))]
                       {:text text
                        :n-tokens (count acc)
                        :gen-ms gen-ms})))
@@ -1066,8 +1066,8 @@
                   (let [[sample-key next-key] (rng/split rk)]
                     [(mx/item (rng/categorical sample-key (mx/multiply logits inv-temp)))
                      next-key])))]
-     (p/let [ids-raw (encode tokenizer chat-str true)
-             prompt-ids (vec ids-raw)]
+     (pr/let [ids-raw (encode tokenizer chat-str true)
+              prompt-ids (vec ids-raw)]
        (init-cache! model)
        (try
          (loop [i 0
@@ -1092,5 +1092,5 @@
    just the text string; see generate-text-raw+ for the opts."
   ([model-map prompt] (generate-text-raw model-map prompt {}))
   ([model-map prompt opts]
-   (p/let [r (generate-text-raw+ model-map prompt opts)]
+   (pr/let [r (generate-text-raw+ model-map prompt opts)]
      (:text r))))

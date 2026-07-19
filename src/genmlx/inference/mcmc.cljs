@@ -11,7 +11,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.trace :as tr]
             [genmlx.dynamic :as dyn]
-            [genmlx.vectorized :as vz]
+            [genmlx.vectorized :as vect]
             [genmlx.inference.util :as u]
             [genmlx.inference.kernel :as kern]
             [genmlx.learning :as learn]))
@@ -766,7 +766,7 @@
         ;; (genmlx-da04: 3 syncs/move -> 1 was a dominant per-move residual).
         u (rng/uniform accept-key [n])
         accept-mask (mx/less (mx/log u) w)
-        merged (vz/merge-vtraces-by-mask vtrace proposed accept-mask)]
+        merged (vect/merge-vtraces-by-mask vtrace proposed accept-mask)]
     (mx/materialize! (:score merged))
     merged))
 

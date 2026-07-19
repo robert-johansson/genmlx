@@ -73,7 +73,7 @@
             [genmlx.llm.toolcall :as tc]
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
-            [promesa.core :as p]))
+            [promesa.core :as pr]))
 
 (defonce ^:private state*
   (atom {:model-map nil :model-path nil :sessions {} :next-session 1}))
@@ -101,7 +101,7 @@
 (defn- load-model!* [path]
   (let [{:keys [model-path sessions]} @state*]
     (if (= path model-path)
-      (p/resolved (clj->js {:path path :reused true}))
+      (pr/resolved (clj->js {:path path :reused true}))
       (do
         ;; swap: dispose all session branches of the old resident first
         (when-let [old (:model-map @state*)]
@@ -109,7 +109,7 @@
                 (vals sessions)))
         (swap! state* assoc :model-map nil :model-path nil :sessions {}
                :grammar-cache {} :token-index nil)
-        (p/let [mm (llm/load-model path {:cljs-forward? true})]
+        (pr/let [mm (llm/load-model path {:cljs-forward? true})]
           (when-not (llm/cljs-forward-model? (:model mm))
             (throw (ex-info "pi-provider: checkpoint did not load on the owned forward"
                             {:genmlx/error :not-owned-forward :path path})))
@@ -229,7 +229,7 @@
    engine test). Returns a promise of {:piece string :pending vector}."
   [decode-fn pending tok]
   (let [pending' (conj pending tok)]
-    (p/let [s (decode-fn pending')]
+    (pr/let [s (decode-fn pending')]
       (if (and (seq s)
                (== 0xFFFD (.charCodeAt s (dec (count s))))
                (< (count pending') max-pending-detok))
@@ -422,14 +422,14 @@
    index. Absent verifier, throw, timeout, or malformed answer -> 0."
   [verifier candidates timeout-ms]
   (if-not (fn? verifier)
-    (p/resolved 0)
-    (-> (p/race [(-> (p/resolved nil)
-                     (p/then (fn [_] (verifier (js/JSON.stringify
-                                                (clj->js {:candidates candidates})))))
-                     (p/then (fn [res] (verifier-winner res (count candidates)))))
-                 (p/delay timeout-ms ::timeout)])
-        (p/then (fn [r] (if (= r ::timeout) 0 r)))
-        (p/catch (fn [_] 0)))))
+    (pr/resolved 0)
+    (-> (pr/race [(-> (pr/resolved nil)
+                      (pr/then (fn [_] (verifier (js/JSON.stringify
+                                                  (clj->js {:candidates candidates})))))
+                      (pr/then (fn [res] (verifier-winner res (count candidates)))))
+                  (pr/delay timeout-ms ::timeout)])
+        (pr/then (fn [r] (if (= r ::timeout) 0 r)))
+        (pr/catch (fn [_] 0)))))
 
 (defn- decode-k-lanes!
   "Advance K lockstep lanes on branch `fork-id` until every lane stops or
@@ -439,11 +439,11 @@
    forward-branch-batched). Finished lanes are fed EOS padding; their
    outputs are ignored. Resolves to {:lanes [{:gen :reason}] :aborted?}."
   [model fork-id logits0 k lane-keys scfg max-new eos-id abort?*]
-  (p/loop [i 0
-           lanes (mapv (fn [key] {:gen [] :key key :done false :reason "length"})
-                       lane-keys)
-           logits logits0
-           scalar? true]
+  (pr/loop [i 0
+            lanes (mapv (fn [key] {:gen [] :key key :done false :reason "length"})
+                        lane-keys)
+            logits logits0
+            scalar? true]
     (if (or @abort?* (every? :done lanes) (>= i max-new))
       {:lanes (mapv #(select-keys % [:gen :reason]) lanes)
        :aborted? (boolean @abort?*)}
@@ -463,35 +463,35 @@
                           lanes)]
         (llm/sweep-tick! i sweep-every)
         (if (every? :done sampled)
-          (p/recur (inc i) (mapv #(dissoc % :tok) sampled) logits scalar?)
+          (pr/recur (inc i) (mapv #(dissoc % :tok) sampled) logits scalar?)
           (let [toks    (mapv :tok sampled)
                 logits' (llm/forward-branch-batched
                          model fork-id (mx/array toks [k] mx/int32))]
-            (p/recur (inc i) (mapv #(dissoc % :tok) sampled) logits' false)))))))
+            (pr/recur (inc i) (mapv #(dissoc % :tok) sampled) logits' false)))))))
 
 (defn- turn-stream* [sid messages-json config-json on-delta images-arr verifier]
-  (-> (p/let [{:keys [model tokenizer]} (resident)
-              session (session-or-throw sid)
-              _ (when (:busy? session)
-                  (throw (ex-info (str "pi-provider: session " sid " has a turn in flight")
-                                  {:genmlx/error :turn-in-flight :sid sid})))
-              messages (js/JSON.parse messages-json)
-              config   (js/JSON.parse config-json)
-              ;; 5aah: rebind image bytes (the non-JSON leg of the seam) onto
-              ;; their messages so the Rust renderer emits vision markers.
-              images   (reattach-images! messages images-arr)
-              ;; maww: the K-lane (batched best-of-K) decode entry.
-              best-of-k (or (.-bestOfK config) 1)
-              k-mode?   (and (number? best-of-k) (> best-of-k 1))
-              think?   (enable-thinking? config)
-              _ (when (and k-mode? think?)
-                  (throw (ex-info (str "pi-provider: bestOfK=" best-of-k " does not "
-                                       "compose with thinking in v1 — set "
-                                       "reasoningEffort none for best-of-K turns.")
-                                  {:genmlx/error :best-of-k-thinking-unsupported})))
-              tools    (.-tools config)
-              rendered (.applyChatTemplate tokenizer messages true
-                                           (or tools js/undefined) think?)]
+  (-> (pr/let [{:keys [model tokenizer]} (resident)
+               session (session-or-throw sid)
+               _ (when (:busy? session)
+                   (throw (ex-info (str "pi-provider: session " sid " has a turn in flight")
+                                   {:genmlx/error :turn-in-flight :sid sid})))
+               messages (js/JSON.parse messages-json)
+               config   (js/JSON.parse config-json)
+               ;; 5aah: rebind image bytes (the non-JSON leg of the seam) onto
+               ;; their messages so the Rust renderer emits vision markers.
+               images   (reattach-images! messages images-arr)
+               ;; maww: the K-lane (batched best-of-K) decode entry.
+               best-of-k (or (.-bestOfK config) 1)
+               k-mode?   (and (number? best-of-k) (> best-of-k 1))
+               think?   (enable-thinking? config)
+               _ (when (and k-mode? think?)
+                   (throw (ex-info (str "pi-provider: bestOfK=" best-of-k " does not "
+                                        "compose with thinking in v1 — set "
+                                        "reasoningEffort none for best-of-K turns.")
+                                   {:genmlx/error :best-of-k-thinking-unsupported})))
+               tools    (.-tools config)
+               rendered (.applyChatTemplate tokenizer messages true
+                                            (or tools js/undefined) think?)]
         (vreset! (:abort? session) false)
         (swap! state* assoc-in [:sessions sid :busy?] true)
         (let [prompt      (vec (js/Array.from rendered))
@@ -593,12 +593,12 @@
                   (flush-pending [{:keys [pending] :as st}]
                     ;; force out held-back tokens (mode switch / end of turn)
                     (if (empty? pending)
-                      (p/resolved st)
-                      (p/let [piece (decode-toks pending)]
+                      (pr/resolved st)
+                      (pr/let [piece (decode-toks pending)]
                         (record-piece (assoc st :pending []) piece))))
                   (finish [state reason]
-                    (p/let [{:keys [fed sampled reasoning think-pieces text-pieces key]}
-                            (flush-pending state)]
+                    (pr/let [{:keys [fed sampled reasoning think-pieces text-pieces key]}
+                             (flush-pending state)]
                       (let [gen-text   (apply str text-pieces)
                             think-text (apply str think-pieces)]
                         (swap! state* update-in [:sessions sid] assoc
@@ -649,12 +649,12 @@
                               (if think-marker?
                                 ;; marker: flush held text under the pre-marker
                                 ;; mode, then switch — marker text never leaks
-                                (p/let [st' (flush-pending base)]
+                                (pr/let [st' (flush-pending base)]
                                   (step (assoc st'
                                                :logits (llm/forward-branch model branch tok)
                                                :in-think? (= tok think-start))))
                                 ;; incremental detok: decode only pending+tok
-                                (p/let [{:keys [piece] :as dt} (detok-step decode-toks pending tok)]
+                                (pr/let [{:keys [piece] :as dt} (detok-step decode-toks pending tok)]
                                   (step (-> base
                                             (assoc :logits (llm/forward-branch model branch tok)
                                                    :pending (:pending dt))
@@ -673,10 +673,10 @@
                           ks        (rng/split-n (:key session) (inc k))
                           lane-keys (vec (take k ks))
                           sess-key' (peek ks)]
-                      (-> (p/let [{:keys [lanes aborted?]}
-                                  (decode-k-lanes! model fork logits0 k lane-keys
-                                                   scfg max-new eos-id
-                                                   (:abort? session))]
+                      (-> (pr/let [{:keys [lanes aborted?]}
+                                   (decode-k-lanes! model fork logits0 k lane-keys
+                                                    scfg max-new eos-id
+                                                    (:abort? session))]
                             (if aborted?
                               (do (commit-k! sess-key')
                                   (finish-payload {:gen-text "" :think-text ""
@@ -686,7 +686,7 @@
                                                    :sampled 0 :reasoning 0
                                                    :cached cached :sid sid
                                                    :extra {:bestOfK k}}))
-                              (p/let [texts (p/all (mapv #(decode-toks (:gen %)) lanes))]
+                              (pr/let [texts (pr/all (mapv #(decode-toks (:gen %)) lanes))]
                                 (let [candidates
                                       (into []
                                             (map-indexed
@@ -698,9 +698,9 @@
                                                   :toolCalls toolCalls
                                                   :toolCallErrors toolCallErrors})))
                                             texts)]
-                                  (p/let [widx (call-verifier
-                                                verifier candidates
-                                                (or (.-verifierTimeoutMs config) 10000))]
+                                  (pr/let [widx (call-verifier
+                                                 verifier candidates
+                                                 (or (.-verifierTimeoutMs config) 10000))]
                                     (let [wc (nth candidates widx)
                                           wl (nth lanes widx)]
                                       (emit! (:text wc) false)
@@ -716,23 +716,23 @@
                                         :cached cached :sid sid
                                         :extra {:bestOfK k :winnerIndex widx
                                                 :candidateCount (count candidates)}})))))))
-                          ;; p/handle, not p/finally: a downstream p/catch (line
-                          ;; ~698) after a p/finally teardown double-settles under
+                          ;; pr/handle, not pr/finally: a downstream pr/catch (line
+                          ;; ~698) after a pr/finally teardown double-settles under
                           ;; nbb (genmlx-tb5f) — dispose on both arms, re-raise once.
-                          (p/handle (fn [r e]
-                                      (llm/dispose-branch! model fork)
-                                      (if e (throw e) r))))))]
-            (p/let [result (if k-mode?
-                             (k-turn!)
-                             (step {:i 0 :logits logits0 :key (:key session)
-                                    :gen [] :fed [] :sampled 0 :reasoning 0
-                                    :in-think? in-think0 :pending [] :vis []
-                                    :think-pieces [] :text-pieces []}))]
+                          (pr/handle (fn [r e]
+                                       (llm/dispose-branch! model fork)
+                                       (if e (throw e) r))))))]
+            (pr/let [result (if k-mode?
+                              (k-turn!)
+                              (step {:i 0 :logits logits0 :key (:key session)
+                                     :gen [] :fed [] :sampled 0 :reasoning 0
+                                     :in-think? in-think0 :pending [] :vis []
+                                     :think-pieces [] :text-pieces []}))]
               (println (str "[pi-provider] turn " sid ": " (count prompt) " prompt ("
                             cached " cached), " (- (js/Date.now) t0) " ms"
                             (when k-mode? (str " [bestOfK " best-of-k "]"))))
               result))))
-      (p/catch
+      (pr/catch
        (fn [err]
          ;; error terminal: same shape v1 emits. The branch may have
          ;; consumed tokens before the throw, so dispose + fresh (a stale

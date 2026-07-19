@@ -21,7 +21,7 @@
   (:require [genmlx.llm.toolcall :as tc]
             [genmlx.world.session-grpo :as sg]
             [nbb.core :as nbb]
-            [promesa.core :as p]))
+            [promesa.core :as pr]))
 
 (defn observed-toolset
   "Derive the toolset actually exercised by `points` (session-grpo output):
@@ -117,9 +117,9 @@
    ctx = {:points :toolset :opts}."
   [spec {:keys [toolset opts] :as ctx}]
   (case spec
-    "tool-format"        (p/resolved (tool-format-reward toolset (or opts {})))
-    "match-administered" (p/resolved (match-administered-reward (or opts {})))
-    (p/let [make (nbb/load-file spec)]
+    "tool-format"        (pr/resolved (tool-format-reward toolset (or opts {})))
+    "match-administered" (pr/resolved (match-administered-reward (or opts {})))
+    (pr/let [make (nbb/load-file spec)]
       (when-not (fn? make)
         (throw (ex-info (str "session-reward: plugin " spec
                              " did not evaluate to a function")

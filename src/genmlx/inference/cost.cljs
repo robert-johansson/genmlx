@@ -27,7 +27,7 @@
    costs into a running total. This namespace owns NO mutable state of its own —
    the only mutation is the audited mlx.cljs membrane counters."
   (:require [genmlx.mlx :as mx]
-            [genmlx.dep-graph :as dg]))
+            [genmlx.dep-graph :as dep-graph]))
 
 (def zero
   "The empty CostMeter (all fields present so cost+ is total)."
@@ -90,5 +90,5 @@
    change to each latent triggers. Computed once per model (no GPU). A 3-site
    chain a->b->c gives 2 + 1 + 0 = 3."
   [model]
-  (let [g (dg/build-dep-graph (:schema model))]
-    (reduce + (map (fn [n] (count (dg/find-descendants g n))) (:nodes g)))))
+  (let [g (dep-graph/build-dep-graph (:schema model))]
+    (reduce + (map (fn [n] (count (dep-graph/find-descendants g n))) (:nodes g)))))

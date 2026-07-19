@@ -27,7 +27,7 @@
    this whole process instead."
   (:require [nbb.core :as nbb]
             [clojure.edn :as edn]
-            [promesa.core :as p]))
+            [promesa.core :as pr]))
 
 (def ^:private fs (js/require "fs"))
 
@@ -66,12 +66,12 @@
   (let [code (.readFileSync fs 0 "utf8")
         t0   (js/Date.now)]
     (-> (nbb/load-string code)
-        (p/then (fn [v] (emit-and-exit! (result-for v (- (js/Date.now) t0)))))
-        (p/catch (fn [e]
-                   (emit-and-exit!
-                    {:error   :eval-error
-                     :message (str (or (some-> e .-message) e))
-                     :ms      (- (js/Date.now) t0)}))))))
+        (pr/then (fn [v] (emit-and-exit! (result-for v (- (js/Date.now) t0)))))
+        (pr/catch (fn [e]
+                    (emit-and-exit!
+                     {:error   :eval-error
+                      :message (str (or (some-> e .-message) e))
+                      :ms      (- (js/Date.now) t0)}))))))
 
 ;; Main guard: only read stdin + eval when this file is the invoked script,
 ;; so an accidental (require '[genmlx.sandbox-child]) can't block on stdin.

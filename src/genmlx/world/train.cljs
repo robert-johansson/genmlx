@@ -31,7 +31,7 @@
    GFI-score gradient flow. Fenced exactly like the two existing precedents:
    `world.net`'s `with-server` (a live Bun.serve listener) and `llm/backend.cljs`'s
    KV-cache atom (mutation inside try/finally). `with-trainer` is the blessed scope
-   (p/finally teardown); `make-trainer!` is the low-level escape hatch.
+   (pr/finally teardown); `make-trainer!` is the low-level escape hatch.
 
    GOTCHA (load-bearing): the native `trainStepAuto` reward callback awaits a NATIVE
    `js/Promise<number[]>`. A promesa promise is NOT `instanceof js/Promise`, so the
@@ -55,7 +55,7 @@
    Qwen3 model); checkpointing of WEIGHTS lives on the model handle (`saveModel`),
    the engine only persists OPTIMIZER moments (`saveOptimizerState`); there is no
    native `dispose`/`saveCheckpoint`, and `GrpoEngineConfig` has no `seed` field."
-  (:require [promesa.core :as p]))
+  (:require [promesa.core :as pr]))
 
 ;; ===========================================================================
 ;; Native binding (lazy, off the @genmlx/core object `c` — mirrors mlx.cljs:27).
@@ -316,17 +316,17 @@
 (defn with-trainer
   "[blessed scope] Build a trainer over `model`+`config`, call `(f trainer)` — which
    MUST return a promise — and GUARANTEE the trainer is disposed afterwards, on
-   success OR failure (the p/finally runs even when f's promise rejects). Returns the
+   success OR failure (the pr/finally runs even when f's promise rejects). Returns the
    promise of `(f trainer)`'s result. This is the only place a trainer lifecycle
    should live in tests/examples."
   ([model config f] (with-trainer model config {} f))
   ([model config opts f]
    (let [trainer (make-trainer! model config opts)]
-     ;; p/handle (not p/finally): under nbb a `p/finally` teardown followed by a
-     ;; downstream `p/catch` double-settles — the catch handler runs yet the promise
-     ;; stays rejected. p/handle disposes on BOTH arms and re-raises exactly once.
-     (-> (p/do (f trainer))
-         (p/handle (fn [r e] (dispose! trainer) (if e (throw e) r)))))))
+     ;; pr/handle (not pr/finally): under nbb a `pr/finally` teardown followed by a
+     ;; downstream `pr/catch` double-settles — the catch handler runs yet the promise
+     ;; stays rejected. pr/handle disposes on BOTH arms and re-raises exactly once.
+     (-> (pr/do (f trainer))
+         (pr/handle (fn [r e] (dispose! trainer) (if e (throw e) r)))))))
 
 ;; ===========================================================================
 ;; THE ONE EFFECT — a GRPO step (the reward bridge to Phase 1 lives here).
@@ -365,7 +365,7 @@
         n-prompts  (count prompts)
         gen-start  (.now js/Date)]
     (-> (.generateBatchForTraining engine js-prompts)
-        (p/then
+        (pr/then
           (fn [gen]
             (let [texts   (vec (.-completionTexts gen))
                   g       (quot (count texts) (max 1 n-prompts))
@@ -376,12 +376,12 @@
                                        (partition-all g texts)))
                   gen-ms  (- (.now js/Date) gen-start)]
               (-> (.trainStepWithGenerations engine js-prompts (clj->js rewards) gen)
-                  (p/then (fn [m]
-                            (assoc (->metrics m)
-                                   :generation-ms gen-ms
-                                   :completions texts
-                                   :rewards rewards
-                                   :completion-lengths (vec (.-completionLengths gen))))))))))))
+                  (pr/then (fn [m]
+                             (assoc (->metrics m)
+                                    :generation-ms gen-ms
+                                    :completions texts
+                                    :rewards rewards
+                                    :completion-lengths (vec (.-completionLengths gen))))))))))))
 
 (defn register-builtin-reward!
   "Register a NATIVE built-in reward on the engine (e.g. {:reward-type :length
@@ -427,7 +427,7 @@
   [trainer prompts]
   (ensure-live! trainer)
   (-> (.generateBatch (:engine trainer) (->prompts prompts))
-      (p/then vec)))
+      (pr/then vec)))
 
 ;; ===========================================================================
 ;; Checkpointing — OPTIMIZER state only (the engine's resumable AdamW moments +
@@ -464,4 +464,4 @@
   ([dir] (random-qwen35-checkpoint! dir {}))
   ([dir config]
    (-> (create-random-qwen35-checkpoint (clj->js (merge tiny-qwen35-defaults config)) dir)
-       (p/then (fn [_] dir)))))
+       (pr/then (fn [_] dir)))))

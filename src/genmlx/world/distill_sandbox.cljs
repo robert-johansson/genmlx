@@ -37,7 +37,7 @@
             [genmlx.world.t1-battery :as t1]
             [clojure.string :as str]
             [cljs.reader :as reader]
-            [promesa.core :as p]))
+            [promesa.core :as pr]))
 
 (def ^:private fs (js/require "fs"))
 (def ^:private cp (js/require "child_process"))
@@ -86,7 +86,7 @@
    {:status :done} | {:status :stall :index k} | {:status :crash :index k}.
    k = the current line count = the next-unwritten row = the one that stalled/crashed."
   [worker out-path timeout-ms poll-ms]
-  (p/create
+  (pr/create
     (fn [resolve _reject]
       (let [last-lines (volatile! (count-lines out-path))
             last-prog  (volatile! (js/Date.now))
@@ -152,21 +152,21 @@
     (.writeFileSync fs out-path "")
     (letfn [(step [start]
               (if (>= start n)
-                (p/resolved (assemble out-path))
+                (pr/resolved (assemble out-path))
                 (do (when verbose? (println (str "  [sandbox] worker resuming at row " start "/" n)))
                     (-> (watch-worker (spawn-worker candidates-file out-path start eval-opts battery)
                                       out-path timeout-ms poll-ms)
-                        (p/then (fn [{:keys [status index]}]
-                                  (if (= :done status)
-                                    (assemble out-path)
-                                    (let [reason (if (= :stall status) :timeout :crashed)
-                                          {:keys [task-id sample-idx]} (d/candidate->fields (nth rows index))
-                                          task   (or (get by-id task-id) {:id task-id :kind nil})]
-                                      (when verbose?
-                                        (println (str "  [sandbox] row " index " (" task-id " #" sample-idx
-                                                      ") -> " reason "; resuming")))
-                                      (.appendFileSync fs out-path
-                                                       (str (pr-str (assoc (d/timeout-verdict task sample-idx reason)
-                                                                           :index index)) "\n"))
-                                      (step (inc index))))))))))]
+                        (pr/then (fn [{:keys [status index]}]
+                                   (if (= :done status)
+                                     (assemble out-path)
+                                     (let [reason (if (= :stall status) :timeout :crashed)
+                                           {:keys [task-id sample-idx]} (d/candidate->fields (nth rows index))
+                                           task   (or (get by-id task-id) {:id task-id :kind nil})]
+                                       (when verbose?
+                                         (println (str "  [sandbox] row " index " (" task-id " #" sample-idx
+                                                       ") -> " reason "; resuming")))
+                                       (.appendFileSync fs out-path
+                                                        (str (pr-str (assoc (d/timeout-verdict task sample-idx reason)
+                                                                            :index index)) "\n"))
+                                       (step (inc index))))))))))]
       (step 0))))
