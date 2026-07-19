@@ -1607,7 +1607,7 @@
   "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
   [mu kappa]
   (sample [key]
-    ;; Best's rejection algorithm
+          ;; Best's rejection algorithm
           (let [k-val (mx/realize kappa)
                 ;; Standard algorithm parameters:
                 ;; τ = 1 + sqrt(1 + 4κ²), ρ = (τ - sqrt(2τ))/(2κ), r = (1 + ρ²)/(2ρ)
@@ -1626,7 +1626,7 @@
                 ;; Log test (exact): log(c/u2) >= c - 1
                 (if (or (>= (* c (- 2.0 c)) u2)
                         (>= (js/Math.log (/ c u2)) (- c 1.0)))
-            ;; Accept: angle = sign(u3 - 0.5) * acos(f) + mu
+                  ;; Accept: angle = sign(u3 - 0.5) * acos(f) + mu
                   (let [u3 (mx/realize (rng/uniform k3 []))
                         theta (* (js/Math.sign (- u3 0.5)) (js/Math.acos f))]
                     (wrap-angle (mx/add (mx/scalar theta) mu)))

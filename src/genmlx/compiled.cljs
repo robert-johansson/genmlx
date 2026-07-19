@@ -852,13 +852,13 @@
       (let [static-sites (filterv :static? (:trace-sites schema))
             site-specs (build-fused-site-specs static-sites binding-env)]
         (when (every? some? site-specs)
-        (let [return-expr (extract-return-expr (:return-form schema))
-              retval-fn (compile-expr return-expr binding-env #{})]
-          {:site-specs site-specs
-           :retval-fn retval-fn
-           :addrs (mapv :addr static-sites)
-           :n-sites (count static-sites)
-           :binding-env binding-env}))))))
+          (let [return-expr (extract-return-expr (:return-form schema))
+                retval-fn (compile-expr return-expr binding-env #{})]
+            {:site-specs site-specs
+             :retval-fn retval-fn
+             :addrs (mapv :addr static-sites)
+             :n-sites (count static-sites)
+             :binding-env binding-env}))))))
 
 (defn- site-noise-fn
   "Return the noise-generation function for a site-spec, or nil for delta.
@@ -1125,10 +1125,10 @@
                      (conj acc (assoc site :compiled-args cargs))
                      (reduced acc))))
                [] raw-prefix)]
-          (when (seq compiled-sites)
-            {:compiled-sites compiled-sites
-             :addrs (mapv :addr compiled-sites)
-             :binding-env binding-env})))))))
+            (when (seq compiled-sites)
+              {:compiled-sites compiled-sites
+               :addrs (mapv :addr compiled-sites)
+               :binding-env binding-env})))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled prefix function
@@ -1361,88 +1361,88 @@
    Returns {:site-specs [...] :retval-fn fn :addrs [...]} or nil."
   [schema source raw-sites]
   (when-let [base-env (build-binding-env source)]
-   (let [binding-env
-        (reduce-kv
-         (fn [env k v]
-           (if (= (:kind v) :expr)
-             (if-let [branch (analyze-rewritable-branch (:form v))]
-               (assoc env k {:kind :trace :addr (:addr branch)})
-               env)
-             env))
-         base-env base-env)
-        ;; Compile each site's args (standard or host-branched)
-        site-specs
-        (mapv
-         (fn [site]
-           (if (:cond-form site)
-              ;; Rewritten branch (genmlx-b210): the condition is resolved
-              ;; HOST-side with ClojureScript truthiness, exactly matching the
-              ;; handler path's `if`. Conditions are restricted to literals and
-              ;; params so truthiness is computable from the RAW call args
-              ;; (before ensure-mlx-args, which collapses 0 and false): number
-              ;; literals — including 0 — are truthy; params read raw, where
-              ;; only false/nil are falsy (an MLX-array param is truthy, as in
-              ;; the handler). The boolean is seeded per call into the values
-              ;; map under a reserved key by :seed-conds. mx/where is NOT used
-              ;; — it disagrees with CLJS truthiness at numeric 0.
-             (let [cf (:cond-form site)
-                   param-info (when (symbol? cf) (get binding-env (name cf)))
-                   cond-resolver
-                   (cond
-                     (boolean? cf) (constantly cf)
-                     (number? cf) (constantly true)
-                     (= :param (:kind param-info))
-                     (let [i (:index param-info)]
-                       (fn [raw-args] (boolean (nth raw-args i nil))))
-                     :else nil)]
-               (when cond-resolver
-                 (let [cond-key (keyword "genmlx.compiled"
-                                         (str "branch-cond-" (name (:addr site))))
-                       true-fns (mapv #(compile-expr % binding-env #{}) (:true-dist-args site))
-                       false-fns (mapv #(compile-expr % binding-env #{}) (:false-dist-args site))
-                       flipped? (:flipped? site)]
-                   (when (and (every? some? true-fns) (every? some? false-fns))
-                     (let [[sel-t sel-f] (if flipped? [false-fns true-fns] [true-fns false-fns])
-                           compiled-args
-                           (mapv (fn [tf ff]
-                                   (fn [values args-vec]
-                                     (if (get values cond-key)
-                                       (tf values args-vec)
-                                       (ff values args-vec))))
-                                 sel-t sel-f)]
-                       {:addr (:addr site)
-                        :compiled-args compiled-args
-                        :dist-type (:dist-type site)
-                        :cond-seed {:key cond-key :resolver cond-resolver}})))))
-              ;; Standard site
-             (let [cargs (mapv #(compile-expr % binding-env #{}) (:dist-args site))]
-               (when (every? some? cargs)
-                 {:addr (:addr site)
-                  :compiled-args cargs
-                  :dist-type (:dist-type site)}))))
-         raw-sites)]
-    (when (every? some? site-specs)
-      (let [return-expr (extract-return-expr (:return-form schema))
-            retval-fn
-            (or
-             (when (and (seq? return-expr) (seq return-expr)
-                        (symbol? (first return-expr)))
-               (when-let [branch (analyze-rewritable-branch return-expr)]
-                 (let [addr (:addr branch)]
-                   (fn [v _a] (get v addr)))))
-             (compile-expr return-expr binding-env #{}))
-            cond-seeds (vec (keep :cond-seed site-specs))
-            seed-conds (fn [raw-args]
-                         (reduce (fn [m {:keys [key resolver]}]
-                                   (assoc m key (resolver raw-args)))
-                                 {} cond-seeds))]
-        ;; retval-fn is REQUIRED (genmlx-b210): without it the M4 paths would
-        ;; emit traces with retval nil — decline so the handler path runs.
-        (when retval-fn
-          {:site-specs site-specs
-           :retval-fn retval-fn
-           :seed-conds seed-conds
-           :addrs (mapv :addr site-specs)}))))))
+    (let [binding-env
+          (reduce-kv
+           (fn [env k v]
+             (if (= (:kind v) :expr)
+               (if-let [branch (analyze-rewritable-branch (:form v))]
+                 (assoc env k {:kind :trace :addr (:addr branch)})
+                 env)
+               env))
+           base-env base-env)
+          ;; Compile each site's args (standard or host-branched)
+          site-specs
+          (mapv
+           (fn [site]
+             (if (:cond-form site)
+                ;; Rewritten branch (genmlx-b210): the condition is resolved
+                ;; HOST-side with ClojureScript truthiness, exactly matching the
+                ;; handler path's `if`. Conditions are restricted to literals and
+                ;; params so truthiness is computable from the RAW call args
+                ;; (before ensure-mlx-args, which collapses 0 and false): number
+                ;; literals — including 0 — are truthy; params read raw, where
+                ;; only false/nil are falsy (an MLX-array param is truthy, as in
+                ;; the handler). The boolean is seeded per call into the values
+                ;; map under a reserved key by :seed-conds. mx/where is NOT used
+                ;; — it disagrees with CLJS truthiness at numeric 0.
+               (let [cf (:cond-form site)
+                     param-info (when (symbol? cf) (get binding-env (name cf)))
+                     cond-resolver
+                     (cond
+                       (boolean? cf) (constantly cf)
+                       (number? cf) (constantly true)
+                       (= :param (:kind param-info))
+                       (let [i (:index param-info)]
+                         (fn [raw-args] (boolean (nth raw-args i nil))))
+                       :else nil)]
+                 (when cond-resolver
+                   (let [cond-key (keyword "genmlx.compiled"
+                                           (str "branch-cond-" (name (:addr site))))
+                         true-fns (mapv #(compile-expr % binding-env #{}) (:true-dist-args site))
+                         false-fns (mapv #(compile-expr % binding-env #{}) (:false-dist-args site))
+                         flipped? (:flipped? site)]
+                     (when (and (every? some? true-fns) (every? some? false-fns))
+                       (let [[sel-t sel-f] (if flipped? [false-fns true-fns] [true-fns false-fns])
+                             compiled-args
+                             (mapv (fn [tf ff]
+                                     (fn [values args-vec]
+                                       (if (get values cond-key)
+                                         (tf values args-vec)
+                                         (ff values args-vec))))
+                                   sel-t sel-f)]
+                         {:addr (:addr site)
+                          :compiled-args compiled-args
+                          :dist-type (:dist-type site)
+                          :cond-seed {:key cond-key :resolver cond-resolver}})))))
+                ;; Standard site
+               (let [cargs (mapv #(compile-expr % binding-env #{}) (:dist-args site))]
+                 (when (every? some? cargs)
+                   {:addr (:addr site)
+                    :compiled-args cargs
+                    :dist-type (:dist-type site)}))))
+           raw-sites)]
+      (when (every? some? site-specs)
+        (let [return-expr (extract-return-expr (:return-form schema))
+              retval-fn
+              (or
+               (when (and (seq? return-expr) (seq return-expr)
+                          (symbol? (first return-expr)))
+                 (when-let [branch (analyze-rewritable-branch return-expr)]
+                   (let [addr (:addr branch)]
+                     (fn [v _a] (get v addr)))))
+               (compile-expr return-expr binding-env #{}))
+              cond-seeds (vec (keep :cond-seed site-specs))
+              seed-conds (fn [raw-args]
+                           (reduce (fn [m {:keys [key resolver]}]
+                                     (assoc m key (resolver raw-args)))
+                                   {} cond-seeds))]
+          ;; retval-fn is REQUIRED (genmlx-b210): without it the M4 paths would
+          ;; emit traces with retval nil — decline so the handler path runs.
+          (when retval-fn
+            {:site-specs site-specs
+             :retval-fn retval-fn
+             :seed-conds seed-conds
+             :addrs (mapv :addr site-specs)}))))))
 
 (defn prepare-branch-sites
   "Common pipeline for branch-rewritten compilation (M4).

@@ -77,19 +77,19 @@
   ([model args observations addr-supports]
    (enumerate-joint model args observations addr-supports nil))
   ([model args observations addr-supports opts]
-  (let [entries (enumerate-all model args observations addr-supports opts)
-        ;; Realize all weights and extract as JS numbers
-        lw-vals (realize-log-weights entries)
-        w-arr (mx/array (into-array lw-vals))
-        log-z-val (mx/item (mx/logsumexp w-arr))]
-    (->> (map-indexed
-           (fn [i {:keys [choices]}]
-             (let [lp (- (nth lw-vals i) log-z-val)]
-               {:choices choices
-                :log-prob (mx/scalar lp)
-                :prob (js/Math.exp lp)}))
-           entries)
-         (sort-by :prob >)))))
+   (let [entries (enumerate-all model args observations addr-supports opts)
+         ;; Realize all weights and extract as JS numbers
+         lw-vals (realize-log-weights entries)
+         w-arr (mx/array (into-array lw-vals))
+         log-z-val (mx/item (mx/logsumexp w-arr))]
+     (->> (map-indexed
+            (fn [i {:keys [choices]}]
+              (let [lp (- (nth lw-vals i) log-z-val)]
+                {:choices choices
+                 :log-prob (mx/scalar lp)
+                 :prob (js/Math.exp lp)}))
+            entries)
+          (sort-by :prob >)))))
 
 (defn enumerate-marginals
   "Exact posterior marginals for discrete addresses.
@@ -104,18 +104,18 @@
   ([model args observations addr-supports]
    (enumerate-marginals model args observations addr-supports nil))
   ([model args observations addr-supports opts]
-  (let [joint (enumerate-joint model args observations addr-supports opts)
-        addrs (keys addr-supports)]
-    (into {}
-      (map (fn [addr]
-             [addr
-              (reduce (fn [acc {:keys [choices prob]}]
-                        (let [v (cm/get-choice choices [addr])
-                              v-key (mx/item v)]
-                          (update acc v-key (fnil + 0.0) prob)))
-                      {}
-                      joint)])
-           addrs)))))
+   (let [joint (enumerate-joint model args observations addr-supports opts)
+         addrs (keys addr-supports)]
+     (into {}
+       (map (fn [addr]
+              [addr
+               (reduce (fn [acc {:keys [choices prob]}]
+                         (let [v (cm/get-choice choices [addr])
+                               v-key (mx/item v)]
+                           (update acc v-key (fnil + 0.0) prob)))
+                       {}
+                       joint)])
+            addrs)))))
 
 (defn enumerate-marginal-likelihood
   "Exact marginal likelihood by summing over all discrete configurations.
@@ -129,7 +129,7 @@
   ([model args observations addr-supports]
    (enumerate-marginal-likelihood model args observations addr-supports nil))
   ([model args observations addr-supports opts]
-  (let [entries (enumerate-all model args observations addr-supports opts)
-        lw-vals (realize-log-weights entries)
-        w-arr (mx/array (into-array lw-vals))]
-    (mx/logsumexp w-arr))))
+   (let [entries (enumerate-all model args observations addr-supports opts)
+         lw-vals (realize-log-weights entries)
+         w-arr (mx/array (into-array lw-vals))]
+     (mx/logsumexp w-arr))))

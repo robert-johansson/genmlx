@@ -161,27 +161,27 @@
    non-expert stack)."
   ([dir] (load-model dir nil))
   ([dir {:keys [overlay]}]
-  (let [cfg  (load-config dir)
-        moe? (and (:n-experts cfg) (pos? (:n-experts cfg)))
-        qz   (q3/load-quantization dir)]
-    (when (and moe? qz)
-      (doseq [[base _] (:overrides qz)]
-        (when (str/includes? base ".switch_mlp.")
-          (throw (ex-info (str "qwen35 load-model: per-tensor quantization "
-                               "override on packed expert tensor " base
-                               " — gather-qmm runs experts at the GLOBAL "
-                               "(bits, group-size); this checkpoint needs "
-                               "per-projection expert quantization support.")
-                          {:base base :quantization qz})))))
-    (let [raw     (q3/load-weights dir (when (and moe? qz)
-                                         {:skip? #(str/includes? % ".switch_mlp.")}))
-          raw     (if overlay (overlay-weights raw overlay) raw)
-          weights (q3/prepare-weight-transposes! raw)
-          cfg     (cond-> cfg
-                    (and moe? qz) (assoc :expert-qz {:bits       (:bits qz)
-                                                     :group-size (:group-size qz)}))]
-      {:config  (assoc cfg :derived (gdn-derived cfg weights))
-       :weights weights}))))
+   (let [cfg  (load-config dir)
+         moe? (and (:n-experts cfg) (pos? (:n-experts cfg)))
+         qz   (q3/load-quantization dir)]
+     (when (and moe? qz)
+       (doseq [[base _] (:overrides qz)]
+         (when (str/includes? base ".switch_mlp.")
+           (throw (ex-info (str "qwen35 load-model: per-tensor quantization "
+                                "override on packed expert tensor " base
+                                " — gather-qmm runs experts at the GLOBAL "
+                                "(bits, group-size); this checkpoint needs "
+                                "per-projection expert quantization support.")
+                           {:base base :quantization qz})))))
+     (let [raw     (q3/load-weights dir (when (and moe? qz)
+                                          {:skip? #(str/includes? % ".switch_mlp.")}))
+           raw     (if overlay (overlay-weights raw overlay) raw)
+           weights (q3/prepare-weight-transposes! raw)
+           cfg     (cond-> cfg
+                     (and moe? qz) (assoc :expert-qz {:bits       (:bits qz)
+                                                      :group-size (:group-size qz)}))]
+       {:config  (assoc cfg :derived (gdn-derived cfg weights))
+        :weights weights}))))
 
 ;; ----------------------------------------------------------------------------
 ;; Small composed primitives

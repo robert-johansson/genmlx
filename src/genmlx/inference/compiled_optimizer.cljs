@@ -313,61 +313,61 @@
   ([model args observations addresses]
    (make-compiled-loss-grad model args observations addresses {}))
   ([model args observations addresses {:keys [fd-h] :or {fd-h 1e-4}}]
-  (let [model-keyed (dyn/auto-key model)
-        ;; L3.5: filter out analytically eliminated addresses
-        eliminated (u/get-eliminated-addresses model)
-        addresses (u/filter-addresses addresses eliminated)
-        ;; Try tensor-native → compiled-generate → handler
-        {:keys [score-fn latent-index tensor-native? compiled-generate?]}
-        (u/make-tensor-score-fn model args observations addresses)
-        ;; Get initial trace for extracting init-params
-        {:keys [trace]} (p/generate model-keyed args observations)]
-    (cond
-      tensor-native?
-      ;; Path 1: Tensor-native — fully compiled gradient
-      (let [init-params (u/extract-params-by-index trace latent-index)
-            n-params (count latent-index)
-            neg-score (fn [params] (mx/negative (score-fn params)))
-            vg (mx/value-and-grad neg-score)
-            compiled-vg (mx/compile-fn vg)]
-        {:loss-grad-fn compiled-vg
-         :score-fn score-fn
-         :init-params init-params
-         :n-params n-params
-         :compilation-level :tensor-native
-         :latent-index latent-index})
+   (let [model-keyed (dyn/auto-key model)
+         ;; L3.5: filter out analytically eliminated addresses
+         eliminated (u/get-eliminated-addresses model)
+         addresses (u/filter-addresses addresses eliminated)
+         ;; Try tensor-native → compiled-generate → handler
+         {:keys [score-fn latent-index tensor-native? compiled-generate?]}
+         (u/make-tensor-score-fn model args observations addresses)
+         ;; Get initial trace for extracting init-params
+         {:keys [trace]} (p/generate model-keyed args observations)]
+     (cond
+       tensor-native?
+       ;; Path 1: Tensor-native — fully compiled gradient
+       (let [init-params (u/extract-params-by-index trace latent-index)
+             n-params (count latent-index)
+             neg-score (fn [params] (mx/negative (score-fn params)))
+             vg (mx/value-and-grad neg-score)
+             compiled-vg (mx/compile-fn vg)]
+         {:loss-grad-fn compiled-vg
+          :score-fn score-fn
+          :init-params init-params
+          :n-params n-params
+          :compilation-level :tensor-native
+          :latent-index latent-index})
 
-      compiled-generate?
-      ;; Path 2: Compiled-generate — exact AD, not compiled
-      (let [init-params (u/extract-params trace addresses)
-            n-params (first (mx/shape init-params))
-            neg-score (fn [params] (mx/negative (score-fn params)))
-            vg (mx/value-and-grad neg-score)]
-        {:loss-grad-fn vg
-         :score-fn score-fn
-         :init-params init-params
-         :n-params n-params
-         :compilation-level :compiled-generate
-         :latent-index latent-index})
+       compiled-generate?
+       ;; Path 2: Compiled-generate — exact AD, not compiled
+       (let [init-params (u/extract-params trace addresses)
+             n-params (first (mx/shape init-params))
+             neg-score (fn [params] (mx/negative (score-fn params)))
+             vg (mx/value-and-grad neg-score)]
+         {:loss-grad-fn vg
+          :score-fn score-fn
+          :init-params init-params
+          :n-params n-params
+          :compilation-level :compiled-generate
+          :latent-index latent-index})
 
-      :else
-      ;; Path 3: Handler-based — finite-difference gradients
-      (let [layout (u/compute-param-layout trace addresses)
-            init-params (u/extract-params trace addresses layout)
-            n-params (:total-size layout)
-            gfi-score-fn (u/make-score-fn model args observations addresses layout)
-            neg-score (fn [params] (mx/negative (gfi-score-fn params)))
-            loss-grad (fn [params]
-                        (let [loss (neg-score params)
-                              grad (finite-diff-grad neg-score params fd-h)]
-                          (mx/materialize! loss grad)
-                          [loss grad]))]
-        {:loss-grad-fn loss-grad
-         :score-fn gfi-score-fn
-         :init-params init-params
-         :n-params n-params
-         :compilation-level :handler
-         :latent-index latent-index})))))
+       :else
+       ;; Path 3: Handler-based — finite-difference gradients
+       (let [layout (u/compute-param-layout trace addresses)
+             init-params (u/extract-params trace addresses layout)
+             n-params (:total-size layout)
+             gfi-score-fn (u/make-score-fn model args observations addresses layout)
+             neg-score (fn [params] (mx/negative (gfi-score-fn params)))
+             loss-grad (fn [params]
+                         (let [loss (neg-score params)
+                               grad (finite-diff-grad neg-score params fd-h)]
+                           (mx/materialize! loss grad)
+                           [loss grad]))]
+         {:loss-grad-fn loss-grad
+          :score-fn gfi-score-fn
+          :init-params init-params
+          :n-params n-params
+          :compilation-level :handler
+          :latent-index latent-index})))))
 
 (defn learn
   "Learn model parameters via compiled gradient optimization.

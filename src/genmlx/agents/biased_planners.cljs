@@ -568,7 +568,7 @@
                                                                           s' (dec t) (inc d) (pd-fn d)))))
                                                   0.0 (obs-dist worlds observe belief s'))))
                                       acc))
-                                  0.0 (get-in Th [s a])))))))) ]
+                                  0.0 (get-in Th [s a]))))))))]
     (reset! eu-atom eu)
     {:eu eu :backup backup}))
 

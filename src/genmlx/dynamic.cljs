@@ -1018,7 +1018,6 @@
   p/IGenerativeFunction
   (simulate [this args]
     (let [key (ensure-key this)
-
           result (@dispatch-fn this :simulate args key {})]
       (mx/gfi-cleanup!)
       result))
@@ -1026,7 +1025,6 @@
   p/IGenerate
   (generate [this args constraints]
     (let [key (ensure-key this)
-
           result (@dispatch-fn this :generate args key {:constraints constraints})]
       (mx/gfi-cleanup!)
       result))
@@ -1034,7 +1032,6 @@
   p/IUpdate
   (update [this trace constraints]
     (let [key (ensure-key this)
-
           result (@dispatch-fn this :update (:args trace) key
                    {:trace trace :constraints constraints})]
       (mx/gfi-cleanup!)
@@ -1044,7 +1041,6 @@
   p/IRegenerate
   (regenerate [this trace selection]
     (let [key (ensure-key this)
-
           result (@dispatch-fn this :regenerate (:args trace) key
                    {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
@@ -1053,7 +1049,6 @@
   p/IAssess
   (assess [this args choices]
     (let [key (ensure-key this)
-
           result (@dispatch-fn this :assess args key {:constraints choices})]
       (mx/gfi-cleanup!)
       result))
@@ -1061,7 +1056,6 @@
   p/IPropose
   (propose [this args]
     (let [key (ensure-key this)
-
           result (@dispatch-fn this :propose args key {})]
       (mx/gfi-cleanup!)
       result))
@@ -1069,7 +1063,6 @@
   p/IProject
   (project [this trace selection]
     (let [key (ensure-key this)
-
           result (@dispatch-fn this :project (:args trace) key
                    {:trace trace :selection selection})]
       (mx/gfi-cleanup!)
@@ -1445,7 +1438,6 @@
    gf: DynamicGF, args: model args, n: number of particles, key: PRNG key."
   [gf args n key]
   (let [key (rng/ensure-key key)
-
         result (rt/run-handler h/batched-simulate-transition
                                ;; [N]-shaped init score so the VectorizedTrace
                                ;; :score is [N] even when every site is
@@ -1468,7 +1460,6 @@
    n: number of particles, key: PRNG key."
   [gf args constraints n key]
   (let [key (rng/ensure-key key)
-
         result (rt/run-handler h/batched-generate-transition
                                ;; [N]-shaped init score/weight: a single-site
                                ;; fully-observed model has no [N] sample to
@@ -1491,7 +1482,6 @@
    x' for vupdate-args) and stamp the result vtrace with them."
   [gf vtrace exec-args constraints key]
   (let [key (rng/ensure-key key)
-
         n (:n-particles vtrace)
         result (rt/run-handler h/batched-update-transition
                                ;; [N]-shaped init: keeps :score/:weight [N] when

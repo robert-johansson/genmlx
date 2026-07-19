@@ -124,26 +124,26 @@
               :n-latent n-lat}]
     (merge base
            (cond
-        ;; 1. All trace sites eliminated or observed → exact
+             ;; 1. All trace sites eliminated or observed → exact
              (and (pos? (count-trace-sites schema))
                   (zero? n-res))
              {:method :exact
               :reason "All trace sites eliminated by analytical plan"
               :opts {}}
 
-        ;; 2. No trace sites at all (empty model) → exact
+             ;; 2. No trace sites at all (empty model) → exact
              (zero? (count-trace-sites schema))
              {:method :exact
               :reason "No trace sites — trivial model"
               :opts {}}
 
-        ;; 3. Kalman chains cover temporal structure → kalman
+             ;; 3. Kalman chains cover temporal structure → kalman
              (has-kalman-chains? schema)
              {:method :kalman
               :reason "Kalman chains found in analytical plan"
               :opts {:kalman-chains (get-in schema [:analytical-plan :kalman-chains])}}
 
-        ;; 4. Has splice sites → likely temporal/hierarchical → smc
+             ;; 4. Has splice sites → likely temporal/hierarchical → smc
              (has-splice? schema)
              {:method :smc
               :reason (if (has-temporal-splice? schema)
@@ -152,13 +152,13 @@
               :opts {:n-particles 100
                      :ess-threshold 0.5}}
 
-        ;; 5. Dynamic addresses → handler-based IS (safest fallback)
+             ;; 5. Dynamic addresses → handler-based IS (safest fallback)
              (:dynamic-addresses? schema)
              {:method :handler-is
               :reason "Dynamic addresses — shape-based methods not applicable"
               :opts {:n-particles 1000}}
 
-        ;; 6. Static model, few residual dims → HMC
+             ;; 6. Static model, few residual dims → HMC
              (and (:static? schema) (<= n-res hmc-threshold))
              {:method :hmc
               :reason (str "Static model with " n-res " residual dims (≤ " hmc-threshold ")")
@@ -167,7 +167,7 @@
                      :step-size 0.01
                      :n-leapfrog 10}}
 
-        ;; 7. Static model, many residual dims → VI
+             ;; 7. Static model, many residual dims → VI
              (and (:static? schema) (> n-res hmc-threshold))
              {:method :vi
               :reason (str "Static model with " n-res " residual dims (> " hmc-threshold ") — VI preferred")
@@ -175,7 +175,7 @@
                      :n-samples 10
                      :learning-rate 0.01}}
 
-        ;; 8. Fallback → handler-based IS
+             ;; 8. Fallback → handler-based IS
              :else
              {:method :handler-is
               :reason "Fallback — no specialized method matched"

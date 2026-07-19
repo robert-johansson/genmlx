@@ -217,43 +217,43 @@
    all internal call sites already strip the analytical path."
   ([tt in-trace args2 key] (apply-translator tt in-trace args2 key nil))
   ([tt in-trace args2 key obs]
-  (tr/assert-joint! in-trace :apply-translator)
-  (let [{:keys [p2 q1 q2 h]} tt
-        in-choices (:choices in-trace)
-        [k1 k2] (rng/split (rng/ensure-key key))
-        ;; 1. forward auxiliary rho1 ~ q1(in-choices)   (denominator)
-        fwd (if q1 (p/propose (dyn/with-key q1 k1) [in-choices])
-                   {:choices cm/EMPTY :weight ZERO})
-        rho1 (:choices fwd)
-        q1-score (:weight fwd)
-        ;; 2. apply the bijection h
-        hres (h in-choices rho1)
-        out-choices (:trace hres)
-        rho2 (or (:aux hres) cm/EMPTY)
-        ;; 2b. merge stage observations into the bridged constraints
-        constraints (if (and obs (seq (leaf-paths* obs)))
-                      (do (assert-obs-compatible! out-choices obs)
-                          (cm/merge-cm out-choices obs))
-                      out-choices)
-        ;; 3. target trace, fully constrained -> score2 (= generate weight).
-        ;; Strip the L3 analytical path: a conjugate p2 would otherwise return a
-        ;; :marginal score with latents pinned at the posterior mean, corrupting
-        ;; the importance weight (genmlx-540f). Translators need joint scores.
-        gen (p/generate (dyn/with-key (dyn/strip-analytical-path p2) k2) args2 constraints)
-        out-trace (:trace gen)
-        score2 (:score out-trace)
-        ;; 4. backward auxiliary density q2(rho2; out-trace choices) (numerator)
-        ;; — conditions on the ACTUAL output trace (which now includes any
-        ;; stage obs), not just h's output.
-        q2-score (if q2 (:weight (p/assess (dyn/auto-key q2) [(:choices out-trace)] rho2)) ZERO)
-        ;; 5. Jacobian of the continuous part of h
-        ldj (log-det-of tt hres in-choices rho1)
-        ;; 6. Eq 3.12 weight in log domain
-        score1 (:score in-trace)
-        log-w (mx/add (mx/subtract score2 score1)
-                      (mx/subtract q2-score q1-score)
-                      ldj)]
-    {:trace out-trace :weight log-w :aux rho2 :log-det-jacobian ldj})))
+   (tr/assert-joint! in-trace :apply-translator)
+   (let [{:keys [p2 q1 q2 h]} tt
+         in-choices (:choices in-trace)
+         [k1 k2] (rng/split (rng/ensure-key key))
+         ;; 1. forward auxiliary rho1 ~ q1(in-choices)   (denominator)
+         fwd (if q1 (p/propose (dyn/with-key q1 k1) [in-choices])
+                    {:choices cm/EMPTY :weight ZERO})
+         rho1 (:choices fwd)
+         q1-score (:weight fwd)
+         ;; 2. apply the bijection h
+         hres (h in-choices rho1)
+         out-choices (:trace hres)
+         rho2 (or (:aux hres) cm/EMPTY)
+         ;; 2b. merge stage observations into the bridged constraints
+         constraints (if (and obs (seq (leaf-paths* obs)))
+                       (do (assert-obs-compatible! out-choices obs)
+                           (cm/merge-cm out-choices obs))
+                       out-choices)
+         ;; 3. target trace, fully constrained -> score2 (= generate weight).
+         ;; Strip the L3 analytical path: a conjugate p2 would otherwise return a
+         ;; :marginal score with latents pinned at the posterior mean, corrupting
+         ;; the importance weight (genmlx-540f). Translators need joint scores.
+         gen (p/generate (dyn/with-key (dyn/strip-analytical-path p2) k2) args2 constraints)
+         out-trace (:trace gen)
+         score2 (:score out-trace)
+         ;; 4. backward auxiliary density q2(rho2; out-trace choices) (numerator)
+         ;; — conditions on the ACTUAL output trace (which now includes any
+         ;; stage obs), not just h's output.
+         q2-score (if q2 (:weight (p/assess (dyn/auto-key q2) [(:choices out-trace)] rho2)) ZERO)
+         ;; 5. Jacobian of the continuous part of h
+         ldj (log-det-of tt hres in-choices rho1)
+         ;; 6. Eq 3.12 weight in log domain
+         score1 (:score in-trace)
+         log-w (mx/add (mx/subtract score2 score1)
+                       (mx/subtract q2-score q1-score)
+                       ldj)]
+     {:trace out-trace :weight log-w :aux rho2 :log-det-jacobian ldj})))
 
 (defn translator-weight
   "The Eq 3.12 importance weight (an MLX scalar) of applying `tt` to `in-trace`

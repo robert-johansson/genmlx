@@ -354,17 +354,17 @@
        :root root :lanes lanes}
       (try
        (loop [t 0
-             ;; round-0 lanes share the prefill logits; the first batched
-             ;; step tiles the branch cache to K (forward-branch-batched)
-             logits-k (mx/broadcast-to (mx/expand-dims logits0 0) [n vocab])
-             tokens (vec (repeat n []))
-             dfas (vec (repeat n (ginit constraint)))
-             finished (vec (repeat n false))
-             log-w (zeros-k)
-             seg-w (zeros-k)
-             log-ml (mx/scalar 0.0)
-             ess-traj []
-             key key]
+              ;; round-0 lanes share the prefill logits; the first batched
+              ;; step tiles the branch cache to K (forward-branch-batched)
+              logits-k (mx/broadcast-to (mx/expand-dims logits0 0) [n vocab])
+              tokens (vec (repeat n []))
+              dfas (vec (repeat n (ginit constraint)))
+              finished (vec (repeat n false))
+              log-w (zeros-k)
+              seg-w (zeros-k)
+              log-ml (mx/scalar 0.0)
+              ess-traj []
+              key key]
         (let [alive (count (remove true? finished))]
           (if (or (zero? alive) (>= t max-tokens))
             (let [final-ml (mx/add log-ml (ismc/log-ml-increment-from log-w seg-w))

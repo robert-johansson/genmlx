@@ -110,74 +110,74 @@
    Throws (naming the quantization) for schemes dequantizable? rejects."
   ([weights qz] (dequantize-weights weights qz nil))
   ([weights {:keys [bits overrides] :as qz} {:keys [skip?]}]
-  (when-not (dequantizable? qz)
-    (throw (ex-info (str "dequantize-weights: unsupported quantization " (pr-str qz)
-                         " — the owned CLJS forward implements affine "
-                         "bits 2/3/4/5/6/8 only (global and per-tensor "
-                         "overrides). Load with {:cljs-forward? false} to "
-                         "use the upstream forward.")
-                    {:quantization qz})))
-  (let [n-dequant (volatile! 0)
-        dequant
-        (fn [nm base wq scales biases]
-          (when (zero? (mod (vswap! n-dequant inc) 64))
-            (mx/force-gc!))
-          (let [t-bits  (get-in overrides [base :bits] bits)
-                p2?     (contains? #{2 4 8} t-bits)
-                [out gcount] (mx/shape scales)
-                in (if p2?
-                     (* (quot 32 t-bits) (second (mx/shape wq)))
-                     (quot (* 32 (second (mx/shape wq))) t-bits))
-                gs (quot in gcount)]
-            (when-not (= in (* gs gcount))
-              (throw (ex-info (str "dequantize-weights: " nm " scales shape "
-                                   (mx/shape scales) " does not tile its weight "
-                                   (mx/shape wq) " at bits=" t-bits)
-                              {:tensor nm :quantization qz})))
-            (let [w (if p2?
-                      ;; pure unpack: value k of each u32 word is original
-                      ;; column j*pf+k (LSB-first)
-                      (let [pf      (quot 32 t-bits)
-                            divisor (mx/array [(js/Math.pow 2 t-bits)] [] mx/uint32)
-                            parts (loop [cur wq k 0 acc []]
-                                    (if (= k pf)
-                                      acc
-                                      (recur (mx/floor-divide cur divisor) (inc k)
-                                             (conj acc (mx/remainder cur divisor)))))
-                            q  (-> (mx/stack parts 2)   ; [out in/pf pf]
-                                   (mx/reshape [out in])
-                                   (mx/astype mx/float32))
-                            s3 (mx/reshape (mx/astype scales mx/float32) [out gcount 1])
-                            b3 (mx/reshape (mx/astype biases mx/float32) [out gcount 1])]
-                        (-> (mx/reshape q [out gcount gs])
-                            (mx/multiply s3)
-                            (mx/add b3)
-                            (mx/reshape [out in])
-                            (mx/astype (mx/dtype scales))))
-                      ;; odd widths: the native kernel owns the cross-word
-                      ;; bit extraction
-                      (mx/dequantize wq scales biases
-                                     {:bits t-bits :group-size gs}))]
-              (mx/materialize! w)
-              w)))
-        skip-fn (or skip? (constantly false))]
-    (reduce-kv
-     (fn [m k v]
-       (let [base (when (str/ends-with? k ".weight")
-                    (subs k 0 (- (count k) (count ".weight"))))
-             sb   (when (or (str/ends-with? k ".scales") (str/ends-with? k ".biases"))
-                    (subs k 0 (- (count k) (count ".scales"))))] ; same length
-         (cond
-           ;; packed-by-request: weight AND its scales/biases pass through
-           (and base (skip-fn base))  (assoc m k v)
-           (and sb (skip-fn sb))      (assoc m k v)
-           ;; folded into the dequantized weight below
-           (or (str/ends-with? k ".scales") (str/ends-with? k ".biases")) m
-           (and base (contains? weights (str base ".scales")))
-           (assoc m k (dequant k base v (get weights (str base ".scales"))
-                              (get weights (str base ".biases"))))
-           :else (assoc m k v))))
-     {} weights))))
+   (when-not (dequantizable? qz)
+     (throw (ex-info (str "dequantize-weights: unsupported quantization " (pr-str qz)
+                          " — the owned CLJS forward implements affine "
+                          "bits 2/3/4/5/6/8 only (global and per-tensor "
+                          "overrides). Load with {:cljs-forward? false} to "
+                          "use the upstream forward.")
+                     {:quantization qz})))
+   (let [n-dequant (volatile! 0)
+         dequant
+         (fn [nm base wq scales biases]
+           (when (zero? (mod (vswap! n-dequant inc) 64))
+             (mx/force-gc!))
+           (let [t-bits  (get-in overrides [base :bits] bits)
+                 p2?     (contains? #{2 4 8} t-bits)
+                 [out gcount] (mx/shape scales)
+                 in (if p2?
+                      (* (quot 32 t-bits) (second (mx/shape wq)))
+                      (quot (* 32 (second (mx/shape wq))) t-bits))
+                 gs (quot in gcount)]
+             (when-not (= in (* gs gcount))
+               (throw (ex-info (str "dequantize-weights: " nm " scales shape "
+                                    (mx/shape scales) " does not tile its weight "
+                                    (mx/shape wq) " at bits=" t-bits)
+                               {:tensor nm :quantization qz})))
+             (let [w (if p2?
+                       ;; pure unpack: value k of each u32 word is original
+                       ;; column j*pf+k (LSB-first)
+                       (let [pf      (quot 32 t-bits)
+                             divisor (mx/array [(js/Math.pow 2 t-bits)] [] mx/uint32)
+                             parts (loop [cur wq k 0 acc []]
+                                     (if (= k pf)
+                                       acc
+                                       (recur (mx/floor-divide cur divisor) (inc k)
+                                              (conj acc (mx/remainder cur divisor)))))
+                             q  (-> (mx/stack parts 2)   ; [out in/pf pf]
+                                    (mx/reshape [out in])
+                                    (mx/astype mx/float32))
+                             s3 (mx/reshape (mx/astype scales mx/float32) [out gcount 1])
+                             b3 (mx/reshape (mx/astype biases mx/float32) [out gcount 1])]
+                         (-> (mx/reshape q [out gcount gs])
+                             (mx/multiply s3)
+                             (mx/add b3)
+                             (mx/reshape [out in])
+                             (mx/astype (mx/dtype scales))))
+                       ;; odd widths: the native kernel owns the cross-word
+                       ;; bit extraction
+                       (mx/dequantize wq scales biases
+                                      {:bits t-bits :group-size gs}))]
+               (mx/materialize! w)
+               w)))
+         skip-fn (or skip? (constantly false))]
+     (reduce-kv
+      (fn [m k v]
+        (let [base (when (str/ends-with? k ".weight")
+                     (subs k 0 (- (count k) (count ".weight"))))
+              sb   (when (or (str/ends-with? k ".scales") (str/ends-with? k ".biases"))
+                     (subs k 0 (- (count k) (count ".scales"))))] ; same length
+          (cond
+            ;; packed-by-request: weight AND its scales/biases pass through
+            (and base (skip-fn base))  (assoc m k v)
+            (and sb (skip-fn sb))      (assoc m k v)
+            ;; folded into the dequantized weight below
+            (or (str/ends-with? k ".scales") (str/ends-with? k ".biases")) m
+            (and base (contains? weights (str base ".scales")))
+            (assoc m k (dequant k base v (get weights (str base ".scales"))
+                               (get weights (str base ".biases"))))
+            :else (assoc m k v))))
+      {} weights))))
 
 (defn weight-files
   "Resolve a checkpoint's weight file paths: [model.safetensors] when the

@@ -166,16 +166,16 @@
   [model args observations param-names-vec]
   (let [model (dyn/auto-key model)]
     (fn [params-array key]
-    (let [loss-fn (fn [p]
-                    (let [store {:params (array->params p param-names-vec)}
-                          model' (vary-meta model assoc :genmlx.dynamic/param-store store)
-                          {:keys [weight]} (p/generate model' args observations)]
-                      ;; Negative log-joint (minimize)
-                      (mx/negative weight)))
-          grad-fn (mx/grad loss-fn)
-          loss (loss-fn params-array)
-          grad (grad-fn params-array)]
-      {:loss loss :grad grad}))))
+      (let [loss-fn (fn [p]
+                      (let [store {:params (array->params p param-names-vec)}
+                            model' (vary-meta model assoc :genmlx.dynamic/param-store store)
+                            {:keys [weight]} (p/generate model' args observations)]
+                        ;; Negative log-joint (minimize)
+                        (mx/negative weight)))
+            grad-fn (mx/grad loss-fn)
+            loss (loss-fn params-array)
+            grad (grad-fn params-array)]
+        {:loss loss :grad grad}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Wake-Sleep Learning
@@ -221,12 +221,12 @@
                             model-cm (cm/merge-cm (:choices trace) observations)
                             {:keys [weight]}
                             (p/generate (vary-meta model assoc :genmlx.dynamic/key k2) args model-cm)]
-                      ;; Negative ELBO: -(log p(x,z) - log q(z|x))
-                      (mx/negative (mx/subtract weight guide-weight))))
-          grad-fn (mx/grad loss-fn)
-          loss (loss-fn guide-params)
-          grad (grad-fn guide-params)]
-      {:loss loss :grad grad}))))
+                        ;; Negative ELBO: -(log p(x,z) - log q(z|x))
+                        (mx/negative (mx/subtract weight guide-weight))))
+            grad-fn (mx/grad loss-fn)
+            loss (loss-fn guide-params)
+            grad (grad-fn guide-params)]
+        {:loss loss :grad grad}))))
 
 (defn sleep-phase-loss
   "Scores the guide on a model-prior sample, with guide addresses NOT in
@@ -250,19 +250,19 @@
       (let [[k1 k2] (rng/split (rng/ensure-key key))
             ;; Sample from model prior (simulate)
             model-trace (p/simulate (vary-meta model assoc :genmlx.dynamic/key k1) args)
-          model-choices (:choices model-trace)
-          ;; Score guide on model's choices
-          loss-fn (fn [params]
-                    (let [guide-cm (params->guide-cm params guide-addresses)
-                          {:keys [weight]}
-                          (p/generate (vary-meta guide assoc :genmlx.dynamic/key k2) args
-                                      (cm/merge-cm guide-cm model-choices))]
-                      ;; Negative log-likelihood of model choices under guide
-                      (mx/negative weight)))
-          grad-fn (mx/grad loss-fn)
-          loss (loss-fn guide-params)
-          grad (grad-fn guide-params)]
-      {:loss loss :grad grad}))))
+            model-choices (:choices model-trace)
+            ;; Score guide on model's choices
+            loss-fn (fn [params]
+                      (let [guide-cm (params->guide-cm params guide-addresses)
+                            {:keys [weight]}
+                            (p/generate (vary-meta guide assoc :genmlx.dynamic/key k2) args
+                                        (cm/merge-cm guide-cm model-choices))]
+                        ;; Negative log-likelihood of model choices under guide
+                        (mx/negative weight)))
+            grad-fn (mx/grad loss-fn)
+            loss (loss-fn guide-params)
+            grad (grad-fn guide-params)]
+        {:loss loss :grad grad}))))
 
 (defn- discover-guide-addresses
   "Simulate the guide once to discover all trace addresses."

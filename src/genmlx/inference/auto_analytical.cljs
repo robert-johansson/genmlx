@@ -531,18 +531,18 @@
                                                 {:genmlx.analytical/bail true :addr addr :latent latent})))
                               (let [{:keys [ll new-belief]} kres
                                     step-idx (get latent->idx latent)
-                                      state' (cond-> (-> state
-                                                         (assoc-in [:auto-kalman-beliefs latent] new-belief)
-                                                         (update :choices cm/set-value addr obs-value)
-                                                         (update :score mx/add ll)
-                                                         (update :choices cm/set-value latent (:mean new-belief)))
-                                               (not regenerate?)
-                                               (update :weight mx/add ll))
-                                      noise-vars (:auto-kalman-noise-vars state')
-                                      state'' (if (and noise-vars (< (inc step-idx) n-steps))
-                                                (cascade-predictions steps step-idx state' noise-vars)
-                                                state')]
-                                  [obs-value state''])))))))])
+                                    state' (cond-> (-> state
+                                                       (assoc-in [:auto-kalman-beliefs latent] new-belief)
+                                                       (update :choices cm/set-value addr obs-value)
+                                                       (update :score mx/add ll)
+                                                       (update :choices cm/set-value latent (:mean new-belief)))
+                                             (not regenerate?)
+                                             (update :weight mx/add ll))
+                                    noise-vars (:auto-kalman-noise-vars state')
+                                    state'' (if (and noise-vars (< (inc step-idx) n-steps))
+                                              (cascade-predictions steps step-idx state' noise-vars)
+                                              state')]
+                                [obs-value state''])))))))])
                obs-to-latent))]
     (merge latent-handlers obs-handlers)))
 

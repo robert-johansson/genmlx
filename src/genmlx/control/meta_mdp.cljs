@@ -153,7 +153,7 @@
                        (-> cs (assoc :base (:state chosen) :stop-streak 0
                                      :last-voc (:voc chosen) :last-action (:action chosen))
                            (update :total-cost cost/cost+ all-cost)
-                           (update :control-steps inc))))))) )
+                           (update :control-steps inc))))))))
      :done? (fn [{:keys [base stopped?]}] (or stopped? (bdone? base)))
      :best  (fn [{:keys [base]}] (bbest base))}))
 

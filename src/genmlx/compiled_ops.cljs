@@ -940,8 +940,8 @@
                    :score (:score result)
                    :weight (:weight result)
                    ;; RAW args, matching M2 simulate + the handler: an arg-derived
-             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-             :retval (retval-fn (:values result) args-vec)})))))))))
+                   ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+                   :retval (retval-fn (:values result) args-vec)})))))))))
 
 (defn make-compiled-prefix-regenerate
   "Build a compiled prefix regenerate function.
