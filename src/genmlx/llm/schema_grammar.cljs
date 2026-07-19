@@ -122,9 +122,10 @@
   "Quantifier `{lo,hi}` / `*` for a vector tail group, from optional min/max."
   [min* max*]
   (let [lo (max 0 (dec (or min* 1)))]
-    (if (and max* (>= max* 1))
-      (str "{" lo "," (dec max*) "}")
-      (if (zero? lo) "*" (str "{" lo ",}")))))
+    (cond
+      (and max* (>= max* 1)) (str "{" lo "," (dec max*) "}")
+      (zero? lo)             "*"
+      :else                  (str "{" lo ",}"))))
 
 ;; ============================================================
 ;; schema -> regex
@@ -169,7 +170,7 @@
       :string         (string-leaf-regex props ch)
       :boolean        "(true|false)"
       :keyword        keyword-regex
-      (:nil)          "nil"
+      :nil            "nil"
       :=              (re-quote (canonical-str (first ch)))
       :enum           (alt-regex #(re-quote (canonical-str %)) ch)
       :maybe          (str "(nil|" (schema->regex (first ch)) ")")

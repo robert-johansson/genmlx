@@ -130,18 +130,18 @@
   (let [key (rng/ensure-key key)
         compiled (make-compiled-unfold step-fn n-steps state-dim noise-dim)
         noise (rng/normal key [n-steps noise-dim])
-        [final-state states total-score] (compiled init-state noise)
-        _ (mx/materialize! final-state states total-score)
-        ;; Build choicemap from states tensor
-        choices (reduce
-                 (fn [acc t]
-                   (cm/set-value acc (addr-fn t) (slice-row states t [state-dim])))
-                 cm/EMPTY
-                 (range n-steps))]
-    (tr/make-trace {:gen-fn nil :args [n-steps init-state]
-                    :choices choices
-                    :retval {:final-state final-state :states states}
-                    :score total-score})))
+        [final-state states total-score] (compiled init-state noise)]
+    (mx/materialize! final-state states total-score)
+    ;; Build choicemap from states tensor
+    (let [choices (reduce
+                   (fn [acc t]
+                     (cm/set-value acc (addr-fn t) (slice-row states t [state-dim])))
+                   cm/EMPTY
+                   (range n-steps))]
+      (tr/make-trace {:gen-fn nil :args [n-steps init-state]
+                      :choices choices
+                      :retval {:final-state final-state :states states}
+                      :score total-score}))))
 
 ;; ---------------------------------------------------------------------------
 ;; Convenience: compile from a step specification

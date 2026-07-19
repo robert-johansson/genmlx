@@ -78,8 +78,7 @@
    equal the unbiased agent. (Default → sophisticated/0 for any other key.)"
   [bias]
   (case bias
-    :naive         inc
-    :sophisticated (constantly 0)
+    :naive inc
     (constantly 0)))
 
 (defn- softmax-vec
@@ -214,12 +213,13 @@
    Naive time-inconsistency). :rollout-mode :fused is unsupported: biased agents
    carry no tensor :Q, so rollout/rollout-mdp would deref nil (genmlx-m3nn) — use
    the default :host rollout."
-  [ag start horizon & [opts]]
-  (when (= (:rollout-mode opts) :fused)
-    (throw (ex-info (str "simulate-biased-mdp does not support :rollout-mode :fused — "
-                         "biased agents have no tensor :Q; use the default :host rollout")
-                    {:agent-keys (keys ag)})))
-  (agent/simulate-mdp ag start horizon opts))
+  ([ag start horizon] (simulate-biased-mdp ag start horizon {}))
+  ([ag start horizon opts]
+   (when (= (:rollout-mode opts) :fused)
+     (throw (ex-info (str "simulate-biased-mdp does not support :rollout-mode :fused — "
+                          "biased agents have no tensor :Q; use the default :host rollout")
+                     {:agent-keys (keys ag)})))
+   (agent/simulate-mdp ag start horizon opts)))
 
 (defn- argmax-of [xs] (first (apply max-key second (map-indexed vector xs))))
 
@@ -642,17 +642,19 @@
    `:belief-mode` (optional trailing opts) selects the rollout filter: :host
    (default) or :tensor (the pure-MLX kernel genmlx.agents.belief; bean
    genmlx-kpuo). Both produce prob vectors aligned to :worlds — seam unchanged."
-  [{:keys [act update-belief update-belief-tensor observe T terminals]} true-world start horizon prior-vec
-   & [{:keys [belief-mode] :or {belief-mode :host}}]]
-  (let [update-belief (if (= belief-mode :tensor) update-belief-tensor update-belief)]
-    (loop [s start, b prior-vec, step 0, states [start], actions [], obss [], beliefs [prior-vec]]
-      (if (or (>= step horizon) (contains? terminals s))
-        {:states states :actions actions :observations obss :beliefs beliefs}
-        (let [a  (act b s)
-              s' (agent/sample-next T s a)
-              o  (observe true-world s')
-              b' (update-belief b s' o)]
-          (recur s' b' (inc step) (conj states s') (conj actions a) (conj obss o) (conj beliefs b')))))))
+  ([bundle true-world start horizon prior-vec]
+   (simulate-biased-pomdp bundle true-world start horizon prior-vec {}))
+  ([{:keys [act update-belief update-belief-tensor observe T terminals]} true-world start horizon prior-vec
+    {:keys [belief-mode] :or {belief-mode :host}}]
+   (let [update-belief (if (= belief-mode :tensor) update-belief-tensor update-belief)]
+     (loop [s start, b prior-vec, step 0, states [start], actions [], obss [], beliefs [prior-vec]]
+       (if (or (>= step horizon) (contains? terminals s))
+         {:states states :actions actions :observations obss :beliefs beliefs}
+         (let [a  (act b s)
+               s' (agent/sample-next T s a)
+               o  (observe true-world s')
+               b' (update-belief b s' o)]
+           (recur s' b' (inc step) (conj states s') (conj actions a) (conj obss o) (conj beliefs b'))))))))
 
 (defn voi-world
   "A small 'walk-and-check' POMDP where information is a deliberate DETOUR. Two

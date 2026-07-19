@@ -170,7 +170,8 @@
   [latent-addr]
   {:kalman-latent
    (fn [state addr dist]
-     (if (= addr latent-addr)
+     ;; Not our latent addr — return nil to fall through via wrap-analytical
+     (when (= addr latent-addr)
        (let [{:keys [transition-coeff process-noise]} (:params dist)
              belief (or (:kalman-belief state)
                         (zero-belief (:kalman-n state)))
@@ -178,9 +179,7 @@
          [(:mean new-belief)
           (-> state
               (assoc :kalman-belief new-belief)
-              (update :choices cm/set-value addr (:mean new-belief)))])
-       ;; Not our latent addr — return nil to fall through via wrap-analytical
-       nil))
+              (update :choices cm/set-value addr (:mean new-belief)))])))
 
    :kalman-obs
    (fn [state addr dist]
@@ -235,19 +234,21 @@
 
    Returns handler result map with :retval, :choices, :score, :weight,
    plus :kalman-belief and :kalman-ll ([P]-shaped marginal LL)."
-  [gf args constraints latent-addr n key & [opts]]
-  (let [{:keys [param-store init-belief]} opts
-        transition (make-kalman-transition latent-addr)
-        init-state (cond-> {:choices cm/EMPTY
-                            :score (mx/scalar 0.0)
-                            :weight (mx/scalar 0.0)
-                            :key key
-                            :constraints constraints
-                            :kalman-n n
-                            :kalman-belief (or init-belief (zero-belief n))}
-                     param-store (assoc :param-store param-store))]
-    (rt/run-handler transition init-state
-      (fn [runtime] (apply (:body-fn gf) runtime args)))))
+  ([gf args constraints latent-addr n key]
+   (kalman-generate gf args constraints latent-addr n key {}))
+  ([gf args constraints latent-addr n key opts]
+   (let [{:keys [param-store init-belief]} opts
+         transition (make-kalman-transition latent-addr)
+         init-state (cond-> {:choices cm/EMPTY
+                             :score (mx/scalar 0.0)
+                             :weight (mx/scalar 0.0)
+                             :key key
+                             :constraints constraints
+                             :kalman-n n
+                             :kalman-belief (or init-belief (zero-belief n))}
+                      param-store (assoc :param-store param-store))]
+     (rt/run-handler transition init-state
+       (fn [runtime] (apply (:body-fn gf) runtime args))))))
 
 (defn kalman-fold
   "Fold a per-step gen function over T timesteps under the Kalman handler.

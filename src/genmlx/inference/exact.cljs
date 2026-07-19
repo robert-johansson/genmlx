@@ -289,15 +289,12 @@
    metadata: ::inference-strategy :exact or ::dispatch/custom-dispatch
    uses exact enumeration, otherwise falls back to standard GFI dispatch."
   [gf args opts]
-  (cond
-    ;; Exact metadata annotation (lightweight, inside enumerate mode)
-    (= :exact (::inference-strategy (meta gf)))
-    (execute-exact gf args opts)
-    ;; enumerate-wrapped model (via dispatch/with-dispatch)
-    (::dispatch/custom-dispatch (meta gf))
+  (if (or ;; Exact metadata annotation (lightweight, inside enumerate mode)
+          (= :exact (::inference-strategy (meta gf)))
+          ;; enumerate-wrapped model (via dispatch/with-dispatch)
+          (::dispatch/custom-dispatch (meta gf)))
     (execute-exact gf args opts)
     ;; Default: standard GFI dispatch
-    :else
     (execute-sub-default gf args opts)))
 
 ;; ---------------------------------------------------------------------------
@@ -369,8 +366,8 @@
    Returns map of {value-as-number probability-as-number}."
   [log-probs axes target-addr support]
   (let [m-lp (marginal log-probs axes target-addr)
-        m-p (mx/exp m-lp)
-        _ (mx/eval! m-p)]
+        m-p (mx/exp m-lp)]
+    (mx/eval! m-p)
     (into {} (map-indexed (fn [i sv]
                             [(mx/item sv) (mx/item (mx/slice m-p i (inc i)))])
                           support))))
@@ -643,8 +640,8 @@
         (run-enumerate model args observations)
         log-ml (mx/logsumexp (mx/reshape log-score [-1]))
         log-probs (mx/subtract log-score log-ml)
-        probs (mx/exp log-probs)
-        _ (mx/eval! log-probs probs log-ml)]
+        probs (mx/exp log-probs)]
+    (mx/eval! log-probs probs log-ml)
     {:log-probs log-probs
      :probs probs
      :log-ml (mx/item log-ml)
@@ -697,16 +694,16 @@
    (let [joint (exact-joint model [] nil)
          c (condition-on (:log-probs joint) (:axes joint)
                          observed-addr observed-value)
-         p (mx/exp (:log-probs c))
-         _ (mx/eval! p)]
+         p (mx/exp (:log-probs c))]
+     (mx/eval! p)
      p))
   ([model observed-addr observed-value target-addr]
    (let [joint (exact-joint model [] nil)
          c (condition-on (:log-probs joint) (:axes joint)
                          observed-addr observed-value)
          m (joint-marginal (:log-probs c) (:axes c) #{target-addr})
-         p (mx/exp (:log-probs m))
-         _ (mx/eval! p)]
+         p (mx/exp (:log-probs m))]
+     (mx/eval! p)
      p)))
 
 (defn pr
@@ -723,8 +720,8 @@
   ([model addr value]
    (let [joint (exact-joint model [] nil)
          m (joint-marginal (:log-probs joint) (:axes joint) #{addr})
-         p (mx/exp (:log-probs m))
-         _ (mx/eval! p)]
+         p (mx/exp (:log-probs m))]
+     (mx/eval! p)
      (mx/item (mx/idx p value))))
   ([model addr value given-kw given-addr given-value]
    {:pre [(= given-kw :given)]} ;; decorative :given keyword for readable call sites
@@ -743,6 +740,6 @@
         h-a (entropy lp ax addr-set-a)
         h-b (entropy lp ax addr-set-b)
         h-ab (entropy lp ax (into addr-set-a addr-set-b))
-        mi (mx/subtract (mx/add h-a h-b) h-ab)
-        _ (mx/eval! mi)]
+        mi (mx/subtract (mx/add h-a h-b) h-ab)]
+    (mx/eval! mi)
     (mx/item mi)))

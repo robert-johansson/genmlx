@@ -99,13 +99,14 @@
    The surrogate is: cost + stop_gradient(cost - baseline) * reinforce-lp
    When baseline is nil, falls back to stop_gradient(cost).
    Taking mx/grad of this gives an unbiased gradient estimate."
-  [gf args cost-fn key & [baseline]]
-  (let [{:keys [trace reinforce-lp]} (adev-execute gf args key)
-        cost (cost-fn trace)
-        reinforce-mult (if baseline
-                         (mx/stop-gradient (mx/subtract cost baseline))
-                         (mx/stop-gradient cost))]
-    (mx/add cost (mx/multiply reinforce-mult reinforce-lp))))
+  ([gf args cost-fn key] (adev-surrogate gf args cost-fn key nil))
+  ([gf args cost-fn key baseline]
+   (let [{:keys [trace reinforce-lp]} (adev-execute gf args key)
+         cost (cost-fn trace)
+         reinforce-mult (if baseline
+                          (mx/stop-gradient (mx/subtract cost baseline))
+                          (mx/stop-gradient cost))]
+     (mx/add cost (mx/multiply reinforce-mult reinforce-lp)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Gradient estimation (sequential)
@@ -181,14 +182,15 @@
   "Build the batched ADEV surrogate loss (scalar).
    Runs model body ONCE for all N particles, returns mean surrogate.
    Optional baseline subtracts from the REINFORCE multiplier for variance reduction."
-  [gf args cost-fn n key & [baseline]]
-  (let [{:keys [reinforce-lp] :as result} (vadev-execute gf args n key)
-        costs (cost-fn result)
-        reinforce-mult (if baseline
-                         (mx/stop-gradient (mx/subtract costs baseline))
-                         (mx/stop-gradient costs))
-        surrogate (mx/add costs (mx/multiply reinforce-mult reinforce-lp))]
-    (mx/mean surrogate)))
+  ([gf args cost-fn n key] (vadev-surrogate gf args cost-fn n key nil))
+  ([gf args cost-fn n key baseline]
+   (let [{:keys [reinforce-lp] :as result} (vadev-execute gf args n key)
+         costs (cost-fn result)
+         reinforce-mult (if baseline
+                          (mx/stop-gradient (mx/subtract costs baseline))
+                          (mx/stop-gradient costs))
+         surrogate (mx/add costs (mx/multiply reinforce-mult reinforce-lp))]
+     (mx/mean surrogate))))
 
 (defn vadev-gradient
   "Compute ADEV gradient via vectorized execution (single model body call).

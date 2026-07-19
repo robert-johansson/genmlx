@@ -140,10 +140,9 @@
    When a handler returns nil, falls through to base transition."
   [base addr-handlers]
   (fn [state addr dist]
-    (if-let [handler (get addr-handlers addr)]
-      (or (handler state addr dist)
-          (base state addr dist))
-      (base state addr dist))))
+    (or (when-let [handler (get addr-handlers addr)]
+          (handler state addr dist))
+        (base state addr dist))))
 
 ;; ---------------------------------------------------------------------------
 ;; Generic handler builder (shared across all conjugate families)
@@ -233,14 +232,14 @@
                         post-mean (posterior-mean posterior)
                         ;; update: a changed obs charges its old value to :discard
                         changed? (and update? (cm/has-value? new-sub) (cm/has-value? old-sub))]
-                    [obs-value (cond-> state
-                                 true (assoc-in [:auto-posteriors prior-addr] posterior)
-                                 true (update :choices cm/set-value addr obs-value)
-                                 true (update :score mx/add ll)
+                    [obs-value (cond-> (-> state
+                                           (assoc-in [:auto-posteriors prior-addr] posterior)
+                                           (update :choices cm/set-value addr obs-value)
+                                           (update :score mx/add ll)
+                                           ;; Update prior's value to posterior mean
+                                           (update :choices cm/set-value prior-addr post-mean))
                                  (not regenerate?) (update :weight mx/add ll)
-                                 changed? (update :discard cm/set-value addr (cm/get-value old-sub))
-                                 ;; Update prior's value to posterior mean
-                                 true (update :choices cm/set-value prior-addr post-mean))]))))))]
+                                 changed? (update :discard cm/set-value addr (cm/get-value old-sub)))]))))))]
     (assoc (zipmap obs-addrs (repeat obs-handler)) prior-addr prior-handler)))
 
 ;; ---------------------------------------------------------------------------
@@ -472,13 +471,12 @@
         ;; decline path, where handlers consistently fall through).
         chain-ok?
         (fn [state]
-          (if regenerate?
-            true
-            (if-some [cached (get-in state [:auto-kalman-ok chain-key])]
-              cached
-              (let [cs (:constraints state)]
-                (and (not-any? #(cm/has-value? (cm/get-submap cs %)) chain-latents)
-                     (every? #(cm/has-value? (cm/get-submap cs %)) chain-obs))))))
+          (or regenerate?
+              (if-some [cached (get-in state [:auto-kalman-ok chain-key])]
+                cached
+                (let [cs (:constraints state)]
+                  (and (not-any? #(cm/has-value? (cm/get-submap cs %)) chain-latents)
+                       (every? #(cm/has-value? (cm/get-submap cs %)) chain-obs))))))
 
         latent-handlers
         (into {}
@@ -511,12 +509,11 @@
                     (when-let [belief (get-in state [:auto-kalman-beliefs latent])]
                       (when-not (and regenerate? (:selection state)
                                      (sel/selected? (:selection state) addr))
-                        (let [obs-value
-                              (if regenerate?
-                                (let [s (cm/get-submap (:old-choices state) addr)]
-                                  (when (cm/has-value? s) (cm/get-value s)))
-                                (let [s (cm/get-submap (:constraints state) addr)]
-                                  (when (cm/has-value? s) (cm/get-value s))))]
+                        (let [s (cm/get-submap (if regenerate?
+                                                 (:old-choices state)
+                                                 (:constraints state))
+                                               addr)
+                              obs-value (when (cm/has-value? s) (cm/get-value s))]
                           (when obs-value
                             (let [obs-var (mx/multiply (:sigma (:params dist)) (:sigma (:params dist)))
                                   kres (kalman-obs-update belief obs-value obs-var dep-type)]
@@ -668,13 +665,13 @@
                         result (mvn-update-step cur-post obs-value obs-cov)]
                     (if result
                       (let [{:keys [mean-vec cov-matrix ll]} result]
-                        [obs-value (cond-> state
-                                     true (assoc-in [:auto-posteriors prior-addr]
-                                                    {:mean-vec mean-vec :cov-matrix cov-matrix})
-                                     true (update :choices cm/set-value addr obs-value)
-                                     true (update :score mx/add ll)
-                                     (not regenerate?) (update :weight mx/add ll)
-                                     true (update :choices cm/set-value prior-addr mean-vec))])
+                        [obs-value (cond-> (-> state
+                                               (assoc-in [:auto-posteriors prior-addr]
+                                                         {:mean-vec mean-vec :cov-matrix cov-matrix})
+                                               (update :choices cm/set-value addr obs-value)
+                                               (update :score mx/add ll)
+                                               (update :choices cm/set-value prior-addr mean-vec))
+                                     (not regenerate?) (update :weight mx/add ll))])
                       ;; genmlx-0e0j: the prior was already marginalized (cur-post
                       ;; present) but this obs update is ill-conditioned. Falling
                       ;; through to the base transition would score the obs at the

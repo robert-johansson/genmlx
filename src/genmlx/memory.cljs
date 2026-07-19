@@ -293,14 +293,13 @@
   "Fetch the raw row at `key` as `{:key :kind :payload :score-type :created-at}`,
    or nil if absent. (Named `fetch`, not `get`, to avoid shadowing core/get.)"
   [{:keys [db]} key]
-  (let [row (.get (.query db "SELECT key, kind, payload, score_type, created_at
-                              FROM objects WHERE key = ?") key)]
-    (when row
-      {:key        (.-key row)
-       :kind       (.-kind row)
-       :payload    (.-payload row)
-       :score-type (some-> (.-score_type row) keyword)
-       :created-at (.-created_at row)})))
+  (when-let [row (.get (.query db "SELECT key, kind, payload, score_type, created_at
+                                   FROM objects WHERE key = ?") key)]
+    {:key        (.-key row)
+     :kind       (.-kind row)
+     :payload    (.-payload row)
+     :score-type (some-> (.-score_type row) keyword)
+     :created-at (.-created_at row)}))
 
 (defn has?
   "True when an object exists at `key`."

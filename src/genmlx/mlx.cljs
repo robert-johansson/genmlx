@@ -1302,19 +1302,20 @@
   (set! gfi-ops-count (inc gfi-ops-count))
   (when (>= gfi-ops-count gfi-cleanup-interval)
     (set! gfi-ops-count 0)
-    (cond
-      ;; Count pressure first — covers GFI inference loops that churn tiny
-      ;; arrays (the ex-crashers) at low memory. Hysteretic; see auto-cleanup!.
-      (and (not (in-tidy?)) (buffer-count-pressure!))
-      (count-sweep!)
+    ;; in-tidy? gate (as in auto-cleanup!): a tidy scope does its own cleanup
+    ;; on exit, and jsc-cleanup!/clear-cache! mid-scope is the mid-tidy GC the
+    ;; design forbids.
+    (when-not (in-tidy?)
+      (cond
+        ;; Count pressure first — covers GFI inference loops that churn tiny
+        ;; arrays (the ex-crashers) at low memory. Hysteretic; see auto-cleanup!.
+        (buffer-count-pressure!)
+        (count-sweep!)
 
-      ;; Same in-tidy? gate as the count branch and auto-cleanup!: a tidy
-      ;; scope does its own cleanup on exit, and jsc-cleanup!/clear-cache!
-      ;; mid-scope is the mid-tidy GC the design forbids.
-      (and (not (in-tidy?)) (> (get-active-memory) gfi-pressure-threshold))
-      (do (jsc-cleanup!)
-          (sweep-dead-arrays!)
-          (clear-cache!)))))
+        (> (get-active-memory) gfi-pressure-threshold)
+        (do (jsc-cleanup!)
+            (sweep-dead-arrays!)
+            (clear-cache!))))))
 
 (defn realize [x] (eval! x) (item x))
 (defn realize-clj [x] (eval! x) (->clj x))

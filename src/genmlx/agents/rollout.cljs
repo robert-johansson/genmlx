@@ -56,27 +56,28 @@
    matches the host loop exactly. `agent` is a make-mdp-agent (carries :mdp with
    :T/:terminals/:alpha/:noise and the solved :Q). Returns {:states [...] :actions
    [...]} (JS ints). Pass {:key k} to seed the finite-alpha / noisy draws."
-  [{:keys [mdp Q]} start horizon & [{:keys [key]}]]
-  (let [{:keys [T terminals alpha noise]} mdp
-        noise     (or noise 0.0)
-        det?      (and (= alpha ##Inf) (zero? noise))
-        ks        (when-not det? (rng/split-n (rng/ensure-key key) (* 2 (max 1 horizon))))
-        s0        (mx/array (int start) mx/int32)]
-    (loop [s s0, t 0, states [s0], actions []]
-      (if (>= t horizon)
-        (let [st (mx/stack states)
-              ac (when (seq actions) (mx/stack actions))]
-          (mx/materialize! st)
-          (when ac (mx/materialize! ac))
-          (let [svec (mapv int (mx/->clj st))
-                avec (if ac (mapv int (mx/->clj ac)) [])
-                ;; host truncation: stop at the first terminal (terminals are
-                ;; absorbing one-hot rows, so post-terminal tensor steps dwell and
-                ;; are discarded) — reproduces the host loop's variable length.
-                term-idx (or (first (keep-indexed (fn [i sv] (when (contains? terminals sv) i)) svec))
-                             (count avec))]
-            {:states  (subvec svec 0 (inc term-idx))
-             :actions (subvec avec 0 (min term-idx (count avec)))}))
-        (let [a  (step-action Q s alpha (when ks (nth ks (* 2 t))))
-              s' (step-next T s a noise (when ks (nth ks (inc (* 2 t)))))]
-          (recur s' (inc t) (conj states s') (conj actions a)))))))
+  ([agent start horizon] (rollout-mdp agent start horizon {}))
+  ([{:keys [mdp Q]} start horizon {:keys [key]}]
+   (let [{:keys [T terminals alpha noise]} mdp
+         noise     (or noise 0.0)
+         det?      (and (= alpha ##Inf) (zero? noise))
+         ks        (when-not det? (rng/split-n (rng/ensure-key key) (* 2 (max 1 horizon))))
+         s0        (mx/array (int start) mx/int32)]
+     (loop [s s0, t 0, states [s0], actions []]
+       (if (>= t horizon)
+         (let [st (mx/stack states)
+               ac (when (seq actions) (mx/stack actions))]
+           (mx/materialize! st)
+           (when ac (mx/materialize! ac))
+           (let [svec (mapv int (mx/->clj st))
+                 avec (if ac (mapv int (mx/->clj ac)) [])
+                 ;; host truncation: stop at the first terminal (terminals are
+                 ;; absorbing one-hot rows, so post-terminal tensor steps dwell and
+                 ;; are discarded) — reproduces the host loop's variable length.
+                 term-idx (or (first (keep-indexed (fn [i sv] (when (contains? terminals sv) i)) svec))
+                              (count avec))]
+             {:states  (subvec svec 0 (inc term-idx))
+              :actions (subvec avec 0 (min term-idx (count avec)))}))
+         (let [a  (step-action Q s alpha (when ks (nth ks (* 2 t))))
+               s' (step-next T s a noise (when ks (nth ks (inc (* 2 t)))))]
+           (recur s' (inc t) (conj states s') (conj actions a))))))))

@@ -54,18 +54,19 @@
   "Pure: a Trajectory ([Frame]) from a rollout {:states :actions}. Frame i shows
    the agent at states[i] with earlier states drawn as :path. Optional value
    array `V` ([S] MLX) shades empties; (mx/->clj V) is the lone seam crossing."
-  [{:keys [action-kw] :as mdp} {:keys [states actions]} & [V]]
-  (let [vs  (when V (vec (mx/->clj V)))
-        vlo (when vs (reduce min vs))
-        vhi (when vs (reduce max vs))]
-    (vec (map-indexed
-           (fn [i s]
-             (state->frame mdp s
-                           {:step i
-                            :action (when (< i (count actions)) (nth action-kw (nth actions i)))
-                            :vs vs :vlo vlo :vhi vhi
-                            :path (set (take i states))}))
-           states))))
+  ([mdp rollout] (env->trajectory mdp rollout nil))
+  ([{:keys [action-kw] :as mdp} {:keys [states actions]} V]
+   (let [vs  (when V (vec (mx/->clj V)))
+         vlo (when vs (reduce min vs))
+         vhi (when vs (reduce max vs))]
+     (vec (map-indexed
+            (fn [i s]
+              (state->frame mdp s
+                            {:step i
+                             :action (when (< i (count actions)) (nth action-kw (nth actions i)))
+                             :vs vs :vlo vlo :vhi vhi
+                             :path (set (take i states))}))
+            states)))))
 
 ;; ---------------------------------------------------------------------------
 ;; marginals -> PosteriorBars   (consumes exact/exact-posterior :marginals shape)
@@ -98,14 +99,15 @@
   "PosteriorBars from a plain {value -> probability} map (e.g. a goal posterior).
    Optional `highlight` marks the bar for that value with :highlight true (e.g.
    the known true goal), which the view renders distinctly."
-  [title m & [highlight]]
-  {:title title
-   :bars  (->> m
-               (map (fn [[v p]]
-                      (cond-> {:label (if (keyword? v) (name v) (str v)) :weight p}
-                        (= v highlight) (assoc :highlight true))))
-               (sort-by :label)
-               vec)})
+  ([title m] (dist->bars title m nil))
+  ([title m highlight]
+   {:title title
+    :bars  (->> m
+                (map (fn [[v p]]
+                       (cond-> {:label (if (keyword? v) (name v) (str v)) :weight p}
+                         (= v highlight) (assoc :highlight true))))
+                (sort-by :label)
+                vec)}))
 
 ;; ---------------------------------------------------------------------------
 ;; text renderers (consume the data shapes above)
@@ -124,12 +126,13 @@
 
 (defn render-bars-text
   "ASCII bar chart of a PosteriorBars."
-  [{:keys [title bars]} & [width]]
-  (let [w   (or width 24)
-        lab (apply max 1 (map (comp count :label) bars))]
-    (str/join
-      "\n"
-      (cons title
-            (for [{:keys [label weight]} bars]
-              (str (str/join (repeat (- lab (count label)) " ")) label " │"
-                   (bar-glyphs weight w) " " (.toFixed weight 3)))))))
+  ([pbars] (render-bars-text pbars nil))
+  ([{:keys [title bars]} width]
+   (let [w   (or width 24)
+         lab (apply max 1 (map (comp count :label) bars))]
+     (str/join
+       "\n"
+       (cons title
+             (for [{:keys [label weight]} bars]
+               (str (str/join (repeat (- lab (count label)) " ")) label " │"
+                    (bar-glyphs weight w) " " (.toFixed weight 3))))))))

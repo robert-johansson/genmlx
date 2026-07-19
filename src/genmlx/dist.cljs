@@ -1795,19 +1795,18 @@
   (let [{:keys [mu sigma t]} (:params d)
         key (rng/ensure-key key)
         noise (rng/normal key [n t])
+        sh (mx/shape mu)
         ;; Expand mu for broadcasting: scalar→scalar, [T]→[1,T], [N]→[N,1]
-        mu-nd (if (seq (mx/shape mu))
-                (if (= (count (mx/shape mu)) 1)
-                  ;; 1D: could be [T] or [N]. If length=t → [T] params (row),
-                  ;; otherwise [N] batched (column). KNOWN AMBIGUITY: when
-                  ;; N == t a batched [N] mu is misread as per-element [T]
-                  ;; params — shape-pun class tracked in genmlx-ql6a; fixing
-                  ;; it needs an explicit batch-axis marker, not a heuristic.
-                  (if (= (first (mx/shape mu)) t)
-                    (mx/reshape mu [1 t])
-                    (mx/expand-dims mu -1))
-                  mu)
-                mu)]
+        mu-nd (cond
+                ;; scalar or already-2D mu broadcasts naturally
+                (not= (count sh) 1) mu
+                ;; 1D: could be [T] or [N]. If length=t → [T] params (row),
+                ;; otherwise [N] batched (column). KNOWN AMBIGUITY: when
+                ;; N == t a batched [N] mu is misread as per-element [T]
+                ;; params — shape-pun class tracked in genmlx-ql6a; fixing
+                ;; it needs an explicit batch-axis marker, not a heuristic.
+                (= (first sh) t) (mx/reshape mu [1 t])
+                :else (mx/expand-dims mu -1))]
     (mx/add mu-nd (mx/multiply sigma noise))))
 
 (defmethod dc/dist-reparam :iid-gaussian [d key]

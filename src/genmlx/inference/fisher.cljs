@@ -57,9 +57,7 @@
   "Attempt Cholesky, return L or nil on failure."
   [a]
   (try
-    (let [L (mx/cholesky a)]
-      (mx/materialize! L)
-      L)
+    (doto (mx/cholesky a) mx/materialize!)
     (catch :default _ nil)))
 
 (defn- robust-cholesky
@@ -76,9 +74,7 @@
   "Attempt solve, return solution or nil on failure."
   [F b]
   (try
-    (let [d (mx/solve F b)]
-      (mx/materialize! d)
-      d)
+    (doto (mx/solve F b) mx/materialize!)
     (catch :default _ nil)))
 
 (defn- robust-solve

@@ -177,24 +177,29 @@
        :plus       (constantly :plus)
        :opt        (constantly :opt)
        :repeat-exact (fn [n] [:repeat n n])
-       :repeat-range (fn [n & [m]] [:repeat n (or m max-unbounded-repeat)])
-       :quant      (fn [node & [q]]
-                     (cond
-                       (nil? q)     node
-                       (= q :star)  [:star node]
-                       (= q :plus)  [:cat node [:star node]]
-                       (= q :opt)   [:alt node [:empty]]
-                       (vector? q)  (let [[_ lo hi] q
-                                          required (repeat lo node)
-                                          optional (repeat (- hi lo) [:alt node [:empty]])
-                                          parts (concat required optional)]
-                                      (if (seq parts)
-                                        (reduce (fn [a b] [:cat a b]) parts)
-                                        ;; a{0} / a{0,0}: zero copies — matches the
-                                        ;; empty string for this atom. Without this
-                                        ;; (reduce ... ()) returned nil and crashed
-                                        ;; NFA construction (genmlx-abw8).
-                                        [:empty]))))
+       :repeat-range (fn
+                       ([n] [:repeat n max-unbounded-repeat])
+                       ([n m] [:repeat n (or m max-unbounded-repeat)]))
+       :quant      (fn
+                     ([node] node)
+                     ([node q]
+                      (case q
+                        nil   node
+                        :star [:star node]
+                        :plus [:cat node [:star node]]
+                        :opt  [:alt node [:empty]]
+                        ;; default: a [:repeat lo hi] vector
+                        (let [[_ lo hi] q
+                              required (repeat lo node)
+                              optional (repeat (- hi lo) [:alt node [:empty]])
+                              parts (concat required optional)]
+                          (if (seq parts)
+                            (reduce (fn [a b] [:cat a b]) parts)
+                            ;; a{0} / a{0,0}: zero copies — matches the
+                            ;; empty string for this atom. Without this
+                            ;; (reduce ... ()) returned nil and crashed
+                            ;; NFA construction (genmlx-abw8).
+                            [:empty])))))
        ;; single-item case needs no guard: reduce sans init returns the lone
        ;; element without calling f
        :cat        (fn [& items] (reduce (fn [a b] [:cat a b]) items))

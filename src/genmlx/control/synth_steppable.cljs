@@ -66,7 +66,7 @@
         contestable (filter (fn [[i e]]
                               (let [others (keep-indexed (fn [j o] (when (not= j i) (:log-ml o))) pool)
                                     gap (when (seq others) (- (apply max others) (:log-ml e)))]
-                                (and gap (>= gap 0) (<= gap margin))))
+                                (and gap (<= 0 gap margin))))
                             is-cands)]
     (when (seq contestable)
       (first (apply max-key (fn [[_ e]] (:log-ml e)) contestable)))))

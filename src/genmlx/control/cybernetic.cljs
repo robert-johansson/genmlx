@@ -111,9 +111,8 @@
         ;; and disarms the comparator: r <- 1, one full re-crossing of tau
         ;; (hysteresis) and min-gap base advances before the next test
         veto (fn [cs]
-               (assoc cs
-                      :r (if (and register refresh-on-veto?) 1.0 (:r cs))
-                      :below? false :since-gate 0))]
+               (cond-> (assoc cs :below? false :since-gate 0)
+                 (and register refresh-on-veto?) (assoc :r 1.0)))]
     {:init
      (fn []
        {:base (binit)
@@ -130,8 +129,8 @@
          :else
          (let [m (->num (monitor base))
                view (assoc cs :m m)
-               due (when (and (seq schedule-q) (>= t (:t (first schedule-q))))
-                     (first schedule-q))
+               due (when-first [nxt schedule-q]
+                     (when (>= t (:t nxt)) nxt))
                armed? (and (> m tau)
                            (or (not hysteresis?) below?)
                            (or (nil? since-gate) (>= since-gate min-gap))
@@ -168,8 +167,8 @@
                (if exit?
                  (assoc cs' :r r' :exit :decay)
                  (assoc cs' :base (bstep base) :r r' :t (inc t)
-                        :below? (if (<= m tau) true below?)
-                        :since-gate (when since-gate (inc since-gate)))))))))
+                        :below? (or (<= m tau) below?)
+                        :since-gate (some-> since-gate inc))))))))
 
      :done? (fn [cs] (or (some? (:exit cs)) (bdone? (:base cs))))
 

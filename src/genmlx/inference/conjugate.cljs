@@ -357,18 +357,20 @@
    - :init-posteriors    initial {addr -> posterior} (default: self-init from priors)
 
    Returns handler result with :conjugate-posteriors and :conjugate-ll."
-  [gf args constraints dispatches key & [opts]]
-  (let [{:keys [param-store init-posteriors]} opts
-        transition (reduce ana/wrap-analytical h/generate-transition dispatches)
-        init-state (cond-> {:choices cm/EMPTY
-                            :score (mx/scalar 0.0)
-                            :weight (mx/scalar 0.0)
-                            :key key
-                            :constraints constraints
-                            :conjugate-posteriors (or init-posteriors {})}
-                     param-store (assoc :param-store param-store))]
-    (rt/run-handler transition init-state
-      (fn [runtime] (apply (:body-fn gf) runtime args)))))
+  ([gf args constraints dispatches key]
+   (conjugate-generate gf args constraints dispatches key {}))
+  ([gf args constraints dispatches key opts]
+   (let [{:keys [param-store init-posteriors]} opts
+         transition (reduce ana/wrap-analytical h/generate-transition dispatches)
+         init-state (cond-> {:choices cm/EMPTY
+                             :score (mx/scalar 0.0)
+                             :weight (mx/scalar 0.0)
+                             :key key
+                             :constraints constraints
+                             :conjugate-posteriors (or init-posteriors {})}
+                      param-store (assoc :param-store param-store))]
+     (rt/run-handler transition init-state
+       (fn [runtime] (apply (:body-fn gf) runtime args))))))
 
 (defn- add-ll
   "Nil-safe marginal-LL accumulation: nil is the additive identity, so a

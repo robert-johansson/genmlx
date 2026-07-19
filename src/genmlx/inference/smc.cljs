@@ -326,9 +326,9 @@
          :log-weights log-weights
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
-              [step-key next-key] (rng/split-or-nils rk)
-              _ (when (pos? t) (mx/sweep-dead-arrays!))
-              _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))]
+              [step-key next-key] (rng/split-or-nils rk)]
+          (when (pos? t) (mx/sweep-dead-arrays!))
+          (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))
           (if (zero? t)
             (let [{:keys [traces log-weights log-ml-increment]}
                   (smc-init-step model args obs-t particles step-key)]
@@ -451,9 +451,9 @@
          :log-weights log-weights
          :log-ml-estimate log-ml}
         (let [obs-t (nth obs-vec t)
-              [step-key next-key] (rng/split-or-nils rk)
-              _ (when (pos? t) (mx/sweep-dead-arrays!))
-              _ (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))]
+              [step-key next-key] (rng/split-or-nils rk)]
+          (when (pos? t) (mx/sweep-dead-arrays!))
+          (when (and (pos? t) (zero? (mod t 5))) (mx/clear-cache!))
           (if (zero? t)
             ;; Init step: reference trace at index 0, rest from prior. Thread
             ;; per-particle keys from the user key so a seeded cSMC is
@@ -615,11 +615,11 @@
                   ;; Preserve resampled trace arrays and ml-inc
                   (into (vec (mapcat u/collect-trace-arrays (:traces result)))
                         [(:ml-inc result)])))
-              new-log-ml (mx/add log-ml (:ml-inc step-result))
-              ;; Periodic cleanup (every 2 steps to stay under Metal buffer limits)
-              _ (when (zero? (mod (inc t) 2))
-                  (mx/force-gc!)
-                  (mx/clear-cache!))]
+              new-log-ml (mx/add log-ml (:ml-inc step-result))]
+          ;; Periodic cleanup (every 2 steps to stay under Metal buffer limits)
+          (when (zero? (mod (inc t) 2))
+            (mx/force-gc!)
+            (mx/clear-cache!))
           (recur (inc t) (:traces step-result) new-log-ml
                  (or (:ess step-result) final-ess) next-rk))))))
 
@@ -686,12 +686,12 @@
               ;; 3. Resample (handles array, map, or nil state)
               indices (vz/systematic-resample-indices step-weights
                                                        particles resample-key)
-              resampled-state (resample-state new-state indices)
-              ;; Break lazy graph — resampled state carried to next timestep
-              _ (materialize-state! resampled-state)
-              ;; 4. Periodic cleanup
-              _ (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
-              _ (when callback (callback {:step t}))]
+              resampled-state (resample-state new-state indices)]
+          ;; Break lazy graph — resampled state carried to next timestep
+          (materialize-state! resampled-state)
+          ;; 4. Periodic cleanup
+          (when (zero? (mod (inc t) 5)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+          (when callback (callback {:step t}))
           (recur (inc t) resampled-state
                  (mx/add log-ml ml-inc) (or ess final-ess) next-rk))))))
 

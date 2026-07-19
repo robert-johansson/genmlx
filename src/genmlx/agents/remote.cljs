@@ -97,23 +97,24 @@
      :key   — a world-owned RNG key for a STOCHASTIC world (omit ⇒ deterministic).
    /reset and /step yield {:obs s' :reward r :done term? :info {}} — the next state
    is the (fully observed) sensor; the reward is R[s,a]."
-  [{:keys [T R terminals start-idx]} & [{:keys [start key]}]]
-  (let [s0   (or start start-idx)
-        st   (atom s0)
-        kref (atom key)]
-    (fn [route payload]
-      (case route
-        "/reset" (do (reset! st s0)
-                     {:obs s0 :reward 0.0 :done (contains? terminals s0) :info {}})
-        "/step"  (let [a (:action payload)]
-                   (if-not (number? a)
-                     {:error "step requires an integer :action"}
-                     (let [s  @st
-                           s' (world-step T kref s a)
-                           r  (double (mx/item (mx/idx (mx/idx R s) a)))]
-                       (reset! st s')
-                       {:obs s' :reward r :done (contains? terminals s') :info {}})))
-        {:error (str "unknown route " route)}))))
+  ([mdp] (mdp-env-handler mdp {}))
+  ([{:keys [T R terminals start-idx]} {:keys [start key]}]
+   (let [s0   (or start start-idx)
+         st   (atom s0)
+         kref (atom key)]
+     (fn [route payload]
+       (case route
+         "/reset" (do (reset! st s0)
+                      {:obs s0 :reward 0.0 :done (contains? terminals s0) :info {}})
+         "/step"  (let [a (:action payload)]
+                    (if-not (number? a)
+                      {:error "step requires an integer :action"}
+                      (let [s  @st
+                            s' (world-step T kref s a)
+                            r  (double (mx/item (mx/idx (mx/idx R s) a)))]
+                        (reset! st s')
+                        {:obs s' :reward r :done (contains? terminals s') :info {}})))
+         {:error (str "unknown route " route)})))))
 
 (defn pomdp-env-handler
   "Build the serve! handler hosting a POMDP (restaurant-gridworld bundle) behind the
@@ -124,34 +125,35 @@
    keyword is sent as its name; remote-pomdp-rollout decodes it). `pomdp-agent` is a
    make-pomdp-agent result; `env` carries :true-world and :start-idx. Options :start,
    :key as in mdp-env-handler."
-  [pomdp-agent env & [{:keys [start key]}]]
-  (let [true-world (:true-world env)
-        true-mdp   (:mdp ((:world-agents pomdp-agent) true-world))
-        T          (:T true-mdp)
-        terminals  (:terminals true-mdp)
-        observe    (:observe pomdp-agent)
-        ;; EDN-encode the observation for the wire (JSON has no keywords/vectors):
-        ;; pr-str round-trips ANY observe range (a keyword, nil, or a [restaurant
-        ;; open?] vector) — remote-pomdp-rollout decodes with reader/read-string.
-        enc        pr-str
-        s0         (or start (:start-idx env))
-        st         (atom s0)
-        kref       (atom key)]
-    (fn [route payload]
-      (case route
-        "/reset" (do (reset! st s0)
-                     {:obs    {:loc s0 :sense (enc (observe true-world s0))}
-                      :reward 0.0 :done (contains? terminals s0) :info {}})
-        "/step"  (let [a (:action payload)]
-                   (if-not (number? a)
-                     {:error "step requires an integer :action"}
-                     (let [s  @st
-                           s' (world-step T kref s a)
-                           o  (observe true-world s')]
-                       (reset! st s')
-                       {:obs    {:loc s' :sense (enc o)}
-                        :reward 0.0 :done (contains? terminals s') :info {}})))
-        {:error (str "unknown route " route)}))))
+  ([pomdp-agent env] (pomdp-env-handler pomdp-agent env {}))
+  ([pomdp-agent env {:keys [start key]}]
+   (let [true-world (:true-world env)
+         true-mdp   (:mdp ((:world-agents pomdp-agent) true-world))
+         T          (:T true-mdp)
+         terminals  (:terminals true-mdp)
+         observe    (:observe pomdp-agent)
+         ;; EDN-encode the observation for the wire (JSON has no keywords/vectors):
+         ;; pr-str round-trips ANY observe range (a keyword, nil, or a [restaurant
+         ;; open?] vector) — remote-pomdp-rollout decodes with reader/read-string.
+         enc        pr-str
+         s0         (or start (:start-idx env))
+         st         (atom s0)
+         kref       (atom key)]
+     (fn [route payload]
+       (case route
+         "/reset" (do (reset! st s0)
+                      {:obs    {:loc s0 :sense (enc (observe true-world s0))}
+                       :reward 0.0 :done (contains? terminals s0) :info {}})
+         "/step"  (let [a (:action payload)]
+                    (if-not (number? a)
+                      {:error "step requires an integer :action"}
+                      (let [s  @st
+                            s' (world-step T kref s a)
+                            o  (observe true-world s')]
+                        (reset! st s')
+                        {:obs    {:loc s' :sense (enc o)}
+                         :reward 0.0 :done (contains? terminals s') :info {}})))
+         {:error (str "unknown route " route)})))))
 
 ;; ===========================================================================
 ;; 3. Drive an agent against a REMOTE environment (client side)
@@ -167,18 +169,19 @@
    sub-keys exactly as simulate-mdp does (split 3-ways, the transition half
    discarded since the world owns it); at alpha=##Inf it is irrelevant and the
    trajectory matches simulate-mdp bit-for-bit at noise 0."
-  [{:keys [act]} transport horizon & [{:keys [key]}]]
-  (pr/let [o0 ((:reset transport))]
-    (let [start (:obs o0)]
-      (pr/loop [s start, step 0, k key, done? (:done o0)
-                states [start], actions [], rewards []]
-        (if (or (>= step horizon) done?)
-          {:states states :actions actions :rewards rewards}
-          (let [[k-act _k-world k'] (if k (rng/split-n k 3) [nil nil nil])
-                a (if k-act (act s k-act) (act s))]
-            (pr/let [o ((:step transport) a)]
-              (pr/recur (:obs o) (inc step) k' (:done o)
-                        (conj states (:obs o)) (conj actions a) (conj rewards (:reward o))))))))))
+  ([agent transport horizon] (remote-mdp-rollout agent transport horizon {}))
+  ([{:keys [act]} transport horizon {:keys [key]}]
+   (pr/let [o0 ((:reset transport))]
+     (let [start (:obs o0)]
+       (pr/loop [s start, step 0, k key, done? (:done o0)
+                 states [start], actions [], rewards []]
+         (if (or (>= step horizon) done?)
+           {:states states :actions actions :rewards rewards}
+           (let [[k-act _k-world k'] (if k (rng/split-n k 3) [nil nil nil])
+                 a (if k-act (act s k-act) (act s))]
+             (pr/let [o ((:step transport) a)]
+               (pr/recur (:obs o) (inc step) k' (:done o)
+                         (conj states (:obs o)) (conj actions a) (conj rewards (:reward o)))))))))))
 
 (defn- decode-obs
   "Reverse `enc`: read the EDN wire form of an observation back to its value

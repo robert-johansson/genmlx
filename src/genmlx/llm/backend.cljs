@@ -71,8 +71,7 @@
                  ;; Both MoE families share the native Qwen35MoeModel engine:
                  ;; qwen3_5_moe (256-expert) and qwen3_next (the 80B
                  ;; Qwen3-Coder-Next, config.json model_type "qwen3_next").
-                 "qwen3_5_moe" (.-Qwen35MoeModel mlx-core)
-                 "qwen3_next"  (.-Qwen35MoeModel mlx-core)
+                 ("qwen3_5_moe" "qwen3_next") (.-Qwen35MoeModel mlx-core)
                  "gemma4"      (.-Gemma4Model mlx-core)
                  "harrier"     (.-HarrierModel mlx-core)
                  "lfm2"        (.-Lfm2Model mlx-core)
@@ -273,8 +272,8 @@
              (assert-owned-forward!)
              {:model (->CljsForwardModel
                       (fwd/load-model model-path
-                                      (when (:overlay opts)
-                                        {:overlay (:overlay opts)}))
+                                      (when-let [ov (:overlay opts)]
+                                        {:overlay ov}))
                       (atom nil)
                       (atom {:next-id 1 :branches {}}))
               :tokenizer tokenizer
@@ -393,18 +392,19 @@
   [model token-ids]
   (if (cljs-forward-model? model)
     (fwd/next-token-logits (:fwd model) (->id-vec token-ids))
-    (let [_ (require-low-level! model "forward-pass")
-          ids (->id-vec token-ids)
-          input (ids->input ids)
-          logits (.forward model input)
-          ;; Index the LAST position from the logits' ACTUAL time dimension, not
-          ;; the input token count: this mlx-node build's .forward returns
-          ;; [1 1 vocab] (last position only). The old (dec n) indexed row n-1 of a
-          ;; 1-row matrix → out-of-range garbage (decoded to "导图" instead of the
-          ;; real next token). Using (dec t) is correct whether .forward returns
-          ;; [1 1 vocab] or a full [1 T vocab].
-          t (second (mx/shape logits))]
-      (-> logits (mx/index 0) (mx/index (dec t))))))
+    (do
+      (require-low-level! model "forward-pass")
+      (let [ids (->id-vec token-ids)
+            input (ids->input ids)
+            logits (.forward model input)
+            ;; Index the LAST position from the logits' ACTUAL time dimension, not
+            ;; the input token count: this mlx-node build's .forward returns
+            ;; [1 1 vocab] (last position only). The old (dec n) indexed row n-1 of a
+            ;; 1-row matrix → out-of-range garbage (decoded to "导图" instead of the
+            ;; real next token). Using (dec t) is correct whether .forward returns
+            ;; [1 1 vocab] or a full [1 T vocab].
+            t (second (mx/shape logits))]
+        (-> logits (mx/index 0) (mx/index (dec t)))))))
 
 (defn next-token-logprobs
   "Get log-probabilities for the next token given context.

@@ -169,13 +169,12 @@
                      (update :score mx/add new-lp)
                      (update :weight mx/add (mx/subtract new-lp old-lp)))])
       ;; Not selected: keep old
-      (let [v (when (cm/has-value? old-choice)
-                (cm/get-value old-choice))]
-        (when (nil? v)
-          (throw (ex-info (str "regenerate: address " addr " not found in previous trace choices. "
-                               "Cannot keep old value for an address that was never sampled.")
-                          {:addr addr})))
-        (let [lp (dc/dist-log-prob dist v)]
+      (if-not (cm/has-value? old-choice)
+        (throw (ex-info (str "regenerate: address " addr " not found in previous trace choices. "
+                             "Cannot keep old value for an address that was never sampled.")
+                        {:addr addr}))
+        (let [v (cm/get-value old-choice)
+              lp (dc/dist-log-prob dist v)]
           [v (-> state
                  (update :choices cm/set-value addr v)
                  (update :score mx/add lp))])))))
@@ -223,14 +222,13 @@
 (defn project-transition
   "Pure: replay old value, accumulate log-prob for selected addresses."
   [state addr dist]
-  (let [old-choice (cm/get-submap (:old-choices state) addr)
-        v (when (cm/has-value? old-choice)
-            (cm/get-value old-choice))]
-    (when (nil? v)
+  (let [old-choice (cm/get-submap (:old-choices state) addr)]
+    (when-not (cm/has-value? old-choice)
       (throw (ex-info (str "project: address not found in previous trace choices. "
                            "Cannot replay a value for an address that was never sampled.")
                       {})))
-    (let [lp (dc/dist-log-prob dist v)
+    (let [v (cm/get-value old-choice)
+          lp (dc/dist-log-prob dist v)
           sel (:selection state)]
       [v (-> state
              (update :choices cm/set-value addr v)
@@ -361,14 +359,14 @@
       ;; Not selected: keep old [N]-shaped values — same informative throw as
       ;; the scalar counterpart on a missing retained address (genmlx-a6o5),
       ;; instead of nil into dist-log-prob -> opaque native error
-      (let [v (when (cm/has-value? old-choice) (cm/get-value old-choice))]
-        (when (nil? v)
-          (throw (ex-info (str "batched regenerate: address " addr
-                               " not found in previous trace choices. Cannot "
-                               "keep old value for an address that was never "
-                               "sampled.")
-                          {:addr addr})))
-        (let [lp (dc/dist-log-prob dist v)]
+      (if-not (cm/has-value? old-choice)
+        (throw (ex-info (str "batched regenerate: address " addr
+                             " not found in previous trace choices. Cannot "
+                             "keep old value for an address that was never "
+                             "sampled.")
+                        {:addr addr}))
+        (let [v (cm/get-value old-choice)
+              lp (dc/dist-log-prob dist v)]
           (check-batched-lp! addr n lp)
           [v (-> state
                  (update :choices cm/set-value addr v)
@@ -380,13 +378,13 @@
    The batched counterpart of project-transition (genmlx-8xia)."
   [state addr dist]
   (let [n (:batch-size state)
-        old-choice (cm/get-submap (:old-choices state) addr)
-        v (when (cm/has-value? old-choice) (cm/get-value old-choice))]
-    (when (nil? v)
+        old-choice (cm/get-submap (:old-choices state) addr)]
+    (when-not (cm/has-value? old-choice)
       (throw (ex-info (str "batched project: address " addr
                            " not found in previous trace choices.")
                       {:addr addr})))
-    (let [lp (dc/dist-log-prob dist v)
+    (let [v (cm/get-value old-choice)
+          lp (dc/dist-log-prob dist v)
           sel (:selection state)]
       (check-batched-lp! addr n lp)
       [v (-> state
@@ -419,14 +417,14 @@
       ;; retained: informative throw on a missing address (genmlx-a6o5),
       ;; matching the scalar general transition's structure-change contract
       ;; note — this batched path never sees fresh sites, so absence is a bug
-      (let [v (when (cm/has-value? old-choice) (cm/get-value old-choice))]
-        (when (nil? v)
-          (throw (ex-info (str "batched regenerate (general): address " addr
-                               " not found in previous trace choices — the "
-                               "batched general path requires a fixed address "
-                               "set across the batch (no structure change).")
-                          {:addr addr})))
-        (let [lp (dc/dist-log-prob dist v)]
+      (if-not (cm/has-value? old-choice)
+        (throw (ex-info (str "batched regenerate (general): address " addr
+                             " not found in previous trace choices — the "
+                             "batched general path requires a fixed address "
+                             "set across the batch (no structure change).")
+                        {:addr addr}))
+        (let [v (cm/get-value old-choice)
+              lp (dc/dist-log-prob dist v)]
           (check-batched-lp! addr n lp)
           [v (-> state
                  (update :choices cm/set-value addr v)

@@ -225,19 +225,20 @@ the softmax policy uniform; alpha = ##Inf belongs in recursive-eu-inf)."
    per-step act/sample-next loop) or :fused (the single-graph tensor rollout in
    genmlx.agents.rollout; bean genmlx-5zdd). At alpha=##Inf/noise=0 both produce
    identical :states/:actions; the seam is unchanged either way."
-  [{:keys [mdp act] :as agent} start horizon & [{:keys [rollout-mode key]}]]
-  (if (= rollout-mode :fused)
-    (rollout/rollout-mdp agent start horizon {:key key})
-    ;; :key was previously accepted but IGNORED on the :host path (genmlx-xpbm);
-    ;; it now threads per-step sub-keys through act and sample-next, so the same
-    ;; key reproduces the same trajectory.
-    (let [{:keys [T terminals]} mdp]
-      (loop [s start, step 0, k key, states [start], actions []]
-        (if (or (>= step horizon) (contains? terminals s))
-          {:states states :actions actions}
-          (let [[k-act k-next k'] (if k (rng/split-n k 3) [nil nil nil])
-                ;; keyless path stays 1-arity so custom agents whose :act is
-                ;; (fn [s]) keep working; the key arity is opt-in
-                a  (if k-act (act s k-act) (act s))
-                s' (sample-next T s a k-next)]
-            (recur s' (inc step) k' (conj states s') (conj actions a))))))))
+  ([agent start horizon] (simulate-mdp agent start horizon {}))
+  ([{:keys [mdp act] :as agent} start horizon {:keys [rollout-mode key]}]
+   (if (= rollout-mode :fused)
+     (rollout/rollout-mdp agent start horizon {:key key})
+     ;; :key was previously accepted but IGNORED on the :host path (genmlx-xpbm);
+     ;; it now threads per-step sub-keys through act and sample-next, so the same
+     ;; key reproduces the same trajectory.
+     (let [{:keys [T terminals]} mdp]
+       (loop [s start, step 0, k key, states [start], actions []]
+         (if (or (>= step horizon) (contains? terminals s))
+           {:states states :actions actions}
+           (let [[k-act k-next k'] (if k (rng/split-n k 3) [nil nil nil])
+                 ;; keyless path stays 1-arity so custom agents whose :act is
+                 ;; (fn [s]) keep working; the key arity is opt-in
+                 a  (if k-act (act s k-act) (act s))
+                 s' (sample-next T s a k-next)]
+             (recur s' (inc step) k' (conj states s') (conj actions a)))))))))

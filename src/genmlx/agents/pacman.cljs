@@ -292,22 +292,24 @@
    Frame i shows Pac-Man at states[i] with earlier states drawn as :path. Options:
    `:V` ([S] MLX value fn) shades empties — the lone seam crossing (mx/->clj V);
    `:ghost-idx` overlays the ghost on every frame."
-  [{:keys [action-kw] :as mdp} {:keys [states actions]} & [{:keys [V ghost-idx]}]]
-  (let [vs  (when V (vec (mx/->clj V)))
-        vlo (when vs (reduce min vs))
-        vhi (when vs (reduce max vs))]
-    (vec (map-indexed
-           (fn [i s]
-             (frame mdp s {:step      i
-                           :action    (when (< i (count actions)) (nth action-kw (nth actions i)))
-                           :vs vs :vlo vlo :vhi vhi
-                           :path      (set (take i states))
-                           :ghost-idx ghost-idx}))
-           states))))
+  ([mdp rollout] (trajectory mdp rollout {}))
+  ([{:keys [action-kw] :as mdp} {:keys [states actions]} {:keys [V ghost-idx]}]
+   (let [vs  (when V (vec (mx/->clj V)))
+         vlo (when vs (reduce min vs))
+         vhi (when vs (reduce max vs))]
+     (vec (map-indexed
+            (fn [i s]
+              (frame mdp s {:step      i
+                            :action    (when (< i (count actions)) (nth action-kw (nth actions i)))
+                            :vs vs :vlo vlo :vhi vhi
+                            :path      (set (take i states))
+                            :ghost-idx ghost-idx}))
+            states)))))
 
 (defn belief->bars
   "PosteriorBars from a Pac-Man belief / goal posterior {world -> prob} (delegates to
    presentation/dist->bars). `highlight` marks the true world's bar. Bandit beliefs
    ({:arms [[a b]...]}) use presentation/bandit-bars directly."
-  [title belief & [highlight]]
-  (present/dist->bars title belief highlight))
+  ([title belief] (belief->bars title belief nil))
+  ([title belief highlight]
+   (present/dist->bars title belief highlight)))

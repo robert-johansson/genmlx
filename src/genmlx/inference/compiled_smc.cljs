@@ -133,9 +133,8 @@
           [noise-key gumbel-key run-key] (rng/split-n rk 3)
           noise (generate-smc-noise noise-key T N K)
           gumbel-noise (when (#{:gumbel-top-k :gumbel-softmax} resample-method)
-                         (let [gn (dr/generate-gumbel-noise gumbel-key T N)]
-                           (mx/materialize! gn)
-                           gn))
+                         (doto (dr/generate-gumbel-noise gumbel-key T N)
+                           mx/materialize!))
           tau-arr (mx/scalar tau)
           init-state-n (mx/broadcast-to (mx/ensure-array init-state) [N])]
       (mx/materialize! (:extend-noise noise) (:resample-uniforms noise))
@@ -157,20 +156,22 @@
             (when (and (pos? T) (not (mx/in-grad?)))
               (let [v (mx/realize log-ml)]
                 (when-not (js/isFinite v)
-                  (throw
-                   (ex-info
-                    (if (js/isNaN v)
-                      "compiled-smc: log-ML is NaN — particle weights contain NaN"
-                      (if (neg? v)
-                        (str "compiled-smc: log-ML is -Inf — at some step every "
-                             "particle was impossible under the observations and "
-                             "the resample silently collapsed. Check the "
-                             "observations against the kernel's support.")
-                        "compiled-smc: log-ML is +Inf — a particle weight is +Inf"))
-                    {:genmlx/error (if (js/isNaN v)
-                                     :nan-weights
-                                     (if (neg? v) :degenerate-particles :infinite-weight))
-                     :log-ml v :T T :n-particles N})))))
+                  (let [[msg kind]
+                        (cond
+                          (js/isNaN v)
+                          ["compiled-smc: log-ML is NaN — particle weights contain NaN"
+                           :nan-weights]
+                          (neg? v)
+                          [(str "compiled-smc: log-ML is -Inf — at some step every "
+                                "particle was impossible under the observations and "
+                                "the resample silently collapsed. Check the "
+                                "observations against the kernel's support.")
+                           :degenerate-particles]
+                          :else
+                          ["compiled-smc: log-ML is +Inf — a particle weight is +Inf"
+                           :infinite-weight])]
+                    (throw (ex-info msg {:genmlx/error kind
+                                         :log-ml v :T T :n-particles N}))))))
             {:log-ml log-ml :particles current-particles
              :addr-index addr-index :final-ess final-ess})
           (let [{:keys [new-particles new-state obs-log-prob ml-inc]}

@@ -157,7 +157,8 @@
   [latent-addr log-trans]
   {:hmm-latent
    (fn [state addr _dist]
-     (if (= addr latent-addr)
+     ;; Not our latent addr — return nil (falls through to base)
+     (when (= addr latent-addr)
        ;; HMM predict: propagate belief through transition matrix
        (let [K (last (mx/shape log-trans))
              n (:hmm-n state)
@@ -170,9 +171,7 @@
          [map-state
           (-> state
               (assoc :hmm-belief new-alpha)
-              (update :choices cm/set-value addr map-state))])
-       ;; Not our latent addr — delegate (will fall through to base)
-       nil))
+              (update :choices cm/set-value addr map-state))])))
 
    :hmm-obs
    (fn [state addr dist]
@@ -222,20 +221,22 @@
 
    Returns handler result map with :retval, :choices, :score, :weight,
    plus :hmm-belief and :hmm-ll."
-  [gf args constraints latent-addr log-trans n K key & [opts]]
-  (let [{:keys [param-store init-belief]} opts
-        transition (make-hmm-transition latent-addr log-trans)
-        uniform-prior (uniform-log-alpha K n)
-        init-state (cond-> {:choices cm/EMPTY
-                            :score (mx/scalar 0.0)
-                            :weight (mx/scalar 0.0)
-                            :key key
-                            :constraints constraints
-                            :hmm-n (when (pos? n) n)
-                            :hmm-belief (or init-belief uniform-prior)}
-                     param-store (assoc :param-store param-store))]
-    (rt/run-handler transition init-state
-      (fn [runtime] (apply (:body-fn gf) runtime args)))))
+  ([gf args constraints latent-addr log-trans n K key]
+   (hmm-generate gf args constraints latent-addr log-trans n K key {}))
+  ([gf args constraints latent-addr log-trans n K key opts]
+   (let [{:keys [param-store init-belief]} opts
+         transition (make-hmm-transition latent-addr log-trans)
+         uniform-prior (uniform-log-alpha K n)
+         init-state (cond-> {:choices cm/EMPTY
+                             :score (mx/scalar 0.0)
+                             :weight (mx/scalar 0.0)
+                             :key key
+                             :constraints constraints
+                             :hmm-n (when (pos? n) n)
+                             :hmm-belief (or init-belief uniform-prior)}
+                      param-store (assoc :param-store param-store))]
+     (rt/run-handler transition init-state
+       (fn [runtime] (apply (:body-fn gf) runtime args))))))
 
 (defn hmm-fold
   "Fold a per-step gen function over T timesteps under the HMM handler.

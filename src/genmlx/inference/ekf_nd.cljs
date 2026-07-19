@@ -248,7 +248,7 @@
   "Shared latent handler logic for both auto-diff and analytical variants."
   [latent-addrs addr-set predict-fn]
   (fn [state addr dist]
-    (if (contains? addr-set addr)
+    (when (contains? addr-set addr)
       (let [n (:ekf-nd-n state)
             means (or (:ekf-nd-means state) (make-zero-means latent-addrs n))
             covs (or (:ekf-nd-covs state) (make-zero-covs latent-addrs n))
@@ -256,8 +256,7 @@
         [v (-> state
                (assoc :ekf-nd-means new-means
                       :ekf-nd-covs new-covs)
-               (update :choices cm/set-value addr v))])
-      nil)))
+               (update :choices cm/set-value addr v))]))))
 
 (defn- make-obs-handler
   "Shared obs handler logic for both auto-diff and analytical variants."
@@ -341,22 +340,24 @@
    - :init-covs    initial covs {[a b] -> [P]-shaped}
 
    Returns handler result with :ekf-nd-means, :ekf-nd-covs, :ekf-nd-ll."
-  [gf args constraints latent-addrs n key & [opts]]
-  (let [{:keys [param-store init-means init-covs]} opts
-        transition (make-multi-ekf-transition latent-addrs)
-        init-state (cond-> {:choices cm/EMPTY
-                            :score (mx/scalar 0.0)
-                            :weight (mx/scalar 0.0)
-                            :key key
-                            :constraints constraints
-                            :ekf-nd-n n
-                            :ekf-nd-means (or init-means
-                                              (make-zero-means latent-addrs n))
-                            :ekf-nd-covs (or init-covs
-                                             (make-zero-covs latent-addrs n))}
-                     param-store (assoc :param-store param-store))]
-    (rt/run-handler transition init-state
-      (fn [runtime] (apply (:body-fn gf) runtime args)))))
+  ([gf args constraints latent-addrs n key]
+   (ekf-nd-generate gf args constraints latent-addrs n key {}))
+  ([gf args constraints latent-addrs n key opts]
+   (let [{:keys [param-store init-means init-covs]} opts
+         transition (make-multi-ekf-transition latent-addrs)
+         init-state (cond-> {:choices cm/EMPTY
+                             :score (mx/scalar 0.0)
+                             :weight (mx/scalar 0.0)
+                             :key key
+                             :constraints constraints
+                             :ekf-nd-n n
+                             :ekf-nd-means (or init-means
+                                               (make-zero-means latent-addrs n))
+                             :ekf-nd-covs (or init-covs
+                                              (make-zero-covs latent-addrs n))}
+                      param-store (assoc :param-store param-store))]
+     (rt/run-handler transition init-state
+       (fn [runtime] (apply (:body-fn gf) runtime args))))))
 
 (defn ekf-nd-fold
   "Fold a per-step gen function over T timesteps under multi-dim EKF handler.

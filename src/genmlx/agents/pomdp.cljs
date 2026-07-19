@@ -126,24 +126,25 @@
    (default — the original Clojure-map normalize-logs filter, byte-identical seam)
    or :tensor (the pure-MLX kernel genmlx.agents.belief; bean genmlx-kpuo). Both
    produce {world -> prob} beliefs, so the seam is unchanged either way."
-  [{:keys [act update-belief update-belief-tensor observe world-agents prior]} env start horizon
-   & [{:keys [belief-mode] :or {belief-mode :host}}]]
-  (let [true-world (:true-world env)
-        true-mdp   (:mdp (world-agents true-world))
-        T          (:T true-mdp)
-        terminals  (:terminals true-mdp)
-        update-belief (if (= belief-mode :tensor) update-belief-tensor update-belief)]
-    (loop [s start, b prior, step 0
-           states [start], actions [], obss [], beliefs [prior]]
-      (if (or (>= step horizon) (contains? terminals s))
-        {:states states :actions actions :observations obss :beliefs beliefs}
-        (let [a  (act b s)
-              s' (agent/sample-next T s a)
-              o  (observe true-world s')
-              b' (update-belief b s' o)]
-          (recur s' b' (inc step)
-                 (conj states s') (conj actions a)
-                 (conj obss o) (conj beliefs b')))))))
+  ([agent env start horizon] (simulate-pomdp agent env start horizon {}))
+  ([{:keys [act update-belief update-belief-tensor observe world-agents prior]} env start horizon
+    {:keys [belief-mode] :or {belief-mode :host}}]
+   (let [true-world (:true-world env)
+         true-mdp   (:mdp (world-agents true-world))
+         T          (:T true-mdp)
+         terminals  (:terminals true-mdp)
+         update-belief (if (= belief-mode :tensor) update-belief-tensor update-belief)]
+     (loop [s start, b prior, step 0
+            states [start], actions [], obss [], beliefs [prior]]
+       (if (or (>= step horizon) (contains? terminals s))
+         {:states states :actions actions :observations obss :beliefs beliefs}
+         (let [a  (act b s)
+               s' (agent/sample-next T s a)
+               o  (observe true-world s')
+               b' (update-belief b s' o)]
+           (recur s' b' (inc step)
+                  (conj states s') (conj actions a)
+                  (conj obss o) (conj beliefs b'))))))))
 
 (defn fused-simulate-pomdp
   "Fully-fused (in-graph) POMDP rollout for the OPTIMAL deterministic regime
@@ -277,21 +278,22 @@
    belief'. Returns {:arms [...] :rewards [...] :beliefs [b0 b1 ...] :cum-reward
    [...] :regret [...]}; :beliefs index k is the belief held when choosing pull k.
    Pass `key0` (e.g. (rng/fresh-key 42)) for a reproducible rollout."
-  [{:keys [act update-belief]} {:keys [pull prior theta* thetas horizon]} & [key0]]
-  (loop [b prior, step 0, key (or key0 (rng/fresh-key))
-         arms [], rewards [], beliefs [prior], cum 0.0, reg 0.0, cum-reward [], regret []]
-    (if (>= step horizon)
-      {:arms arms :rewards rewards :beliefs beliefs :cum-reward cum-reward :regret regret}
-      (let [[k1 krest] (rng/split key)
-            [k2 k3]    (rng/split krest)
-            i  (act b k1)
-            r  (pull i k2)
-            b' (update-belief b i r)
-            cum' (+ cum r)
-            reg' (+ reg (- theta* (nth thetas i)))]   ; instantaneous regret theta* - theta_i
-        (recur b' (inc step) k3
-               (conj arms i) (conj rewards r) (conj beliefs b')
-               cum' reg' (conj cum-reward cum') (conj regret reg'))))))
+  ([agent bandit] (simulate-bandit agent bandit nil))
+  ([{:keys [act update-belief]} {:keys [pull prior theta* thetas horizon]} key0]
+   (loop [b prior, step 0, key (or key0 (rng/fresh-key))
+          arms [], rewards [], beliefs [prior], cum 0.0, reg 0.0, cum-reward [], regret []]
+     (if (>= step horizon)
+       {:arms arms :rewards rewards :beliefs beliefs :cum-reward cum-reward :regret regret}
+       (let [[k1 krest] (rng/split key)
+             [k2 k3]    (rng/split krest)
+             i  (act b k1)
+             r  (pull i k2)
+             b' (update-belief b i r)
+             cum' (+ cum r)
+             reg' (+ reg (- theta* (nth thetas i)))]   ; instantaneous regret theta* - theta_i
+         (recur b' (inc step) k3
+                (conj arms i) (conj rewards r) (conj beliefs b')
+                cum' reg' (conj cum-reward cum') (conj regret reg')))))))
 
 (defn simulate-bandit-batched
   "Run N independent Thompson bandit episodes at once via shape-based batching

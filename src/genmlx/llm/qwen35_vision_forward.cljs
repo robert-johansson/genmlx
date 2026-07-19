@@ -308,54 +308,55 @@
    Returns {:logits [vocab] :cache :seq-len :rope-delta} — continue decoding
    with q35/step at offset (+ seq-len rope-delta) + relative step index
    (compressed M-RoPE positions; genmlx-52mh)."
-  [{:keys [config weights] :as model} vcfg images tokens & [{:keys [chunk] :or {chunk 192}}]]
-  (let [[pv grid-arr] (mx/vlm-preprocess images)
-        grids   (mapv vec (mx/->clj grid-arr))
-        m       (:merge vcfg)
-        merged  (mapv (fn [[t h w]] [t (quot h m) (quot w m)]) grids)
-        counts  (mapv (fn [[t h w]] (* t h w)) merged)
-        expanded (expand-image-pads (vec tokens) counts)
-        T       (count expanded)
-        {:keys [position-ids rope-delta]} (mrope-position-ids expanded merged)
-        ;; text embeddings with feature rows spliced into the pad runs
-        embed   (get weights "language_model.model.embed_tokens.weight")
-        feats   (mx/astype (vision-features weights vcfg pv grids) (mx/dtype embed))
-        h0      (let [ids (mx/array expanded [T] mx/int32)
-                      te  (mx/take-idx embed ids 0)          ; [T hidden]
-                      ;; splice per segment: runs of image-pad vs text tokens
-                      token-runs (partition-by #(= % image-token-id) expanded)
-                      starts  (reductions + 0 (map count token-runs))
-                      fstarts (reductions + 0 (map #(if (= (first %) image-token-id) (count %) 0)
-                                                   token-runs))
-                      runs (mapv (fn [run i fstart]
-                                   (let [n (count run)]
-                                     (if (= (first run) image-token-id)
-                                       (mx/take-idx feats (mx/arange fstart (+ fstart n)) 0)
-                                       (mx/take-idx te (mx/arange i (+ i n)) 0))))
-                                 token-runs starts fstarts)]
-                  (mx/reshape (if (= 1 (count runs)) (first runs) (mx/concatenate runs 0))
-                              [1 T (:hidden config)]))
-        _ (mx/materialize! h0)
-        h0-flat (mx/reshape h0 [T (:hidden config)])
-        [last-logits cache]
-        (reduce
-         (fn [[_logits cache] start]
-           (let [n    (min chunk (- T start))
-                 hs   (mx/reshape (mx/take-idx h0-flat (mx/arange start (+ start n)) 0)
-                                  [1 n (:hidden config)])
-                 pids (mapv #(subvec (vec %) start (+ start n)) position-ids)
-                 [lg c] (q35/forward-embeds model hs cache pids start)
-                 ;; materialize the kept row — an UNevaluated logits node
-                 ;; would pin the whole chunk graph (GDN states included)
-                 ;; across chunks and OOM exactly like the unchunked path
-                 last-row (mx/index lg (dec n))]
-             (mx/materialize! last-row)
-             (q35/materialize-cache! c)
-             (mx/force-gc!)
-             [last-row c]))
-         [nil (q35/init-cache model)]
-         (range 0 T chunk))]
-    {:logits last-logits
-     :cache  cache
-     :seq-len T
-     :rope-delta rope-delta}))
+  ([model vcfg images tokens] (vlm-prefill model vcfg images tokens {}))
+  ([{:keys [config weights] :as model} vcfg images tokens {:keys [chunk] :or {chunk 192}}]
+   (let [[pv grid-arr] (mx/vlm-preprocess images)
+         grids   (mapv vec (mx/->clj grid-arr))
+         m       (:merge vcfg)
+         merged  (mapv (fn [[t h w]] [t (quot h m) (quot w m)]) grids)
+         counts  (mapv (fn [[t h w]] (* t h w)) merged)
+         expanded (expand-image-pads (vec tokens) counts)
+         T       (count expanded)
+         {:keys [position-ids rope-delta]} (mrope-position-ids expanded merged)
+         ;; text embeddings with feature rows spliced into the pad runs
+         embed   (get weights "language_model.model.embed_tokens.weight")
+         feats   (mx/astype (vision-features weights vcfg pv grids) (mx/dtype embed))
+         h0      (let [ids (mx/array expanded [T] mx/int32)
+                       te  (mx/take-idx embed ids 0)          ; [T hidden]
+                       ;; splice per segment: runs of image-pad vs text tokens
+                       token-runs (partition-by #(= % image-token-id) expanded)
+                       starts  (reductions + 0 (map count token-runs))
+                       fstarts (reductions + 0 (map #(if (= (first %) image-token-id) (count %) 0)
+                                                    token-runs))
+                       runs (mapv (fn [run i fstart]
+                                    (let [n (count run)]
+                                      (if (= (first run) image-token-id)
+                                        (mx/take-idx feats (mx/arange fstart (+ fstart n)) 0)
+                                        (mx/take-idx te (mx/arange i (+ i n)) 0))))
+                                  token-runs starts fstarts)]
+                   (mx/reshape (if (= 1 (count runs)) (first runs) (mx/concatenate runs 0))
+                               [1 T (:hidden config)]))
+         _ (mx/materialize! h0)
+         h0-flat (mx/reshape h0 [T (:hidden config)])
+         [last-logits cache]
+         (reduce
+          (fn [[_logits cache] start]
+            (let [n    (min chunk (- T start))
+                  hs   (mx/reshape (mx/take-idx h0-flat (mx/arange start (+ start n)) 0)
+                                   [1 n (:hidden config)])
+                  pids (mapv #(subvec (vec %) start (+ start n)) position-ids)
+                  [lg c] (q35/forward-embeds model hs cache pids start)
+                  ;; materialize the kept row — an UNevaluated logits node
+                  ;; would pin the whole chunk graph (GDN states included)
+                  ;; across chunks and OOM exactly like the unchunked path
+                  last-row (mx/index lg (dec n))]
+              (mx/materialize! last-row)
+              (q35/materialize-cache! c)
+              (mx/force-gc!)
+              [last-row c]))
+          [nil (q35/init-cache model)]
+          (range 0 T chunk))]
+     {:logits last-logits
+      :cache  cache
+      :seq-len T
+      :rope-delta rope-delta})))

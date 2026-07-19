@@ -68,10 +68,9 @@
   ([dir {:keys [overlay] :as opts}]
    (let [mt (detect-model-type dir)]
      (case mt
-       "qwen3_5"     (assoc (q35/load-model dir opts) :impl :qwen3_5 :dir dir
-                            :vcfg (vis/load-vision-config dir))
-       "qwen3_5_moe" (assoc (q35/load-model dir opts) :impl :qwen3_5 :dir dir
-                            :vcfg (vis/load-vision-config dir))
+       ("qwen3_5" "qwen3_5_moe")
+       (assoc (q35/load-model dir opts) :impl :qwen3_5 :dir dir
+              :vcfg (vis/load-vision-config dir))
        "qwen3"       (do (when overlay
                            (throw (ex-info (str "genmlx.llm.forward: :overlay is not "
                                                 "supported for dense qwen3 — dense "

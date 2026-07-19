@@ -124,7 +124,20 @@
   [prior-addr obs-site family-info]
   (let [natural-idx (:natural-param-idx family-info)
         dist-args (:dist-args obs-site)
-        natural-arg (nth dist-args natural-idx nil)]
+        natural-arg (nth dist-args natural-idx nil)
+        ;; Direct: the natural parameter arg is a symbol bound DIRECTLY to
+        ;; (trace prior-addr ...). When the schema walker recorded :arg-aliases
+        ;; provenance, use it: it distinguishes a direct binding from an affine
+        ;; rebinding that reuses the same symbol name, e.g.
+        ;;   (let [mu (trace :mu ...) mu (mx/add mu 5)] (trace :y (gaussian mu 1)))
+        ;; which must fall through to affine analysis, not be scored as if the
+        ;; offset were 0 (genmlx-1thx); it also recognizes a direct alias under a
+        ;; different name (m = (trace :mu ...)). Hand-built schemas without the
+        ;; :arg-aliases key fall back to the legacy name match.
+        direct-binding? (if (contains? obs-site :arg-aliases)
+                          (and (symbol? natural-arg)
+                               (= prior-addr (get (:arg-aliases obs-site) natural-arg)))
+                          (symbol-resolves-to-addr? natural-arg prior-addr))]
     (cond
       ;; Dirichlet–Categorical is conjugate ONLY through the log link
       ;; (dist/categorical (mx/log theta)). Bare (dist/categorical theta) is raw
@@ -138,19 +151,7 @@
         {:type :log-link}
         {:type :nonlinear})
 
-      ;; Direct: the natural parameter arg is a symbol bound DIRECTLY to
-      ;; (trace prior-addr ...). When the schema walker recorded :arg-aliases
-      ;; provenance, use it: it distinguishes a direct binding from an affine
-      ;; rebinding that reuses the same symbol name, e.g.
-      ;;   (let [mu (trace :mu ...) mu (mx/add mu 5)] (trace :y (gaussian mu 1)))
-      ;; which must fall through to affine analysis, not be scored as if the
-      ;; offset were 0 (genmlx-1thx); it also recognizes a direct alias under a
-      ;; different name (m = (trace :mu ...)). Hand-built schemas without the
-      ;; :arg-aliases key fall back to the legacy name match.
-      (if (contains? obs-site :arg-aliases)
-        (and (symbol? natural-arg)
-             (= prior-addr (get (:arg-aliases obs-site) natural-arg)))
-        (symbol-resolves-to-addr? natural-arg prior-addr))
+      direct-binding?
       {:type :direct}
 
       ;; Try affine analysis on the natural parameter expression
