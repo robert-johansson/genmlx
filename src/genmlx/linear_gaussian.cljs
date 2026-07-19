@@ -102,9 +102,10 @@
   [form]
   (cond
     (symbol? form) #{form}
-    (seq? form)    (into #{} (mapcat form-symbols) form)
-    (vector? form) (into #{} (mapcat form-symbols) form)
     (map? form)    (into #{} (mapcat form-symbols) (concat (keys form) (vals form)))
+    ;; NOT coll? — set literals were never traversed here; keep it that way.
+    (or (seq? form) (vector? form))
+    (into #{} (mapcat form-symbols) form)
     :else #{}))
 
 (defn- references-any?

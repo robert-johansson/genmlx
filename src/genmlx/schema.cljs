@@ -9,7 +9,8 @@
    The walker threads a binding environment (env) that maps local symbols to
    the set of trace addresses their values depend on. This enables accurate
    dependency tracking between trace sites."
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set]
+            [clojure.string :as str]))
 
 ;; =========================================================================
 ;; Helpers
@@ -27,7 +28,7 @@
       (if (or (nil? ns-part)
               (= ns-part "dist")
               (= ns-part "genmlx.dist")
-              (and (string? ns-part) (.endsWith ns-part ".dist")))
+              (and (string? ns-part) (str/ends-with? ns-part ".dist")))
         (keyword name-part)
         :unknown))
     :unknown))
@@ -37,22 +38,15 @@
   [form]
   (cond
     (symbol? form) #{form}
-    (seq? form) (into #{} (mapcat find-symbols) form)
-    (vector? form) (into #{} (mapcat find-symbols) form)
     (map? form) (into #{} (mapcat find-symbols) (mapcat identity form))
-    (set? form) (into #{} (mapcat find-symbols) form)
+    (coll? form) (into #{} (mapcat find-symbols) form)
     :else #{}))
 
 (defn- deps-of-syms
   "Resolve a set of symbols to the union of trace addresses they depend on,
    given the current binding environment (env maps symbols to #{trace-addrs})."
   [env syms]
-  (reduce (fn [deps sym]
-            (if-let [trace-addrs (get env sym)]
-              (into deps trace-addrs)
-              deps))
-          #{}
-          syms))
+  (into #{} (mapcat #(get env %)) syms))
 
 (defn- compute-deps
   "Compute the set of trace addresses that a form depends on,
@@ -83,13 +77,10 @@
           (contains? #{"trace" "splice" "param"} (name h)))
         (some contains-gen-call? form))
 
-    (and (vector? form) (seq form))
-    (some contains-gen-call? form)
-
     (map? form)
     (boolean (some contains-gen-call? (mapcat identity form)))
 
-    (set? form)
+    (coll? form)
     (boolean (some contains-gen-call? form))
 
     :else false))
@@ -135,13 +126,10 @@
           (contains? gen-binding-names (name h)))
         (some contains-trace-call? form))
 
-    (and (vector? form) (seq form))
-    (some contains-trace-call? form)
-
     (map? form)
     (boolean (some contains-trace-call? (mapcat identity form)))
 
-    (set? form)
+    (coll? form)
     (boolean (some contains-trace-call? form))
 
     :else false))
@@ -151,16 +139,15 @@
    forms as well — a match's arguments may contain further matches (e.g. a
    trace call nested in another trace's dist-args)."
   [forms pred]
-  (let [results (volatile! [])]
-    (letfn [(walk [form]
-              (when (pred form) (vswap! results conj form))
+  (letfn [(collect [acc form]
+            ;; Depth-first pre-order: a match is conj'd BEFORE recursing into
+            ;; it, children left-to-right — the vector's order is observable.
+            (let [acc (if (pred form) (conj acc form) acc)]
               (cond
-                (seq? form) (run! walk form)
-                (vector? form) (run! walk form)
-                (map? form) (run! walk (mapcat identity form))
-                (set? form) (run! walk form)))]
-      (run! walk forms))
-    @results))
+                (map? form) (reduce collect acc (mapcat identity form))
+                (coll? form) (reduce collect acc form)
+                :else acc)))]
+    (reduce collect [] forms)))
 
 (defn- trace-addrs-in
   "Keyword addresses of all literal trace calls anywhere inside form."
@@ -186,12 +173,9 @@
    compute-deps (which tracks trace-address provenance) for the
    regenerate fast-path gate (genmlx-njzu)."
   [env form]
-  (reduce (fn [acc sym]
-            (if-let [sp (get-in env [::splice-provenance sym])]
-              (into acc sp)
-              acc))
-          #{}
-          (find-symbols form)))
+  (into #{}
+        (mapcat #(get-in env [::splice-provenance %]))
+        (find-symbols form)))
 
 (defn- direct-set-of-form
   "The set of trace addresses whose VALUES this form's own evaluation reads
@@ -218,13 +202,10 @@
       #{addr}
       (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} form))
 
-    (vector? form)
-    (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} form)
-
     (map? form)
     (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} (mapcat identity form))
 
-    (set? form)
+    (coll? form)
     (reduce (fn [acc f] (into acc (direct-set-of-form env f))) #{} form)
 
     :else #{}))
@@ -472,18 +453,18 @@
                                           (reduce (fn [e s]
                                                     (assoc-in e [::splice-provenance s] sym-splices))
                                                   env1 (find-symbols sym))
-                                          (if (::splice-provenance env1)
-                                            (update env1 ::splice-provenance
-                                                    #(apply dissoc % (find-symbols sym)))
-                                            env1))
+                                          (cond-> env1
+                                            (::splice-provenance env1)
+                                            (update ::splice-provenance
+                                                    #(apply dissoc % (find-symbols sym)))))
                                    ;; destructured direct reads: conservative
                                    ;; full-union per bound symbol (genmlx-ltx2)
                                    env1 (reduce (fn [e s] (bind-direct e s sym-direct))
                                                 env1 (find-symbols sym))
-                                   env2 (if (::arg-aliases env1)
-                                          (update env1 ::arg-aliases
-                                                  #(apply dissoc % (find-symbols sym)))
-                                          env1)]
+                                   env2 (cond-> env1
+                                          (::arg-aliases env1)
+                                          (update ::arg-aliases
+                                                  #(apply dissoc % (find-symbols sym))))]
                                [acc' env2]))))
                        [acc env]
                        (or pairs []))]
@@ -513,31 +494,32 @@
     ;; (keyword (str "prefix" sym)) or (keyword (str "prefix" sym "suffix"))
     (and (seq? addr-form)
          (= 2 (count addr-form))
-         (symbol? (first addr-form))
-         (= "keyword" (name (first addr-form)))
-         (seq? (second addr-form))
-         (symbol? (first (second addr-form)))
-         (= "str" (name (first (second addr-form)))))
-    (let [parts (vec (rest (second addr-form)))]
+         (let [[kw-sym str-form] addr-form]
+           (and (symbol? kw-sym)
+                (= "keyword" (name kw-sym))
+                (seq? str-form)
+                (symbol? (first str-form))
+                (= "str" (name (first str-form))))))
+    (let [[prefix index-sym suffix :as parts] (vec (rest (second addr-form)))]
       (cond
         ;; (keyword (str "prefix" sym))
         (and (= 2 (count parts))
-             (string? (first parts))
-             (symbol? (second parts)))
+             (string? prefix)
+             (symbol? index-sym))
         {:type :keyword-str
-         :prefix (first parts)
-         :index-sym (second parts)
+         :prefix prefix
+         :index-sym index-sym
          :suffix nil}
 
         ;; (keyword (str "prefix" sym "suffix"))
         (and (= 3 (count parts))
-             (string? (first parts))
-             (symbol? (second parts))
-             (string? (nth parts 2)))
+             (string? prefix)
+             (symbol? index-sym)
+             (string? suffix))
         {:type :keyword-str
-         :prefix (first parts)
-         :index-sym (second parts)
-         :suffix (nth parts 2)}
+         :prefix prefix
+         :index-sym index-sym
+         :suffix suffix}
 
         :else
         {:type :unknown :form addr-form}))
@@ -627,10 +609,8 @@
             (let [n (name (first form))]
               (or (#{"doseq" "dotimes" "for" "loop"} n)
                   (some check (rest form))))
-            (seq? form) (some check form)
-            (vector? form) (some check form)
             (map? form) (some check (mapcat identity form))
-            (set? form) (some check form)
+            (coll? form) (some check form)
             :else false))
         forms))
 
@@ -650,17 +630,14 @@
   [forms]
   (let [trace-call? #(call-named? % "trace")]
     (some (fn check [form]
-            (cond
-              (head-sym form)
-              (let [n (name (head-sym form))]
-                (if (branch-heads n)
-                  (seq (find-all-calls (rest form) trace-call?))
-                  (some check (rest form))))
-              (seq? form) (some check form)
-              (vector? form) (some check form)
-              (map? form) (some check (mapcat identity form))
-              (set? form) (some check form)
-              :else false))
+            (if-let [h (head-sym form)]
+              (if (branch-heads (name h))
+                (seq (find-all-calls (rest form) trace-call?))
+                (some check (rest form)))
+              (cond
+                (map? form) (some check (mapcat identity form))
+                (coll? form) (some check form)
+                :else false)))
           forms)))
 
 (defn- extract-loop-trace-sites
@@ -921,29 +898,21 @@
       "splice" (handle-splice acc env args)
       "param" (handle-param acc env args)
       "let" (handle-let acc env args)
-      "if" (handle-branching acc env args args)
-      "when" (handle-branching acc env args args)
-      "when-not" (handle-branching acc env args args)
-      "when-let" (handle-branching acc env args args)
-      "if-let" (handle-branching acc env args args)
-      "if-not" (handle-branching acc env args args)
-      "cond" (handle-branching acc env args args)
-      "case" (handle-branching acc env args (rest args))
-      "and" (handle-branching acc env args args)
-      "or" (handle-branching acc env args args)
-      ;; genmlx-blkz: these conditional macros were silently falling through to
-      ;; the default (walk-forms) which records sites but never sets
-      ;; :has-branches?, so a branchy model was misclassified :static?.
-      "if-some" (handle-branching acc env args args)
-      "when-some" (handle-branching acc env args args)
-      "when-first" (handle-branching acc env args args)
+      ;; Conditional macros whose FULL arg list is the conditional part.
+      ;; genmlx-blkz: if-some/when-some/when-first were silently falling
+      ;; through to the default (walk-forms) which records sites but never
+      ;; sets :has-branches?, so a branchy model was misclassified :static?.
+      ("if" "when" "when-not" "when-let" "if-let" "if-not" "cond" "and" "or"
+       "if-some" "when-some" "when-first")
+      (handle-branching acc env args args)
+      ;; case: the dispatch expr (first arg) is always evaluated;
+      ;; cond->/cond->>: the initial threaded value is unconditional.
+      ;; The rest — clause pairs — is the conditional part.
+      ("case" "cond->" "cond->>")
+      (handle-branching acc env args (rest args))
       ;; condp: skip the dispatch predicate + the dispatch expr (both always
       ;; evaluated); the clause result-exprs are the conditional part.
       "condp" (handle-branching acc env args (drop 2 args))
-      ;; cond->/cond->>: the initial threaded value is unconditional; the
-      ;; test/form clause pairs are the conditional part.
-      "cond->" (handle-branching acc env args (rest args))
-      "cond->>" (handle-branching acc env args (rest args))
       "do" (walk-forms acc env args)
       "doseq" (handle-loop-form (assoc acc :current-loop-type :doseq) env args)
       "dotimes" (handle-loop-form (assoc acc :current-loop-type :dotimes) env args)

@@ -335,21 +335,28 @@
   [sym]
   (let [ns-part (namespace sym)
         n (name sym)]
-    (cond
-      (or (= ns-part "mx") (= ns-part "genmlx.mlx")) (get mx-fns n)
-      (nil? ns-part) (get cljs-fns n)
-      :else nil)))
+    (case ns-part
+      ("mx" "genmlx.mlx") (get mx-fns n)
+      nil (get cljs-fns n)
+      nil)))
 
 ;; ---------------------------------------------------------------------------
 ;; Binding environment: walk source → symbol resolution map
 ;; ---------------------------------------------------------------------------
 
+(defn- form-named?
+  "True when form is a seq whose head is a symbol named n — the head-name test
+   for special-form/macro dispatch on quoted source. No (seq form) guard is
+   needed: (first ()) is nil and (symbol? nil) is false."
+  [form n]
+  (and (seq? form)
+       (symbol? (first form))
+       (= n (name (first form)))))
+
 (defn- trace-call?
   "Is form a (trace :addr ...) call?"
   [form]
-  (and (seq? form) (seq form)
-       (symbol? (first form))
-       (= "trace" (name (first form)))
+  (and (form-named? form "trace")
        (keyword? (second form))))
 
 (defn- pattern-symbols
@@ -378,15 +385,15 @@
   "Names bound by a let-like binding vector [target init target init ...].
    Handles for/doseq modifiers: :let vectors recurse, :when/:while skip."
   [bvec]
-  (loop [xs (seq bvec) acc #{}]
-    (if (or (nil? xs) (nil? (next xs)))
-      acc
-      (let [t (first xs) v (second xs)]
-        (recur (nnext xs)
-               (cond
-                 (= :let t) (into acc (binding-vector-targets v))
-                 (keyword? t) acc
-                 :else (into acc (pattern-symbols t))))))))
+  ;; partition 2 drops an odd trailing element, exactly like the previous
+  ;; loop's (nil? (next xs)) termination (binding vectors are even anyway).
+  (reduce (fn [acc [t v]]
+            (cond
+              (= :let t) (into acc (binding-vector-targets v))
+              (keyword? t) acc
+              :else (into acc (pattern-symbols t))))
+          #{}
+          (partition 2 bvec)))
 
 (defn- binder-target-names
   "Names bound by a non-let binder form (see binder-heads)."
@@ -437,8 +444,7 @@
   [env form]
   (cond
     ;; let form: process bindings sequentially, then walk body
-    (and (seq? form) (seq form) (symbol? (first form))
-         (= "let" (name (first form)))
+    (and (form-named? form "let")
          (vector? (second form)))
     (let [pairs (partition 2 (second form))
           env' (reduce
@@ -455,8 +461,7 @@
       (walk-binding-forms env' (drop 2 form)))
 
     ;; do form
-    (and (seq? form) (seq form) (symbol? (first form))
-         (= "do" (name (first form))))
+    (form-named? form "do")
     (walk-binding-forms env (rest form))
 
     ;; Binder forms with unmodeled scoping: poison targets, walk children
@@ -466,8 +471,8 @@
                         (rest form))
 
     ;; Other sequences: walk children for nested lets
-    (seq? form) (walk-binding-forms env form)
-    (vector? form) (walk-binding-forms env form)
+    (or (seq? form) (vector? form))
+    (walk-binding-forms env form)
     :else env))
 
 (defn- walk-binding-forms [env forms]
@@ -502,11 +507,10 @@
    visited: set of symbol names for cycle detection on :expr bindings."
   [form binding-env visited]
   (cond
-    (number? form) (fn [_v _a] form)
-    (boolean? form) (fn [_v _a] form)
-    (keyword? form) (fn [_v _a] form)
-    (string? form) (fn [_v _a] form)
-    (nil? form) (fn [_v _a] nil)
+    ;; Self-evaluating literal (nil included: form IS nil there)
+    (or (number? form) (boolean? form) (keyword? form) (string? form)
+        (nil? form))
+    (constantly form)
 
     ;; Symbol → resolve through binding env, then try closed-over var
     (symbol? form)
@@ -573,7 +577,7 @@
                     (when (and ck cv) [ck cv])))
                 form)]
       (when (every? some? compiled-entries)
-        (fn [v a] (into {} (mapv (fn [[ck cv]] [(ck v a) (cv v a)]) compiled-entries)))))
+        (fn [v a] (into {} (map (fn [[ck cv]] [(ck v a) (cv v a)])) compiled-entries))))
 
     :else nil))
 
@@ -763,14 +767,8 @@
   "Peel through let/do wrappers to find the leaf return expression."
   [form]
   (cond
-    (and (seq? form) (seq form) (symbol? (first form))
-         (= "let" (name (first form))))
-    (extract-return-expr (last (drop 2 form)))
-
-    (and (seq? form) (seq form) (symbol? (first form))
-         (= "do" (name (first form))))
-    (extract-return-expr (last (rest form)))
-
+    (form-named? form "let") (extract-return-expr (last (drop 2 form)))
+    (form-named? form "do") (extract-return-expr (last (rest form)))
     :else form))
 
 ;; ---------------------------------------------------------------------------
@@ -865,9 +863,7 @@
    Only :noise-fn — :args-noise-fn sites never reach noise pre-generation
    (build-site-step declines them, genmlx-b210)."
   [site-spec]
-  (let [nt (get noise-transforms-full (:dist-type site-spec))]
-    (when nt
-      (:noise-fn nt))))
+  (-> site-spec :dist-type noise-transforms-full :noise-fn))
 
 (defn- generate-site-noise
   "Pre-generate noise for all sites OUTSIDE mx/compile-fn.
@@ -991,23 +987,22 @@
 (defn- contains-gen-call-any?
   "Does this form recursively contain any trace, splice, or param calls?"
   [form]
+  ;; NOTE: deliberately does NOT recurse into map/set literals (unlike
+  ;; schema.cljs's contains-gen-call?) — the prefix/rewrite walkers treat
+  ;; those as opaque, and widening this would change site extraction.
   (cond
-    (and (seq? form) (seq form))
-    (let [head (first form)]
-      (or (and (symbol? head)
-               (let [n (name head)]
-                 (or (= n "trace") (= n "splice") (= n "param"))))
-          (some contains-gen-call-any? form)))
-    (and (vector? form) (seq form))
-    (some contains-gen-call-any? form)
+    (and (seq? form) (seq form)
+         (symbol? (first form))
+         (contains? #{"trace" "splice" "param"} (name (first form))))
+    true
+    (or (seq? form) (vector? form))
+    (boolean (some contains-gen-call-any? form))
     :else false))
 
 (defn- simple-trace-call?
   "Is form exactly (trace :keyword dist-expr)?"
   [form]
-  (and (seq? form) (seq form)
-       (symbol? (first form))
-       (= "trace" (name (first form)))
+  (and (form-named? form "trace")
        (keyword? (second form))
        (= 3 (count form))))
 
@@ -1062,8 +1057,7 @@
           rest-forms (rest forms)]
       (cond
         ;; let form: walk bindings, then body
-        (and (seq? form) (seq form) (symbol? (first form))
-             (= "let" (name (first form)))
+        (and (form-named? form "let")
              (vector? (second form)))
         (let [result (walk-prefix-bindings (partition 2 (second form)) prefix)]
           (if (:stopped result)
@@ -1072,8 +1066,7 @@
             (walk-prefix-forms (concat (drop 2 form) rest-forms) (:prefix result))))
 
         ;; do form: walk children
-        (and (seq? form) (seq form) (symbol? (first form))
-             (= "do" (name (first form))))
+        (form-named? form "do")
         (walk-prefix-forms (concat (rest form) rest-forms) prefix)
 
         ;; Simple trace at top level (same nested-gen guard as the binding
@@ -1249,9 +1242,7 @@
     (let [head (name (first form))
           flipped? (= head "if-not")]
       (when (or (= head "if") flipped?)
-        (let [cond-form (nth form 1)
-              true-form (nth form 2)
-              false-form (nth form 3)]
+        (let [[_ cond-form true-form false-form] form]
           (when (and (simple-trace-call? true-form)
                      (simple-trace-call? false-form))
             (let [t-addr (second true-form)
@@ -1310,16 +1301,14 @@
           rest-forms (rest forms)]
       (cond
         ;; let form
-        (and (seq? form) (seq form) (symbol? (first form))
-             (= "let" (name (first form)))
+        (and (form-named? form "let")
              (vector? (second form)))
         (let [result (walk-rewrite-bindings (partition 2 (second form)) sites)]
           (when-not (:failed? result)
             (walk-rewrite-forms (concat (drop 2 form) rest-forms) (:sites result))))
 
         ;; do form
-        (and (seq? form) (seq form) (symbol? (first form))
-             (= "do" (name (first form))))
+        (form-named? form "do")
         (walk-rewrite-forms (concat (rest form) rest-forms) sites)
 
         ;; Simple trace at top level
@@ -1331,8 +1320,7 @@
             (walk-rewrite-forms rest-forms (conj sites (assoc info :addr addr)))))
 
         ;; if/if-not → try to rewrite
-        (and (seq? form) (seq form) (symbol? (first form))
-             (let [n (name (first form))] (or (= n "if") (= n "if-not"))))
+        (or (form-named? form "if") (form-named? form "if-not"))
         (when-let [branch (analyze-rewritable-branch form)]
           (walk-rewrite-forms rest-forms (conj sites branch)))
 
