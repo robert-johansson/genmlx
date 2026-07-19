@@ -144,6 +144,7 @@
 (defdist gaussian
   "Gaussian (normal) distribution with mean mu and std sigma."
   [mu sigma]
+  (validate (check-positive "gaussian" "sigma" sigma))
   (sample [key]
           (mx/add mu (mx/multiply sigma (rng/normal key []))))
   (log-prob [v]
@@ -154,13 +155,6 @@
                        (mx/multiply HALF (mx/square z))))))
   (reparam [key]
            (mx/add mu (mx/multiply sigma (rng/normal key [])))))
-
-(let [raw gaussian]
-  (defn gaussian
-    "Gaussian (normal) distribution with mean mu and std sigma."
-    [mu sigma]
-    (check-positive "gaussian" "sigma" sigma)
-    (raw mu sigma)))
 
 (defmethod dc/dist-sample-n* :gaussian [d key n]
   (let [{:keys [mu sigma]} (:params d)
@@ -176,6 +170,7 @@
 (defdist uniform
   "Continuous uniform distribution on [lo, hi]."
   [lo hi]
+  (validate (check-less-than "uniform" "lo" lo "hi" hi))
   (sample [key]
           (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key []))))
   (log-prob [v]
@@ -187,13 +182,6 @@
               (mx/where in-bounds log-density NEG-INF)))
   (reparam [key]
            (mx/add lo (mx/multiply (mx/subtract hi lo) (rng/uniform key [])))))
-
-(let [raw uniform]
-  (defn uniform
-    "Continuous uniform distribution on [lo, hi]."
-    [lo hi]
-    (check-less-than "uniform" "lo" lo "hi" hi)
-    (raw lo hi)))
 
 (defmethod dc/dist-sample-n* :uniform [d key n]
   (let [{:keys [lo hi]} (:params d)
@@ -207,6 +195,7 @@
 (defdist bernoulli
   "Bernoulli distribution with probability p."
   [p]
+  (validate (check-probability "bernoulli" "p" p))
   (sample [key]
           (let [u (rng/uniform key [])]
             (mx/where (mx/less u p) ONE ZERO)))
@@ -235,13 +224,6 @@
         key (rng/ensure-key key)
         u (rng/uniform key [n])]
     (mx/where (mx/less u p) ONE ZERO)))
-
-(let [raw bernoulli]
-  (defn bernoulli
-    "Bernoulli distribution with probability p."
-    [p]
-    (check-probability "bernoulli" "p" p)
-    (raw p)))
 
 (defn flip
   "Alias for bernoulli."
@@ -301,6 +283,8 @@
 (defdist beta-dist
   "Beta distribution with parameters alpha and beta."
   [alpha beta-param]
+  (validate (check-positive "beta-dist" "alpha" alpha)
+            (check-positive "beta-dist" "beta" beta-param))
   (sample [key]
     ;; Beta(a,b) = G_a / (G_a + G_b), with G ~ Gamma(shape, 1) from the stable
     ;; Marsaglia-Tsang sampler. Replaces Johnk's algorithm, which diverges (and
@@ -328,14 +312,6 @@
                          (mx/subtract log-beta-val))]
               (mx/where in-support lp NEG-INF))))
 
-(let [raw beta-dist]
-  (defn beta-dist
-    "Beta distribution with parameters alpha and beta."
-    [alpha beta-param]
-    (check-positive "beta-dist" "alpha" alpha)
-    (check-positive "beta-dist" "beta" beta-param)
-    (raw alpha beta-param)))
-
 ;; ---------------------------------------------------------------------------
 ;; Gamma
 ;; ---------------------------------------------------------------------------
@@ -343,6 +319,8 @@
 (defdist gamma-dist
   "Gamma distribution with shape and rate parameters."
   [shape-param rate]
+  (validate (check-positive "gamma-dist" "shape" shape-param)
+            (check-positive "gamma-dist" "rate" rate))
   (sample [key]
     ;; Marsaglia and Tsang's method (Ahrens-Dieter boost for shape < 1),
     ;; shared with the gamma-ratio Beta sampler above.
@@ -355,14 +333,6 @@
                          (mx/subtract (mx/multiply rate v))
                          (mx/subtract (mx/lgamma k)))]
               (mx/where (mx/greater v ZERO) lp NEG-INF))))
-
-(let [raw gamma-dist]
-  (defn gamma-dist
-    "Gamma distribution with shape and rate parameters."
-    [shape-param rate]
-    (check-positive "gamma-dist" "shape" shape-param)
-    (check-positive "gamma-dist" "rate" rate)
-    (raw shape-param rate)))
 
 (defn- gamma-sample-n
   "Vectorized Marsaglia-Tsang: sample [n] gamma values with given shape and rate.
@@ -512,6 +482,7 @@
 (defdist exponential
   "Exponential distribution with the given rate."
   [rate]
+  (validate (check-positive "exponential" "rate" rate))
   (sample [key]
           (let [u (rng/uniform key [])]
             (mx/divide (mx/negative (mx/log (mx/subtract ONE u))) rate)))
@@ -522,13 +493,6 @@
   (reparam [key]
            (let [u (rng/uniform key [])]
              (mx/divide (mx/negative (mx/log (mx/subtract ONE u))) rate))))
-
-(let [raw exponential]
-  (defn exponential
-    "Exponential distribution with the given rate."
-    [rate]
-    (check-positive "exponential" "rate" rate)
-    (raw rate)))
 
 (defmethod dc/dist-sample-n* :exponential [d key n]
   (let [{:keys [rate]} (:params d)
@@ -740,6 +704,7 @@
 (defdist poisson
   "Poisson distribution with the given rate."
   [rate]
+  (validate (check-positive "poisson" "rate" rate))
   (sample [key]
           (mx/scalar (poisson-sample* (mx/realize rate) key)))
   (log-prob [v]
@@ -751,13 +716,6 @@
                          (mx/subtract (mx/lgamma (mx/add v ONE))))]
               (mx/where in-support lp NEG-INF))))
 
-(let [raw poisson]
-  (defn poisson
-    "Poisson distribution with the given rate."
-    [rate]
-    (check-positive "poisson" "rate" rate)
-    (raw rate)))
-
 ;; ---------------------------------------------------------------------------
 ;; Laplace
 ;; ---------------------------------------------------------------------------
@@ -765,6 +723,7 @@
 (defdist laplace
   "Laplace distribution with location and scale."
   [loc scale]
+  (validate (check-positive "laplace" "scale" scale))
   (sample [key]
           (laplace-icdf loc scale (mx/subtract (rng/uniform key []) HALF)))
   (log-prob [v]
@@ -782,13 +741,6 @@
         key (rng/ensure-key key)]
     (laplace-icdf loc scale (mx/subtract (rng/uniform key [n]) HALF))))
 
-(let [raw laplace]
-  (defn laplace
-    "Laplace distribution with location and scale."
-    [loc scale]
-    (check-positive "laplace" "scale" scale)
-    (raw loc scale)))
-
 ;; ---------------------------------------------------------------------------
 ;; Student-t
 ;; ---------------------------------------------------------------------------
@@ -796,6 +748,8 @@
 (defdist student-t
   "Student-t distribution with df degrees of freedom, location and scale."
   [df loc scale]
+  (validate (check-positive "student-t" "df" df)
+            (check-positive "student-t" "scale" scale))
   (sample [key]
           ;; chi2(df) = Gamma(df/2, rate 1/2) — valid for ANY df > 0. The old
           ;; sum-of-int(df)-squared-normals sampler silently truncated df
@@ -838,14 +792,6 @@
         t (mx/multiply z (mx/sqrt (mx/divide df chi2)))]
     (mx/add loc (mx/multiply scale t))))
 
-(let [raw student-t]
-  (defn student-t
-    "Student-t distribution with df degrees of freedom, location and scale."
-    [df loc scale]
-    (check-positive "student-t" "df" df)
-    (check-positive "student-t" "scale" scale)
-    (raw df loc scale)))
-
 ;; ---------------------------------------------------------------------------
 ;; Log-Normal
 ;; ---------------------------------------------------------------------------
@@ -853,6 +799,7 @@
 (defdist log-normal
   "Log-Normal distribution with parameters mu and sigma."
   [mu sigma]
+  (validate (check-positive "log-normal" "sigma" sigma))
   (sample [key]
           (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key [])))))
   (log-prob [v]
@@ -872,13 +819,6 @@
   (let [{:keys [mu sigma]} (:params d)
         key (rng/ensure-key key)]
     (mx/exp (mx/add mu (mx/multiply sigma (rng/normal key [n]))))))
-
-(let [raw log-normal]
-  (defn log-normal
-    "Log-Normal distribution with parameters mu and sigma."
-    [mu sigma]
-    (check-positive "log-normal" "sigma" sigma)
-    (raw mu sigma)))
 
 ;; ---------------------------------------------------------------------------
 ;; Dirichlet
@@ -955,6 +895,7 @@
 (defdist cauchy
   "Cauchy distribution with location and scale."
   [loc scale]
+  (validate (check-positive "cauchy" "scale" scale))
   (sample [key]
     ;; Inverse CDF: loc + scale * tan(pi * (u - 0.5))
           (let [u (rng/uniform key [])
@@ -985,13 +926,6 @@
                              (mx/divide (mx/sin (mx/multiply MLX-PI z))
                                         (mx/cos (mx/multiply MLX-PI z)))))))
 
-(let [raw cauchy]
-  (defn cauchy
-    "Cauchy distribution with location and scale."
-    [loc scale]
-    (check-positive "cauchy" "scale" scale)
-    (raw loc scale)))
-
 ;; ---------------------------------------------------------------------------
 ;; Inverse Gamma
 ;; ---------------------------------------------------------------------------
@@ -999,6 +933,8 @@
 (defdist inv-gamma
   "Inverse-Gamma distribution with shape and scale parameters."
   [shape-param scale-param]
+  (validate (check-positive "inv-gamma" "shape" shape-param)
+            (check-positive "inv-gamma" "scale" scale-param))
   (sample [key]
     ;; InvGamma(shape, scale) = scale / G where G ~ Gamma(shape, rate=1)
     ;; (genmlx-21kt: the old "gamma(shape, 1/scale), then invert" comment
@@ -1019,21 +955,20 @@
         g (gamma-sample-n (mx/realize shape-param) ONE key n)]
     (mx/divide scale-param g)))
 
-(let [raw inv-gamma]
-  (defn inv-gamma
-    "Inverse-Gamma distribution with shape and scale parameters."
-    [shape-param scale-param]
-    (check-positive "inv-gamma" "shape" shape-param)
-    (check-positive "inv-gamma" "scale" scale-param)
-    (raw shape-param scale-param)))
-
 ;; ---------------------------------------------------------------------------
 ;; Geometric
 ;; ---------------------------------------------------------------------------
 
 (defdist geometric
-  "Geometric distribution: number of failures before first success, p in (0,1)."
+  "Geometric distribution: number of failures before first success, p in (0,1]."
   [p]
+  (validate
+   ;; p=1 is legal (k=0 w.p. 1; the log-prob xlogy guard handles it), but
+   ;; p=0 sampled floor(log u / log 1) = -Inf garbage (genmlx-yeam).
+   (check-probability "geometric" "p" p)
+   (when (and (number? p) (zero? p))
+     (throw (ex-info "geometric: p must be in (0,1], got 0"
+                     {:distribution "geometric" :parameter "p" :value p}))))
   (sample [key]
     ;; Inverse CDF: floor(log(1-u) / log(1-p)). Use (1-u), not u: rng/uniform
     ;; returns [0,1) which INCLUDES 0, and log(0) = -Inf -> +Inf, a sample
@@ -1071,26 +1006,20 @@
         log-1mp (mx/log (mx/subtract ONE p))]
     (mx/floor (mx/divide log-1mu log-1mp))))
 
-(let [raw geometric]
-  (defn geometric
-    "Geometric distribution: number of failures before first success, p in (0,1]."
-    [p]
-    ;; p=1 is legal (k=0 w.p. 1; the log-prob xlogy guard handles it), but
-    ;; p=0 sampled floor(log u / log 1) = -Inf garbage (genmlx-yeam).
-    (check-probability "geometric" "p" p)
-    (when (and (number? p) (zero? p))
-      (throw (ex-info "geometric: p must be in (0,1], got 0"
-                      {:distribution "geometric" :parameter "p" :value p})))
-    (raw p)))
-
 ;; ---------------------------------------------------------------------------
 ;; Negative Binomial
 ;; ---------------------------------------------------------------------------
 
 (defdist neg-binomial
   "Negative binomial (Polya) distribution.
-   r: number of successes, p: probability of success."
+   r: number of successes, p: probability of success, p in (0,1)."
   [r p]
+  (validate
+   (check-positive "neg-binomial" "r" r)
+   ;; Strictly open: the gamma-Poisson sampler's rate p/(1-p) divides by
+   ;; zero at p=1, and p=0 never terminates — the closed-interval check
+   ;; let both through to garbage (genmlx-yeam).
+   (check-open-probability "neg-binomial" "p" p))
   (sample [key]
     ;; Gamma-Poisson mixture: lambda ~ Gamma(r, p/(1-p)), then x ~ Poisson(lambda).
     ;; The Poisson stage shares poisson-sample* — the inline Knuth product loop
@@ -1111,18 +1040,6 @@
                          (mx/add (mx/multiply v (mx/log (mx/subtract ONE p)))))]
               (mx/where in-support lp NEG-INF))))
 
-(let [raw neg-binomial]
-  (defn neg-binomial
-    "Negative binomial (Polya) distribution.
-   r: number of successes, p: probability of success, p in (0,1)."
-    [r p]
-    (check-positive "neg-binomial" "r" r)
-    ;; Strictly open: the gamma-Poisson sampler's rate p/(1-p) divides by
-    ;; zero at p=1, and p=0 never terminates — the closed-interval check
-    ;; let both through to garbage (genmlx-yeam).
-    (check-open-probability "neg-binomial" "p" p)
-    (raw r p)))
-
 ;; ---------------------------------------------------------------------------
 ;; Binomial
 ;; ---------------------------------------------------------------------------
@@ -1130,6 +1047,7 @@
 (defdist binomial
   "Binomial distribution: n trials with success probability p."
   [n-trials p]
+  (validate (check-probability "binomial" "p" p))
   (sample [key]
           (let [nt (int (mx/realize n-trials))
                 ks (rng/split-n key nt)
@@ -1171,13 +1089,6 @@
         successes (mx/sum (mx/where (mx/less u p) ONE ZERO) [1])]
     successes))
 
-(let [raw binomial]
-  (defn binomial
-    "Binomial distribution: n trials with success probability p."
-    [n-trials p]
-    (check-probability "binomial" "p" p)
-    (raw n-trials p)))
-
 ;; ---------------------------------------------------------------------------
 ;; Discrete Uniform
 ;; ---------------------------------------------------------------------------
@@ -1185,6 +1096,7 @@
 (defdist discrete-uniform
   "Discrete uniform distribution on integers [lo, hi]."
   [lo hi]
+  (validate (check-less-than "discrete-uniform" "lo" lo "hi" hi))
   (sample [key]
           (let [lo-val (int (mx/realize lo))
                 hi-val (int (mx/realize hi))
@@ -1206,13 +1118,6 @@
         key (rng/ensure-key key)]
     (rng/randint key (int (mx/realize lo)) (inc (int (mx/realize hi))) [n])))
 
-(let [raw discrete-uniform]
-  (defn discrete-uniform
-    "Discrete uniform distribution on integers [lo, hi]."
-    [lo hi]
-    (check-less-than "discrete-uniform" "lo" lo "hi" hi)
-    (raw lo hi)))
-
 ;; ---------------------------------------------------------------------------
 ;; Truncated Normal
 ;; ---------------------------------------------------------------------------
@@ -1220,6 +1125,8 @@
 (defdist truncated-normal
   "Truncated normal distribution on [lo, hi] with parameters mu and sigma."
   [mu sigma lo hi]
+  (validate (check-positive "truncated-normal" "sigma" sigma)
+            (check-less-than "truncated-normal" "lo" lo "hi" hi))
   (sample [key]
           (let [z (rng/truncated-normal key
                                         (mx/divide (mx/subtract lo mu) sigma)
@@ -1266,14 +1173,6 @@
         b (mx/divide (mx/subtract hi mu) sigma)
         z (rng/truncated-normal key a b [n])]
     (mx/add mu (mx/multiply sigma z))))
-
-(let [raw truncated-normal]
-  (defn truncated-normal
-    "Truncated normal distribution on [lo, hi] with parameters mu and sigma."
-    [mu sigma lo hi]
-    (check-positive "truncated-normal" "sigma" sigma)
-    (check-less-than "truncated-normal" "lo" lo "hi" hi)
-    (raw mu sigma lo hi)))
 
 ;; ---------------------------------------------------------------------------
 ;; Matrix-distribution helper
@@ -1606,6 +1505,7 @@
 (defdist von-mises
   "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
   [mu kappa]
+  (validate (check-positive "von-mises" "kappa" kappa))
   (sample [key]
           ;; Best's rejection algorithm
           (let [k-val (mx/realize kappa)
@@ -1638,13 +1538,6 @@
                   log-norm (mx/add (mx/scalar LOG-2PI) log-I0)]
               (mx/subtract (mx/multiply kappa (mx/cos (mx/subtract v mu)))
                            log-norm))))
-
-(let [raw von-mises]
-  (defn von-mises
-    "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
-    [mu kappa]
-    (check-positive "von-mises" "kappa" kappa)
-    (raw mu kappa)))
 
 (defmethod dc/dist-sample-n* :von-mises [d key n]
   (let [{:keys [mu kappa]} (:params d)
@@ -1699,6 +1592,7 @@
 (defdist wrapped-cauchy
   "Wrapped Cauchy distribution on [-π, π) with mean mu and concentration rho (0 < ρ < 1)."
   [mu rho]
+  (validate (check-open-probability "wrapped-cauchy" "rho" rho))
   (sample [key]
     ;; Inverse CDF: mu + 2*atan2((1-rho)*tan(π*(u-0.5)), (1+rho))
           (let [u (mx/realize (rng/uniform key []))
@@ -1719,13 +1613,6 @@
                                                          (mx/cos (mx/subtract v mu))))
                                rho-sq))))))
 
-(let [raw wrapped-cauchy]
-  (defn wrapped-cauchy
-    "Wrapped Cauchy distribution on [-π, π) with mean mu and concentration rho (0 < ρ < 1)."
-    [mu rho]
-    (check-open-probability "wrapped-cauchy" "rho" rho)
-    (raw mu rho)))
-
 (defmethod dc/dist-sample-n* :wrapped-cauchy [d key n]
   (let [key (rng/ensure-key key)
         ks (rng/split-n key n)]
@@ -1738,6 +1625,7 @@
 (defdist wrapped-normal
   "Wrapped normal distribution on [-π, π) with mean mu and std sigma."
   [mu sigma]
+  (validate (check-positive "wrapped-normal" "sigma" sigma))
   (sample [key]
     ;; Sample from N(μ, σ), wrap to [-π, π)
           (let [x (mx/add mu (mx/multiply sigma (rng/normal key [])))]
@@ -1756,13 +1644,6 @@
                               (range -3 4))]
       ;; logsumexp over the 7 terms
               (reduce mx/logaddexp terms))))
-
-(let [raw wrapped-normal]
-  (defn wrapped-normal
-    "Wrapped normal distribution on [-π, π) with mean mu and std sigma."
-    [mu sigma]
-    (check-positive "wrapped-normal" "sigma" sigma)
-    (raw mu sigma)))
 
 (defmethod dc/dist-sample-n* :wrapped-normal [d key n]
   (let [{:keys [mu sigma]} (:params d)
