@@ -262,8 +262,9 @@
     ;; Stay in MLX graph: compute each log(w_k * p_k(v)) and reduce via a
     ;; logaddexp chain to stay differentiable.
     (->> components
-         (map #(dist-log-prob % v))
-         (map-indexed (fn [i lp] (mx/add (mx/index log-norm-w i) lp)))
+         (map-indexed (fn [i c]
+                        (let [lp (dist-log-prob c v)]
+                          (mx/add (mx/index log-norm-w i) lp))))
          (reduce mx/logaddexp))))
 
 ;; ---------------------------------------------------------------------------
@@ -309,9 +310,7 @@
   (let [{:keys [form components]} (:params d)]
     (if (= form :vector)
       (reduce mx/add
-              (map-indexed (fn [i component]
-                             (dist-log-prob component (nth value i)))
-                           components))
+              (map dist-log-prob components value))
       ;; map form
       (reduce mx/add
               (map (fn [[k component]]

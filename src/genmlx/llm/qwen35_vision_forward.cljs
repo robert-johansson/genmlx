@@ -153,12 +153,13 @@
   (when (> (count lens) 1)
     (let [n (reduce + lens)
           starts (reductions + 0 lens)
-          flat (vec (flatten
-                     (for [i (range n)]
-                       (let [bi (some (fn [[s e]] (when (and (>= i s) (< i e)) [s e]))
-                                      (map vector starts (rest starts)))]
-                         (for [j (range n)]
-                           (if (and (>= j (first bi)) (< j (second bi))) 0.0 -1e9))))))]
+          blocks (partition 2 1 starts)
+          flat (vec (for [i (range n)
+                          :let [[s e] (some (fn [[s e :as b]]
+                                              (when (and (>= i s) (< i e)) b))
+                                            blocks)]
+                          j (range n)]
+                      (if (and (>= j s) (< j e)) 0.0 -1e9)))]
       (mx/astype (mx/array flat [n n]) dtype))))
 
 (defn vision-features

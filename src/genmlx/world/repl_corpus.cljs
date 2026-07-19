@@ -47,9 +47,11 @@
    (let [steps (vec trajectory)
          chk   (fn [code] (when code (syn/check code observations {:n-particles n-particles})))]
      (vec
-      (for [i (range (dec (count steps)))
-            :let [code-i  (:code (nth steps i))
-                  code-i1 (:code (nth steps (inc i)))
+      ;; chk is a stochastic oracle (fresh-entropy IS scoring), so each pair
+      ;; re-checks both endpoints — dedup would change the per-pair verdicts.
+      (for [[step-i step-i1] (partition 2 1 steps)
+            :let [code-i  (:code step-i)
+                  code-i1 (:code step-i1)
                   fb-i    (chk code-i)
                   fb-i1   (chk code-i1)]
             :when (and code-i code-i1 fb-i fb-i1

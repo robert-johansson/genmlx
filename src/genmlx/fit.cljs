@@ -211,9 +211,9 @@
          model (dyn/auto-key model)
          ;; 1. Method selection — always run to get residual/eliminated info
          auto-selection (ms/select-method model data)
-         selection (if (:method opts)
+         selection (if-let [method (:method opts)]
                      (assoc auto-selection
-                            :method (:method opts)
+                            :method method
                             :reason "User-specified"
                             :opts (merge (:opts auto-selection)
                                          (select-keys opts [:particles :samples :iterations
@@ -234,9 +234,9 @@
            ;; 3. Run inference
            result (run-method model args data method method-opts)
            ;; 4. Optional: parameter learning loop
-           result (if (:learn opts)
+           result (if-let [learn (:learn opts)]
                     (run-learning-loop model args data result
-                                       (:learn opts) method-opts opts)
+                                       learn method-opts opts)
                     result)
            elapsed (- (js/Date.now) start-time)]
        (assoc result

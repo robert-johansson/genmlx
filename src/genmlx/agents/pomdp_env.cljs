@@ -9,7 +9,8 @@
    single-signpost reveal), the ADJACENCY-REVEAL restaurant POMDP (latent = a
    per-restaurant open/closed vector; agentmodels' makeGridWorldPOMDP), and the
    multi-armed BANDIT (latent = per-arm payoff parameters)."
-  (:require [genmlx.mlx :as mx]
+  (:require [clojure.set :as set]
+            [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
             [genmlx.agents.gridworld :as gw]))
 
@@ -75,7 +76,7 @@
     :or   {utilities {:a 5.0 :b 3.0} open-prob {:a 0.6 :b 0.9} time-cost -0.1 start [0 0]}}]
   (let [{:keys [W H terminals]} (gw/parse-grid grid)
         restaurants (vec (keys utilities))
-        cell-of     (into {} (map (fn [[idx kw]] [kw idx])) terminals)   ; restaurant -> cell idx
+        cell-of     (set/map-invert terminals)   ; restaurant -> cell idx
         adj         (into {} (map (fn [r] [r (neighbors-4 W H (cell-of r))])) restaurants)
         worlds      (open-closed-configs restaurants)
         world-utils (into {} (map (fn [w]

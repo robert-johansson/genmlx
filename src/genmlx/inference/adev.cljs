@@ -73,20 +73,21 @@
    Returns {:trace Trace, :reinforce-lp MLX-scalar}."
   [gf args key]
   (let [key (rng/ensure-key key)
-        result (rt/run-handler adev-transition
-                 {:choices cm/EMPTY
-                  :score (mx/scalar 0.0)
-                  :reinforce-lp (mx/scalar 0.0)
-                  :key key
-                  :executor nil
-                  :param-store (:genmlx.dynamic/param-store (meta gf))}
-                 (fn [rt] (apply (:body-fn gf) rt args)))]
+        {:keys [choices retval score reinforce-lp]}
+        (rt/run-handler adev-transition
+          {:choices cm/EMPTY
+           :score (mx/scalar 0.0)
+           :reinforce-lp (mx/scalar 0.0)
+           :key key
+           :executor nil
+           :param-store (:genmlx.dynamic/param-store (meta gf))}
+          (fn [rt] (apply (:body-fn gf) rt args)))]
     {:trace (tr/make-trace
               {:gen-fn gf :args args
-               :choices (:choices result)
-               :retval (:retval result)
-               :score (:score result)})
-     :reinforce-lp (:reinforce-lp result)}))
+               :choices choices
+               :retval retval
+               :score score})
+     :reinforce-lp reinforce-lp}))
 
 ;; ---------------------------------------------------------------------------
 ;; Surrogate loss (sequential)
@@ -174,10 +175,7 @@
                   :executor nil
                   :param-store (:genmlx.dynamic/param-store (meta gf))}
                  (fn [rt] (apply (:body-fn gf) rt args)))]
-    {:choices (:choices result)
-     :score (:score result)
-     :reinforce-lp (:reinforce-lp result)
-     :retval (:retval result)}))
+    (select-keys result [:choices :score :reinforce-lp :retval])))
 
 (defn vadev-surrogate
   "Build the batched ADEV surrogate loss (scalar).

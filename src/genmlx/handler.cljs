@@ -465,14 +465,12 @@
                 (:fresh-paths sub-result))
 
         (or (:splice-scores sub-result) (:nested-splice-scores sub-result))
-        (update :nested-splice-scores
-                (fn [nss]
-                  (let [sub-meta (cond-> {}
-                                  (:splice-scores sub-result)
-                                  (assoc :splice-scores (:splice-scores sub-result))
-                                  (:nested-splice-scores sub-result)
-                                  (assoc :nested-splice-scores (:nested-splice-scores sub-result)))]
-                    (assoc (or nss {}) addr sub-meta)))))))
+        (update :nested-splice-scores (fnil assoc {}) addr
+                (cond-> {}
+                  (:splice-scores sub-result)
+                  (assoc :splice-scores (:splice-scores sub-result))
+                  (:nested-splice-scores sub-result)
+                  (assoc :nested-splice-scores (:nested-splice-scores sub-result)))))))
 
 (defn- mlx-arr-batched?
   "Check if x is an MLX array with at least 1 dimension."

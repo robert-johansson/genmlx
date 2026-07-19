@@ -30,12 +30,12 @@
     js/Infinity
     (let [x (dec x)
           t (+ x 5.5)
-          s (reduce (fn [a [i ci]]
-                      (+ a (/ ci (+ x i 1))))
+          s (reduce +
                     1.000000000190015
-                    [[0 76.18009172947146] [1 -86.50532032941677]
-                     [2 24.01409824083091] [3 -1.231739572450155]
-                     [4 1.208650973866179e-3] [5 -5.395239384953e-6]])]
+                    (map-indexed (fn [i ci] (/ ci (+ x i 1)))
+                                 [76.18009172947146 -86.50532032941677
+                                  24.01409824083091 -1.231739572450155
+                                  1.208650973866179e-3 -5.395239384953e-6]))]
       (+ (* 0.5 (js/Math.log (* 2 js/Math.PI)))
          (* (+ x 0.5) (js/Math.log t))
          (- t)
@@ -1342,20 +1342,16 @@
     ;; Vectorized bin assignment using mx/where — works for scalar and [N]-shaped v
             (let [bounds-vals (mx/->clj bounds)
                   probs-vals (mx/->clj probs)
-                  total (reduce + probs-vals)
-                  n-bins (count probs-vals)]
+                  total (reduce + probs-vals)]
               (reduce
-               (fn [acc i]
-                 (let [lo (nth bounds-vals i)
-                       hi (nth bounds-vals (inc i))
-                       width (- hi lo)
-                       p (nth probs-vals i)
+               (fn [acc [p [lo hi]]]
+                 (let [width (- hi lo)
                        log-density (mx/scalar (- (js/Math.log p) (js/Math.log total) (js/Math.log width)))
                        in-bin (mx/multiply (mx/greater-equal v (mx/scalar lo))
                                            (mx/less v (mx/scalar hi)))]
                    (mx/where in-bin log-density acc)))
                NEG-INF
-               (range n-bins)))))
+               (map vector probs-vals (partition 2 1 bounds-vals))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Wishart

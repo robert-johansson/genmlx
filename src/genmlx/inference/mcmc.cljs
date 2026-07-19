@@ -305,15 +305,15 @@
    cadence: true = every block, integer N = every Nth block, falsey = never.
    Returns the final state."
   [n-blocks init step {:keys [clear-cache] :or {clear-cache true}}]
-  (loop [state init, b 0]
-    (if (>= b n-blocks)
-      state
-      (let [[state' to-materialize] (step state b)]
-        ;; Break lazy graph between blocks
-        (apply mx/materialize! to-materialize)
-        (when (if (number? clear-cache) (zero? (mod b clear-cache)) clear-cache)
-          (mx/clear-cache!))
-        (recur state' (inc b))))))
+  (reduce (fn [state b]
+            (let [[state' to-materialize] (step state b)]
+              ;; Break lazy graph between blocks
+              (apply mx/materialize! to-materialize)
+              (when (if (number? clear-cache) (zero? (mod b clear-cache)) clear-cache)
+                (mx/clear-cache!))
+              state'))
+          init
+          (range n-blocks)))
 
 (defn- make-fused-burn-in
   "Compile a function that runs n-burn MH steps in one graph evaluation.
@@ -363,16 +363,17 @@
           actual-steps (* n-blocks block-size)
           fused (make-fused-burn-in block-size score-fn proposal-std n-params)
           {:keys [noise uniforms]} (pre-generate-chain-noise key actual-steps n-params)]
-      (loop [p init-params, b 0]
-        (if (>= b n-blocks) p
-          (let [offset (* b block-size)
-                block-noise (mx/slice noise offset (+ offset block-size))
-                block-uniforms (mx/slice uniforms offset (+ offset block-size))
-                p' (fused p block-noise block-uniforms)]
-            ;; Break lazy graph between burn-in blocks
-            (mx/materialize! p')
-            (when (zero? (mod b 5)) (mx/clear-cache!))
-            (recur p' (inc b))))))))
+      (reduce (fn [p b]
+                (let [offset (* b block-size)
+                      block-noise (mx/slice noise offset (+ offset block-size))
+                      block-uniforms (mx/slice uniforms offset (+ offset block-size))
+                      p' (fused p block-noise block-uniforms)]
+                  ;; Break lazy graph between burn-in blocks
+                  (mx/materialize! p')
+                  (when (zero? (mod b 5)) (mx/clear-cache!))
+                  p'))
+              init-params
+              (range n-blocks)))))
 
 (defn- make-fused-collection
   "Compile a function that runs thin*n-samples MH steps and returns
@@ -853,10 +854,10 @@
       #(let [score-fn (u/make-vectorized-score-fn model args observations addresses)
           ;; Initialize N chains from independent generate calls
              init-params (mx/stack
-                          (mapv (fn [_]
-                                  (let [{:keys [trace]} (p/generate model args observations)]
-                                    (u/extract-params trace addresses)))
-                                (range n-chains)))
+                          (vec (repeatedly n-chains
+                                           (fn []
+                                             (let [{:keys [trace]} (p/generate model args observations)]
+                                               (u/extract-params trace addresses))))))
              param-shape (mx/shape init-params)
              std (mx/scalar proposal-std)]
          ;; Denominator: steps actually run (i at exit) × chains — the loop
@@ -993,10 +994,9 @@
                       remaining (- samples (count acc))
                       block-k (min k (js/Math.ceil (/ remaining n-chains)))
                       ;; Pool: for each step k, take all N chains
+                      ;; (each step row holds exactly n-chains entries)
                       block-samples
-                      (vec (mapcat (fn [step-k]
-                                     (map (fn [n] (nth step-k n)) (range n-chains)))
-                                   (take block-k traj-js)))
+                      (into [] cat (take block-k traj-js))
                       ;; Last params for next block
                       p' (mx/array (nth traj-js (dec k)))]
                   (when (zero? (mod b 10)) (mx/clear-cache!))
@@ -1180,9 +1180,8 @@
         aux-choices (:choices fwd-result)
         fwd-score (:weight fwd-result)
         ;; 2. Apply involution (may return optional log|det J| as third element)
-        inv-result (involution (:choices current-trace) aux-choices)
-        new-trace-cm (nth inv-result 0)
-        new-aux-cm (nth inv-result 1)
+        [new-trace-cm new-aux-cm :as inv-result]
+        (involution (:choices current-trace) aux-choices)
         log-abs-det-J (if (>= (count inv-result) 3)
                         (let [j (nth inv-result 2)]
                           (if (mx/array? j) j (mx/scalar j)))
@@ -1411,7 +1410,9 @@
       (if (> m n-warmup)
         {:step-size (js/Math.exp log-eps-bar)
          :state q
-         :metric (when welford (welford-variance (second welford) (nth welford 2)))}
+         :metric (when welford
+                   (let [[_mean m2-v n] welford]
+                     (welford-variance m2-v n)))}
         (let [;; Split the warmup key BEFORE tidy-run — splitting inside would let
               ;; tidy free the sub-key arrays. [nil nil] when rk is nil (unseeded).
               [step-key rk'] (rng/split-or-nils rk)

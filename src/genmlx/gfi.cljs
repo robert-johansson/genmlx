@@ -218,8 +218,8 @@
     :check (fn [{:keys [model args]}]
              (let [{:keys [choices weight]} (p/propose model args)
                    pw (ev weight)
-                   {:keys [weight]} (p/generate model args choices)
-                   gw (ev weight)]
+                   {gen-weight :weight} (p/generate model args choices)
+                   gw (ev gen-weight)]
                (approx= pw gw 0.01)))}
 
    ;; ===================================================================
@@ -294,8 +294,8 @@
                    t2 (p/simulate model args)
                    orig-score (ev (:score t1))
                    {:keys [trace discard]} (p/update model t1 (:choices t2))
-                   {:keys [trace]} (p/update model trace discard)
-                   recovered (ev (:score trace))]
+                   {recovered-trace :trace} (p/update model trace discard)
+                   recovered (ev (:score recovered-trace))]
                (approx= orig-score recovered 0.05)))}
 
    {:name :update-discard-completeness
@@ -782,10 +782,10 @@
                    {:keys [trace weight backward-request]}
                    (edit/edit-dispatch model t1 req)
                    w1 (ev weight)
-                   {:keys [trace weight]}
+                   {back-trace :trace back-weight :weight}
                    (edit/edit-dispatch model trace backward-request)
-                   w2 (ev weight)
-                   recovered-score (ev (:score trace))
+                   w2 (ev back-weight)
+                   recovered-score (ev (:score back-trace))
                    original-score (ev (:score t1))]
                (and (approx= original-score recovered-score 1e-4)
                     (approx= (+ w1 w2) 0.0 1e-3))))}
@@ -1756,11 +1756,11 @@
                        compiled-weight (ev weight)
                        compiled-retval (ev (:retval trace))
                        handler-model (dyn/auto-key (strip-compiled model))
-                       {:keys [trace weight]} (p/generate handler-model args
-                                                          constraints)
-                       handler-score (ev (:score trace))
-                       handler-weight (ev weight)
-                       handler-retval (ev (:retval trace))]
+                       {handler-trace :trace hw :weight}
+                       (p/generate handler-model args constraints)
+                       handler-score (ev (:score handler-trace))
+                       handler-weight (ev hw)
+                       handler-retval (ev (:retval handler-trace))]
                    (and (approx= compiled-score handler-score 1e-4)
                         (approx= compiled-weight handler-weight 1e-4)
                         (approx= compiled-retval handler-retval 1e-4))))))}
@@ -1783,11 +1783,10 @@
                        handler-model (dyn/auto-key (strip-compiled model))
                        handler-t1 (:trace (p/generate handler-model args
                                                       (:choices t1)))
-                       {:keys [trace weight]} (p/update handler-model
-                                                        handler-t1
-                                                        (:choices t2))
-                       handler-weight (ev weight)
-                       handler-new-score (ev (:score trace))]
+                       {handler-trace :trace hw :weight}
+                       (p/update handler-model handler-t1 (:choices t2))
+                       handler-weight (ev hw)
+                       handler-new-score (ev (:score handler-trace))]
                    (and (approx= compiled-weight handler-weight 1e-4)
                         (approx= compiled-new-score handler-new-score 1e-4))))))}
 
@@ -2396,7 +2395,7 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private law-by-name
-  (into {} (map (fn [law] [(:name law) law]) laws)))
+  (into {} (map (juxt :name identity)) laws))
 
 ;; ---------------------------------------------------------------------------
 ;; Verification API

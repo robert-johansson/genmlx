@@ -459,7 +459,7 @@
     {:W W :H H :S S :A A :grid-S S-grid
      :T T :R R :term term
      :terminals twin-kw :walls walls :start-idx start-idx
-     :twin twin :restaurants (into {} (for [L rest-idxs] [L (terminals L)]))
+     :twin twin :restaurants (select-keys terminals rest-idxs)
      :ns-fn ns-fn :action-kw gw/action-kw :gamma gamma :noise 0.0}))
 
 ;; ===========================================================================

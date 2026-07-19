@@ -292,7 +292,7 @@
              :ess-trajectory (:ess st) :decoder decoder :root root})
           (let [[kt kr knext] (rng/split-n key 3)
                 kts (rng/split-n kt n)
-                ps' (into [] (map-indexed (fn [i pt] (step-particle pt t (nth kts i)))) (:ps st))
+                ps' (mapv (fn [pt kti] (step-particle pt t kti)) (:ps st) kts)
                 ess (u/compute-ess (mapv :log-w ps'))
                 st' (assoc st :ps ps' :ess (conj (:ess st) ess))
                 resample? (< ess (* ess-threshold (max 1 alive)))
@@ -369,12 +369,12 @@
           (if (or (zero? alive) (>= t max-tokens))
             (let [final-ml (mx/add log-ml (ismc/log-ml-increment-from log-w seg-w))
                   lw-host (mx/->clj log-w)]
-              {:particles (mapv (fn [i]
-                                  {:tokens (tokens i)
-                                   :log-w (mx/scalar (nth lw-host i))
-                                   :finished? (boolean (finished i))
-                                   :dfa (dfas i)})
-                                (range n))
+              {:particles (mapv (fn [toks lw fin dfa]
+                                  {:tokens toks
+                                   :log-w (mx/scalar lw)
+                                   :finished? (boolean fin)
+                                   :dfa dfa})
+                                tokens lw-host finished dfas)
                :log-ml-estimate final-ml :ess-trajectory ess-traj
                :root root :lanes lanes})
             (let [[kt kr knext] (rng/split-n key 3)
@@ -384,15 +384,15 @@
                   ;; never sees an all--inf row
                   masked-info
                   (when constraint
-                    (mapv (fn [i]
-                            (if (finished i)
-                              {:row (rows i) :dead? false}
-                              (let [m (gram/apply-mask constraint (dfas i) (rows i))
+                    (mapv (fn [fin dfa row]
+                            (if fin
+                              {:row row :dead? false}
+                              (let [m (gram/apply-mask constraint dfa row)
                                     lse-m (lse-item m)]
                                 (if (= lse-m js/Number.NEGATIVE_INFINITY)
-                                  {:row (rows i) :dead? true}
+                                  {:row row :dead? true}
                                   {:row m :dead? false :lse-masked lse-m}))))
-                          (range n)))
+                          finished dfas rows))
                   q-logits-k (case proposal
                                :grammar-masked (mx/stack (mapv :row masked-info) 0)
                                :model logits-k)
@@ -579,13 +579,13 @@
    with ALL branches disposed before returning (results are values). T=0
    returns prompt-only particles and log-ml 0. All particles at -Inf weight
    throw :degenerate-particles (genmlx-ng9t) — all-impossible is loud."
-  [opts model-map prompt-ids]
-  (if (:lanes? opts)
+  [{:keys [lanes? twist decoder rejuvenation] :as opts} model-map prompt-ids]
+  (if lanes?
     (let [model (:model model-map)]
-      (when (:twist opts)
+      (when twist
         (throw (ex-info "lanes mode does not support :twist (per-particle host contract) — use the per-branch engine."
                         {:genmlx/error :lanes-twist-unsupported})))
-      (when (:decoder opts)
+      (when decoder
         (throw (ex-info "lanes mode drives the owned batched branch directly — :decoder override is a per-branch concept."
                         {:genmlx/error :lanes-decoder-unsupported})))
       (when-not (llm/supports-branching? model)
@@ -593,19 +593,19 @@
                         {:genmlx/error :lanes-owned-only})))
       (let [result (run-filter-lanes model opts prompt-ids)
             out {:particles (export-particles
-                             (rejuvenate-particles result (:rejuvenation opts))
+                             (rejuvenate-particles result rejuvenation)
                              model-map)
                  :log-ml-estimate (:log-ml-estimate result)
                  :ess-trajectory (:ess-trajectory result)}]
         (dispose-lanes! model result)
         out))
-    (let [decoder (or (:decoder opts) (decoder-for model-map))
+    (let [decoder (or decoder (decoder-for model-map))
           result (try (run-filter decoder opts prompt-ids)
                       (catch :default e
                         ;; twist/proposal threw: dispose every live handle, rethrow
                         (run! #(dec-dispose! decoder %) (vec (dec-live-handles decoder)))
                         (throw e)))
-          result (rejuvenate-particles result (:rejuvenation opts))
+          result (rejuvenate-particles result rejuvenation)
           out {:particles (export-particles result model-map)
                :log-ml-estimate (:log-ml-estimate result)
                :ess-trajectory (:ess-trajectory result)}]

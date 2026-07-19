@@ -82,13 +82,12 @@
          lw-vals (realize-log-weights entries)
          w-arr (mx/array (into-array lw-vals))
          log-z-val (mx/item (mx/logsumexp w-arr))]
-     (->> (map-indexed
-            (fn [i {:keys [choices]}]
-              (let [lp (- (nth lw-vals i) log-z-val)]
-                {:choices choices
-                 :log-prob (mx/scalar lp)
-                 :prob (js/Math.exp lp)}))
-            entries)
+     (->> (map (fn [lw {:keys [choices]}]
+                 (let [lp (- lw log-z-val)]
+                   {:choices choices
+                    :log-prob (mx/scalar lp)
+                    :prob (js/Math.exp lp)}))
+               lw-vals entries)
           (sort-by :prob >)))))
 
 (defn enumerate-marginals

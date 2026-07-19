@@ -212,15 +212,14 @@
                       (let [;; Build guide choicemap from params
                             guide-cm (params->guide-cm params guide-addresses)
                             ;; Sample from guide
-                            {:keys [trace weight]}
+                            {trace :trace guide-weight :weight}
                             (p/generate (vary-meta guide assoc :genmlx.dynamic/key k1) args guide-cm)
                             ;; Score under model with guide's choices + observations
-                            guide-weight weight
                             model-cm (cm/merge-cm (:choices trace) observations)
-                            {:keys [weight]}
+                            {model-weight :weight}
                             (p/generate (vary-meta model assoc :genmlx.dynamic/key k2) args model-cm)]
                         ;; Negative ELBO: -(log p(x,z) - log q(z|x))
-                        (mx/negative (mx/subtract weight guide-weight))))
+                        (mx/negative (mx/subtract model-weight guide-weight))))
             grad-fn (mx/grad loss-fn)
             loss (loss-fn guide-params)
             grad (grad-fn guide-params)]

@@ -147,10 +147,11 @@
   (let [{:keys [probs]} (u/normalize-log-weights log-weights)
         ;; Generate N stratified uniforms
         ks (rng/split-n (rng/ensure-key key) n)
-        uniforms (mapv (fn [j]
-                         (let [u (mx/realize (rng/uniform (nth ks j) []))]
-                           (/ (+ j u) n)))
-                       (range n))]
+        uniforms (into []
+                       (map-indexed (fn [j kj]
+                                      (let [u (mx/realize (rng/uniform kj []))]
+                                        (/ (+ j u) n))))
+                       ks)]
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
       (if (>= j n)
         (persistent! indices)

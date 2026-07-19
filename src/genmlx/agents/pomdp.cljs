@@ -55,12 +55,12 @@
         ;;     restaurant configs, where each world has different cell utilities), or
         ;;   :goals [...] — the single-rewarding-goal shorthand via goal-agents.
         world-agents (if world-utils
-                       (into {} (map (fn [[w utils]]
-                                       [w (agent/make-mdp-agent
-                                            {:mdp (gw/build-mdp {:grid grid :utilities utils
-                                                                 :start start :gamma gamma :noise noise})
-                                             :alpha alpha :gamma gamma :n-iters n-iters})])
-                                     world-utils))
+                       (update-vals world-utils
+                                    (fn [utils]
+                                      (agent/make-mdp-agent
+                                        {:mdp (gw/build-mdp {:grid grid :utilities utils
+                                                             :start start :gamma gamma :noise noise})
+                                         :alpha alpha :gamma gamma :n-iters n-iters})))
                        (inv/goal-agents {:grid grid :goals goals :alpha alpha
                                          :noise noise :gamma gamma}))
         worlds    (if world-utils (vec (keys world-utils)) goals)

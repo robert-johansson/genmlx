@@ -60,8 +60,8 @@
              [k (cond
                   (satisfies? IChoiceMap v) v
                   (map? v) (from-map v)
-                  :else (->Value v))])
-           (partition 2 kvs)))))
+                  :else (->Value v))]))
+      (partition 2 kvs))))
 
 ;; ---------------------------------------------------------------------------
 ;; Access
@@ -179,8 +179,8 @@
     :else
     (into []
       (mapcat (fn [[addr sub]]
-                (mapv #(into [addr] %) (addresses sub)))
-              (-submaps cm)))))
+                (mapv #(into [addr] %) (addresses sub))))
+      (-submaps cm))))
 
 ;; ---------------------------------------------------------------------------
 ;; Conversion to/from plain maps
@@ -235,8 +235,8 @@
           (map (fn [addr]
                  [addr (stack-choicemaps
                          (mapv #(get-submap % addr) cms)
-                         mlx-stack-fn)])
-               addrs))))
+                         mlx-stack-fn)]))
+          addrs)))
 
     :else EMPTY))
 
@@ -264,8 +264,8 @@
       (mapv (fn [i]
               (->Node
                 (into {}
-                  (map (fn [[addr v]] [addr (nth v i)])
-                       addr-vecs))))
+                  (map (fn [[addr v]] [addr (nth v i)]))
+                  addr-vecs)))
             (range n)))
 
     :else (vec (repeat n EMPTY))))

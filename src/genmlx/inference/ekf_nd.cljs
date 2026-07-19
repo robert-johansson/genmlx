@@ -263,9 +263,7 @@
   "Shared obs handler logic for both auto-diff and analytical variants."
   [latent-addrs update-fn]
   (fn [state addr dist]
-    (let [n (:ekf-nd-n state)
-          means (:ekf-nd-means state)
-          covs (:ekf-nd-covs state)
+    (let [{n :ekf-nd-n means :ekf-nd-means covs :ekf-nd-covs} state
           constraint (cm/get-submap (:constraints state) addr)]
       ;; Guards (genmlx-b470): unconstrained obs or missing belief → fall
       ;; through to the base transition instead of updating against nil.

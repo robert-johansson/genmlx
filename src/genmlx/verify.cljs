@@ -122,8 +122,7 @@
   "Pure state transition for validation: like simulate-transition but
    tracks seen addresses for duplicate detection."
   [state addr dist]
-  (let [seen (:seen-addrs state)
-        violations (:violations state)
+  (let [{seen :seen-addrs violations :violations} state
         violations' (if (contains? seen addr)
                       (conj violations {:type :duplicate-address
                                         :severity :error

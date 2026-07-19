@@ -181,6 +181,8 @@
       (let [n-close     (count cljs-closing)
             byte-ids    (js/Map.)
             closing-ids (vec (repeatedly n-close #(array)))]
+        ;; index loop kept: hot build-once vocab sweep (~151K tokens) — doseq
+        ;; over map-indexed would allocate a pair vector per token for no gain.
         (dotimes [i (count token-index)]
           (let [t (nth token-index i)]
             (when (seq t)

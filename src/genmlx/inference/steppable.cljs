@@ -105,14 +105,15 @@
    step). :resampled? is intentionally absent — it is a per-step transient, not
    a state property."
   [state]
-  {:t (:t state)
-   :n-steps (count (:obs-seq state))
-   :done? (done? state)
-   :particles (:particles state)
-   :log-ml-estimate (mx/realize (:log-ml state))
-   :ess (if (:log-weights state)
-          (u/compute-ess (:log-weights state))
-          (:particles state))})
+  (let [{:keys [t obs-seq particles log-ml log-weights]} state]
+    {:t t
+     :n-steps (count obs-seq)
+     :done? (done? state)
+     :particles particles
+     :log-ml-estimate (mx/realize log-ml)
+     :ess (if log-weights
+            (u/compute-ess log-weights)
+            particles)}))
 
 (defn run
   "Drive `step` to completion, returning the final SMCState. The ORACLE harness

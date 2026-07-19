@@ -447,7 +447,7 @@
   [v]
   (cond
     (record? v)     (deep-plain (into {} v))
-    (map? v)        (into {} (map (fn [[k mv]] [k (deep-plain mv)])) v)
+    (map? v)        (update-vals v deep-plain)
     (set? v)        (into #{} (map deep-plain) v)
     (vector? v)     (mapv deep-plain v)
     (seq? v)        (mapv deep-plain v)

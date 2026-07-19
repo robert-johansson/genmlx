@@ -88,15 +88,14 @@
   (let [W (count (first rows))]
     (assert (apply = (map count rows)) "every maze row must be the same width")
     (reduce
-      (fn [acc y]
-        (let [row (nth rows y)]
-          (-> acc
-              (update :grid conj (mapv glyph->cell row))
-              (update :start (fn [s] (or s (some (fn [x] (when (= \P (nth row x)) [x y]))
-                                                 (range W)))))
-              (update :ghosts into (for [x (range W) :when (= \G (nth row x))] [x y])))))
+      (fn [acc [y row]]
+        (-> acc
+            (update :grid conj (mapv glyph->cell row))
+            (update :start (fn [s] (or s (some (fn [x] (when (= \P (nth row x)) [x y]))
+                                               (range W)))))
+            (update :ghosts into (for [x (range W) :when (= \G (nth row x))] [x y]))))
       {:grid [] :start nil :ghosts []}
-      (range (count rows)))))
+      (map-indexed vector rows))))
 
 ;; ===========================================================================
 ;; MDP builder

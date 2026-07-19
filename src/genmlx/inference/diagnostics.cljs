@@ -95,11 +95,7 @@
         xbar (/ (reduce + v) n)
         c (mapv #(- % xbar) v)]
     (mapv (fn [t]
-            (/ (loop [i 0 acc 0.0]
-                 (if (< i (- n t))
-                   (recur (inc i) (+ acc (* (nth c i) (nth c (+ i t)))))
-                   acc))
-               n))
+            (/ (reduce + 0.0 (map * c (drop t c))) n))
           (range n))))
 
 (defn- polyval
@@ -165,7 +161,7 @@
       (* m n)
       (let [acovs (mapv autocovariance chains-vals)
             means (mapv (fn [xs] (/ (reduce + xs) n)) chains-vals)
-            mean-var (* (/ (reduce + (map #(nth % 0) acovs)) m) (/ n (dec n)))
+            mean-var (* (/ (reduce + (map first acovs)) m) (/ n (dec n)))
             grand (/ (reduce + means) m)
             between (if (> m 1)
                       (/ (reduce + (map #(let [e (- % grand)] (* e e)) means)) (dec m))

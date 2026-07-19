@@ -223,10 +223,9 @@
          in-choices (:choices in-trace)
          [k1 k2] (rng/split (rng/ensure-key key))
          ;; 1. forward auxiliary rho1 ~ q1(in-choices)   (denominator)
-         fwd (if q1 (p/propose (dyn/with-key q1 k1) [in-choices])
-                    {:choices cm/EMPTY :weight ZERO})
-         rho1 (:choices fwd)
-         q1-score (:weight fwd)
+         {rho1 :choices q1-score :weight}
+         (if q1 (p/propose (dyn/with-key q1 k1) [in-choices])
+                {:choices cm/EMPTY :weight ZERO})
          ;; 2. apply the bijection h
          hres (h in-choices rho1)
          out-choices (:trace hres)
@@ -403,14 +402,15 @@
               ;; bridge every particle to the next model via the translator
               tt (nth translators stage)
               keysT (rng/split-n rk1 (inc n))
-              bridged (mapv (fn [j]
-                              (let [{:keys [trace lw]} (nth parts' j)
-                                    {t2 :trace w :weight}
+              ;; keysT has n+1 entries (the last seeds the next stage);
+              ;; mapv stops at parts' (n entries), matching the old (range n).
+              bridged (mapv (fn [{:keys [trace lw]} kj]
+                              (let [{t2 :trace w :weight}
                                     ;; thread the NEXT stage's observations into
                                     ;; the bridged target (genmlx-rirn)
                                     (apply-translator tt trace (args-of (inc stage))
-                                                      (nth keysT j)
+                                                      kj
                                                       (obs-of (inc stage)))]
                                 {:trace t2 :lw (+ lw (mx/realize w))}))
-                            (range n))]
+                            parts' keysT)]
           (recur (inc stage) bridged log-ml' (nth keysT n)))))))

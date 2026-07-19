@@ -41,8 +41,8 @@
    posterior: {:mean :var}, obs-value, obs-var (sigma^2)
    Returns: {:mean :var :ll}"
   [posterior obs-value obs-var]
-  (let [r (conjugate/nn-update posterior obs-value obs-var MASK-ON)]
-    {:mean (:mean (:posterior r)) :var (:var (:posterior r)) :ll (:ll r)}))
+  (let [{:keys [posterior ll]} (conjugate/nn-update posterior obs-value obs-var MASK-ON)]
+    (assoc posterior :ll ll)))
 
 (defn nn-iid-update-step
   "Normal-IID-Normal conjugate update. Processes [T] observations at once.
@@ -100,16 +100,16 @@
    posterior: {:alpha :beta}, obs-value (0 or 1)
    Returns: {:alpha :beta :ll}"
   [posterior obs-value]
-  (let [r (conjugate/bb-update posterior obs-value MASK-ON)]
-    {:alpha (:alpha (:posterior r)) :beta (:beta (:posterior r)) :ll (:ll r)}))
+  (let [{:keys [posterior ll]} (conjugate/bb-update posterior obs-value MASK-ON)]
+    (assoc posterior :ll ll)))
 
 (defn gp-update-step
   "Gamma-Poisson conjugate update. Wraps conjugate/gp-update with mask=1.
    posterior: {:shape :rate}, obs-value (count)
    Returns: {:shape :rate :ll}"
   [posterior obs-value]
-  (let [r (conjugate/gp-update posterior obs-value MASK-ON)]
-    {:shape (:shape (:posterior r)) :rate (:rate (:posterior r)) :ll (:ll r)}))
+  (let [{:keys [posterior ll]} (conjugate/gp-update posterior obs-value MASK-ON)]
+    (assoc posterior :ll ll)))
 
 (defn- ge-update-step
   "Gamma-Exponential conjugate update.

@@ -212,11 +212,11 @@
    args: model arguments
 
    Returns {:traces :log-weights :log-ml-estimate}"
-  [opts model args observations-seq]
-  (let [{:keys [particles ess-threshold forward-kernel backward-kernel
-                init-proposal rejuvenation-fn callback key]
-         :or {particles 100 ess-threshold 0.5}} opts
-        ;; Strip analytical handlers (as smc/csmc do): the analytical path
+  [{:keys [particles ess-threshold forward-kernel backward-kernel
+           init-proposal rejuvenation-fn callback key]
+    :or {particles 100 ess-threshold 0.5}}
+   model args observations-seq]
+  (let [;; Strip analytical handlers (as smc/csmc do): the analytical path
         ;; returns deterministic posterior means, collapsing particle
         ;; diversity to N identical particles on L3 models.
         model (-> model dyn/auto-key smc/strip-analytical)

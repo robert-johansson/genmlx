@@ -123,16 +123,14 @@
   [kernel args constraints]
   (let [gf (dyn/auto-key kernel)
         constraints (or constraints cm/EMPTY)
-        result (run-enumerate gf args constraints)
-        score (:score result)
-        axes (:axes result)
+        {:keys [score axes retval]} (run-enumerate gf args constraints)
         log-ml (if (empty? axes)
                  score
                  (mx/logsumexp score (vec (range (count axes)))))
         log-probs (mx/subtract score log-ml)
         probs (mx/exp log-probs)]
     (mx/eval! probs log-ml)
-    {:probs probs :log-ml log-ml :retval (:retval result) :axes axes}))
+    {:probs probs :log-ml log-ml :retval retval :axes axes}))
 
 ;; ---------------------------------------------------------------------------
 ;; enumerate — handler substitution for exact enumeration
@@ -259,9 +257,7 @@
   (let [gf (cond-> (dyn/auto-key gf)
              param-store (vary-meta assoc :genmlx.dynamic/param-store param-store))
         constraints (or constraints cm/EMPTY)
-        result (run-enumerate gf args constraints)
-        score (:score result)
-        axes (:axes result)
+        {:keys [score axes]} (run-enumerate gf args constraints)
         ;; log-ml = logsumexp over sub-model's own axes (marginalizes latents)
         sub-positions (vec (range (count axes)))
         log-ml (if (empty? sub-positions)
@@ -543,8 +539,7 @@
 
    Returns MLX tensor of shape [|D_cond|, |D_remaining|...]"
   [joint-result condition-addr]
-  (let [axes (:axes joint-result)
-        log-probs (:log-probs joint-result)
+  (let [{:keys [axes log-probs]} joint-result
         cond-axis (first (filter #(= (:addr %) condition-addr) axes))
         _ (when-not cond-axis
             (throw (ex-info (str "extract-table: unknown address " condition-addr)
@@ -615,9 +610,7 @@
      :axes      — axes metadata
      :joint-log-probs — normalized joint log-prob tensor"
   [model args observations]
-  (let [result (run-enumerate model args observations)
-        log-score (:score result)
-        axes (:axes result)
+  (let [{log-score :score axes :axes} (run-enumerate model args observations)
         log-ml (mx/logsumexp (mx/reshape log-score [-1]))
         log-probs (mx/subtract log-score log-ml)
         _ (mx/eval! log-probs log-ml)
@@ -646,8 +639,8 @@
      :axes      — axes metadata
      :retval    — model return value (tensor-shaped)"
   [model args observations]
-  (let [result (run-enumerate model args observations)
-        log-score (:score result)
+  (let [{log-score :score axes :axes retval :retval}
+        (run-enumerate model args observations)
         log-ml (mx/logsumexp (mx/reshape log-score [-1]))
         log-probs (mx/subtract log-score log-ml)
         probs (mx/exp log-probs)
@@ -655,8 +648,8 @@
     {:log-probs log-probs
      :probs probs
      :log-ml (mx/item log-ml)
-     :axes (:axes result)
-     :retval (:retval result)}))
+     :axes axes
+     :retval retval}))
 
 (defn exact-marginal-likelihood
   "Compute exact marginal likelihood log p(observations).
@@ -746,9 +739,7 @@
 
    Optionally divide by (Math/log 2) for bits."
   [model addr-set-a addr-set-b]
-  (let [joint (exact-joint model [] nil)
-        lp (:log-probs joint)
-        ax (:axes joint)
+  (let [{lp :log-probs ax :axes} (exact-joint model [] nil)
         h-a (entropy lp ax addr-set-a)
         h-b (entropy lp ax addr-set-b)
         h-ab (entropy lp ax (into addr-set-a addr-set-b))

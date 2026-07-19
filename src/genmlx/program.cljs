@@ -349,9 +349,9 @@
                                          (fn [i] (js/Math.abs (get-in aug [i k])))
                                          (range k p))
                         aug (if (= pivot-row k) aug
-                                (let [tmp (nth aug k)]
-                                  (-> aug (assoc k (nth aug pivot-row))
-                                      (assoc pivot-row tmp))))
+                                (assoc aug
+                                       k (nth aug pivot-row)
+                                       pivot-row (nth aug k)))
                         pivot-val (get-in aug [k k])]
                     (if (< (js/Math.abs pivot-val) 1e-15)
                       ::singular
@@ -386,8 +386,7 @@
                                (range k p))
               swapped? (not= pivot-row k)
               aug (if swapped?
-                    (let [tmp (nth aug k)]
-                      (-> aug (assoc k (nth aug pivot-row)) (assoc pivot-row tmp)))
+                    (assoc aug k (nth aug pivot-row) pivot-row (nth aug k))
                     aug)
               sign (if swapped? (- sign) sign)
               pivot-val (get-in aug [k k])]
@@ -656,9 +655,10 @@
    sorted by posterior probability descending."
   ([var-names transitions] (compare-structures var-names transitions {}))
   ([var-names transitions opts]
-   (let [scoring (or (:scoring opts) :analytical)
-         structures (or (:structures opts)
-                        (enumerate-2var-structures (first var-names) (second var-names)))
+   (let [{:keys [scoring structures] :or {scoring :analytical}} opts
+         structures (or structures
+                        (enumerate-2var-structures (first var-names)
+                                                   (second var-names)))
          scored (mapv
                  (fn [s]
                    (let [source (build-transition-source var-names (:edges s) opts)]

@@ -139,11 +139,13 @@
   ([m ids cache offset prior]
    (if (q35? m)
      (q35/forward-cached m (vec ids) cache offset prior)
-     (loop [i 0, cache cache, acc []]
-       (if (= i (count ids))
-         [(mx/stack acc) cache]
-         (let [[lg cache'] (q3/step m cache (+ offset i) (nth ids i))]
-           (recur (inc i) cache' (conj acc lg))))))))
+     (let [[acc cache]
+           (reduce (fn [[acc cache] [i id]]
+                     (let [[lg cache'] (q3/step m cache (+ offset i) id)]
+                       [(conj acc lg) cache']))
+                   [[] cache]
+                   (map-indexed vector ids))]
+       [(mx/stack acc) cache]))))
 
 (defn materialize-cache!
   "Force-evaluate every array in a per-layer cache — the chunked-continuation
@@ -204,6 +206,5 @@
   (let [idx (if (mx/array? idx) idx (mx/array (vec idx) [(count idx)] mx/int32))]
     (mapv (fn [ce]
             (when ce
-              (reduce-kv (fn [m' kk arr] (assoc m' kk (mx/take-idx arr idx 0)))
-                         {} ce)))
+              (update-vals ce (fn [arr] (mx/take-idx arr idx 0)))))
           cache)))

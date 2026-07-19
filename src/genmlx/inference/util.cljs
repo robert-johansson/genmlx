@@ -231,10 +231,10 @@
   [model args observations addresses n-chains]
   (let [model (dyn/auto-key model)]
     (mx/stack
-     (mapv (fn [_]
-             (let [{:keys [trace]} (p/generate model args observations)]
-               (extract-params trace addresses)))
-           (range n-chains)))))
+     (vec (repeatedly n-chains
+                      (fn []
+                        (let [{:keys [trace]} (p/generate model args observations)]
+                          (extract-params trace addresses))))))))
 
 (defn systematic-resample
   "Systematic resampling of particles. Returns vector of indices.
@@ -398,7 +398,7 @@
    or nil if model has no compiled-generate."
   [model args observations addresses]
   (when-let [compiled-gen (:compiled-generate (:schema model))]
-    (let [latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))
+    (let [latent-index (zipmap addresses (range))
           mlx-args (vec args)
           indexed-addrs (mapv vector (range) addresses)]
       {:score-fn
@@ -435,7 +435,7 @@
         (assoc cg-result :tensor-native? false :compiled-generate? true)
         ;; Fall back to GFI-based score
         (let [gfi-fn (make-score-fn model args observations addresses)
-              latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))]
+              latent-index (zipmap addresses (range))]
           {:score-fn gfi-fn
            :latent-index latent-index
            :tensor-native? false

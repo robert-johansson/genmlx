@@ -69,7 +69,7 @@
   (let [H (count grid)
         W (count (first grid))
         cells (for [y (range H) x (range W)]
-                [(+ x (* W y)) (nth (nth grid y) x)])]
+                [(+ x (* W y)) (get-in grid [y x])])]
     {:W W :H H :S (* W H)
      :walls     (into #{} (for [[idx c] cells :when (= c :wall)] idx))
      :terminals (into {}  (for [[idx c] cells

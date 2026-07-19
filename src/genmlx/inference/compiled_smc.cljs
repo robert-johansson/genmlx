@@ -118,8 +118,7 @@
   [{:keys [particles key callback resample-method tau]
     :or {particles 100 resample-method :systematic tau 1.0}}
    kernel init-state observations-seq]
-  (let [schema (:schema kernel)
-        source (:source kernel)
+  (let [{:keys [schema source]} kernel
         extend-fn (cops/make-smc-extend-step schema source)
         obs-vec (vec observations-seq)
         T (count obs-vec)

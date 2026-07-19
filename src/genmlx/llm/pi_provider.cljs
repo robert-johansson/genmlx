@@ -447,18 +447,20 @@
     (if (or @abort?* (every? :done lanes) (>= i max-new))
       {:lanes (mapv #(select-keys % [:gen :reason]) lanes)
        :aborted? (boolean @abort?*)}
-      (let [sampled (mapv (fn [j {:keys [gen key done] :as lane}]
-                            (if done
-                              (assoc lane :tok eos-id)
-                              (let [lg (if scalar? logits (mx/index logits j))
-                                    [tok key'] (samp/sample-token key lg scfg gen)]
-                                (if (= tok eos-id)
-                                  (assoc lane :done true :reason "stop"
-                                         :key key' :tok eos-id)
-                                  (-> lane
-                                      (assoc :key key' :tok tok)
-                                      (update :gen conj tok))))))
-                          (range k) lanes)]
+      (let [sampled (into []
+                          (map-indexed
+                            (fn [j {:keys [gen key done] :as lane}]
+                              (if done
+                                (assoc lane :tok eos-id)
+                                (let [lg (if scalar? logits (mx/index logits j))
+                                      [tok key'] (samp/sample-token key lg scfg gen)]
+                                  (if (= tok eos-id)
+                                    (assoc lane :done true :reason "stop"
+                                           :key key' :tok eos-id)
+                                    (-> lane
+                                        (assoc :key key' :tok tok)
+                                        (update :gen conj tok)))))))
+                          lanes)]
         (llm/sweep-tick! i sweep-every)
         (if (every? :done sampled)
           (p/recur (inc i) (mapv #(dissoc % :tok) sampled) logits scalar?)
@@ -599,12 +601,11 @@
                             (flush-pending state)]
                       (let [gen-text   (apply str text-pieces)
                             think-text (apply str think-pieces)]
-                        (swap! state* update-in [:sessions sid]
-                               (fn [s] (-> s
-                                           (assoc :tokens (into prompt fed))
-                                           (assoc :images-key img-key)
-                                           (assoc :key key)
-                                           (assoc :busy? false))))
+                        (swap! state* update-in [:sessions sid] assoc
+                               :tokens (into prompt fed)
+                               :images-key img-key
+                               :key key
+                               :busy? false)
                         (finish-payload {:gen-text gen-text
                                          :think-text think-text
                                          :raw-text (str think-text gen-text)
@@ -661,12 +662,11 @@
                   (commit-k! [key']
                     ;; the session branch never advanced past the prompt (the
                     ;; K lanes ran on a fork), so the honest commit is P alone
-                    (swap! state* update-in [:sessions sid]
-                           (fn [s] (-> s
-                                       (assoc :tokens prompt)
-                                       (assoc :images-key img-key)
-                                       (assoc :key key')
-                                       (assoc :busy? false)))))
+                    (swap! state* update-in [:sessions sid] assoc
+                           :tokens prompt
+                           :images-key img-key
+                           :key key'
+                           :busy? false))
                   (k-turn! []
                     (let [k         best-of-k
                           fork      (llm/branch-from model branch)
@@ -740,14 +740,14 @@
          ;; full prompt after the dead prefix). :turn-in-flight must NOT
          ;; touch state — the live turn owns it.
          (js/console.error "[pi-provider] turn error:" err)
-         (when (and (not= :turn-in-flight (:genmlx/error (ex-data err)))
-                    (get-in @state* [:sessions sid]))
-           (when-let [mm (:model-map @state*)]
-             (llm/dispose-branch! (:model mm) (get-in @state* [:sessions sid :branch-id]))
-             (swap! state* assoc-in [:sessions sid :branch-id]
-                    (fresh-branch! (:model mm))))
-           (swap! state* update-in [:sessions sid]
-                  #(assoc % :busy? false :tokens [] :images-key [])))
+         (when (not= :turn-in-flight (:genmlx/error (ex-data err)))
+           (when-let [sess (get-in @state* [:sessions sid])]
+             (when-let [mm (:model-map @state*)]
+               (llm/dispose-branch! (:model mm) (:branch-id sess))
+               (swap! state* assoc-in [:sessions sid :branch-id]
+                      (fresh-branch! (:model mm))))
+             (swap! state* update-in [:sessions sid] assoc
+                    :busy? false :tokens [] :images-key [])))
          (js/JSON.stringify
           (clj->js {:text "" :thinking nil :rawText ""
                     :finishReason "error"

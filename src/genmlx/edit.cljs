@@ -191,18 +191,14 @@
   (let [{:keys [forward-gf forward-args backward-gf backward-args]} edit-request
         ;; 1. Run propose on forward GF
         fwd-args (or forward-args [(:choices trace)])
-        fwd-result (p/propose forward-gf fwd-args)
-        fwd-choices (:choices fwd-result)
-        fwd-score (:weight fwd-result)
+        {fwd-choices :choices fwd-score :weight} (p/propose forward-gf fwd-args)
         ;; 2. Apply proposed choices to model via update
-        update-result (p/update gf trace fwd-choices)
-        new-trace (:trace update-result)
-        update-weight (:weight update-result)
+        {new-trace :trace update-weight :weight :as update-result}
+        (p/update gf trace fwd-choices)
         ;; 3. Score backward proposal
         bwd-args (or backward-args [(:choices new-trace)])
-        bwd-result (p/assess backward-gf bwd-args
-                             (discard-of update-result))
-        bwd-score (:weight bwd-result)
+        {bwd-score :weight} (p/assess backward-gf bwd-args
+                                      (discard-of update-result))
         ;; 4. Combined weight (backend-free for pure GFs; see w-add/w-sub)
         weight (w-add update-weight (w-sub bwd-score fwd-score))]
     {:trace new-trace

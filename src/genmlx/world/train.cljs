@@ -369,10 +369,11 @@
           (fn [gen]
             (let [texts   (vec (.-completionTexts gen))
                   g       (quot (count texts) (max 1 n-prompts))
-                  ;; prompt-major: completion i belongs to prompt (i // group-size)
-                  rewards (mapv (fn [i] (double (reward-fn (nth prompts (quot i g))
-                                                           (nth texts i))))
-                                (range (count texts)))
+                  ;; prompt-major: each prompt owns the next group-size completions
+                  rewards (vec (mapcat (fn [prompt group]
+                                         (map #(double (reward-fn prompt %)) group))
+                                       prompts
+                                       (partition-all g texts)))
                   gen-ms  (- (.now js/Date) gen-start)]
               (-> (.trainStepWithGenerations engine js-prompts (clj->js rewards) gen)
                   (p/then (fn [m]

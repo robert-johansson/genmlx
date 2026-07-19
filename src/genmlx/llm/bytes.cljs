@@ -54,10 +54,7 @@
    all token IDs reachable from that subtree, stored both as a set (for
    membership tests) and a sorted Int32Array (for efficient gather)."
   [node]
-  (let [enriched-children (into {}
-                                (map (fn [[ch child]]
-                                       [ch (collect-all-ids child)]))
-                                (:children node))
+  (let [enriched-children (update-vals (:children node) collect-all-ids)
         all-ids (->> (vals enriched-children)
                      (map :all-token-ids)
                      (reduce into (:token-ids node #{})))
@@ -157,13 +154,8 @@
    After sampling index i from the categorical, the chosen byte character
    is (nth chars i)."
   [byte-lps]
-  (let [{:keys [chars values]}
-        (reduce-kv (fn [acc ch lp]
-                     (-> acc
-                         (update :chars conj ch)
-                         (update :values conj lp)))
-                   {:chars [] :values []}
-                   byte-lps)]
+  (let [chars  (vec (keys byte-lps))
+        values (vec (vals byte-lps))]
     {:dist (dist/categorical (mx/array values))
      :chars chars}))
 

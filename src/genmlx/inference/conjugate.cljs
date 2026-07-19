@@ -253,10 +253,10 @@
         :ll-ref :mean
         ;; Normal-Normal carries a known observation std on the obs dist.
         :update (fn [posterior obs dist]
-                  (nn-update posterior obs
-                             (let [obs-std (:obs-std (:params dist))]
-                               (mx/multiply obs-std obs-std))
-                             (:mask (:params dist))))}
+                  (let [{:keys [obs-std mask]} (:params dist)]
+                    (nn-update posterior obs
+                               (mx/multiply obs-std obs-std)
+                               mask)))}
    :bb {:prior-key :bb-prior
         :obs-key :bb-obs
         :init-posterior (fn [dist]

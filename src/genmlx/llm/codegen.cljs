@@ -68,7 +68,7 @@
   "Before min-bytes, treat :complete as :incomplete to prevent
    premature stopping on single-char atoms like '<'."
   [constraint]
-  (into {} (map (fn [[ch s]] [ch (if (= :complete s) :incomplete s)])) constraint))
+  (update-vals constraint (fn [s] (if (= :complete s) :incomplete s))))
 
 ;; ============================================================
 ;; 7.2 Post-hoc validation
@@ -170,9 +170,11 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
                            effective (if (< i min-bytes)
                                        (suppress-complete constraint)
                                        constraint)
-                           valid-lps (into {}
-                                           (filter (fn [[ch _]] (effective ch)))
-                                           raw-lps)]
+                           ;; select in raw-lps key order (not (keys effective)):
+                           ;; small-map insertion order feeds the categorical's
+                           ;; index order, which a fixed PRNG draw maps through.
+                           valid-lps (select-keys raw-lps
+                                                  (filter effective (keys raw-lps)))]
                        (if (empty? valid-lps)
                          bytes-acc
                          (let [{:keys [dist chars]}

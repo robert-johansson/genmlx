@@ -126,10 +126,9 @@
     (if (< n 2)
       {:train (vec rows) :valid (vec rows)} ; degenerate: reuse the row(s) so both files exist
       (let [stride (max 2 (js/Math.round (/ 1.0 (max frac 1e-9))))
-            tagged (map-indexed vector rows)
-            v?     (fn [[i _]] (zero? (mod (inc i) stride)))
-            valid  (mapv second (filter v? tagged))
-            train  (mapv second (remove v? tagged))]
+            v-idx? (fn [i] (zero? (mod (inc i) stride)))
+            valid  (vec (keep-indexed (fn [i row] (when (v-idx? i) row)) rows))
+            train  (vec (keep-indexed (fn [i row] (when-not (v-idx? i) row)) rows))]
         {:train (if (seq train) train (vec (butlast rows)))
          :valid (if (seq valid) valid [(last rows)])}))))
 

@@ -397,8 +397,8 @@
    overall estimate is E_residual[block marginal] over the particle population."
   ([block] (make-lg-handlers block :generate))
   ([block mode]
-   (let [{:keys [id latents p obs noise-latents obs-addrs]} block
-         noise-latents (or noise-latents #{})
+   (let [{:keys [id latents p obs noise-latents obs-addrs]
+          :or {noise-latents #{}}} block
          obs-addrs (or obs-addrs (mapv :addr obs))
          regenerate? (= mode :regenerate)
          update? (= mode :update)
@@ -509,10 +509,10 @@
                                      s (coerce-scalar (sigma-fn sigma-env args))
                                      r (mx/multiply s s)
                                      {:keys [mean cov ll]} (lg-kalman-step belief {:y y :h h :c c :r r})
-                                     st (reduce (fn [st i]
-                                                  (update st :choices cm/set-value
-                                                          (nth latents i) (mx/index mean i)))
-                                                state (range p))]
+                                     st (reduce-kv (fn [st i latent]
+                                                     (update st :choices cm/set-value
+                                                             latent (mx/index mean i)))
+                                                   state latents)]
                                  [y (cond-> (-> st
                                                 (assoc-in [:lg-belief id] {:mean mean :cov cov})
                                                 (update :choices cm/set-value addr y)

@@ -329,9 +329,9 @@
                         target (epsilon-closure nfa moved)]
                     (if (empty? target)
                       [dfa wl]
-                      (let [known? (contains? (:state-map dfa) target)
-                            id (or (get-in dfa [:state-map target])
-                                   (:next-id dfa))
+                      (let [state-map (:state-map dfa)
+                            known? (contains? state-map target)
+                            id (if known? (state-map target) (:next-id dfa))
                             dfa (-> (cond-> dfa
                                        (not known?)
                                        (-> (assoc-in [:state-map target] id)
@@ -463,6 +463,8 @@
   "JS Map {first-char -> JS Array of token ids} over the token index."
   [token-index]
   (let [m (js/Map.)]
+    ;; index loop kept: hot build-once vocab sweep (~151K tokens) — doseq over
+    ;; map-indexed would allocate a pair vector per token for no gain.
     (dotimes [i (count token-index)]
       (let [t (nth token-index i)]
         (when (seq t)
@@ -672,8 +674,7 @@ through the DFA) or the prior text left the grammar's language."
         ...})"
   [gf constraint]
   (dispatch/with-handler gf
-    (assoc (into {} (map (fn [[op t]] [op (wrap-grammar t constraint)]))
-                 standard-transitions)
+    (assoc (update-vals standard-transitions #(wrap-grammar % constraint))
            ;; The retained-only GENERAL regenerate transition, grammar-masked, so
            ;; a structure-changing constrained move (e.g. resampling an early
            ;; token shifts EOS and changes the number of sites) routes through the
@@ -724,7 +725,7 @@ through the DFA) or the prior text left the grammar's language."
         trans  (js/Int32Array. (* S V))]
     (.fill mask neg-inf)
     (.fill trans dead)
-    (doseq [[s r] (map vector states (range))]
+    (doseq [[r s] (map-indexed vector states)]
       (let [src  (or (get (:masks constraint) s)
                      (compute-valid-mask dfa s token-index ctx))
             base (* r V)]

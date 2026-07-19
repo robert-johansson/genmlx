@@ -84,9 +84,8 @@
    log(0) cannot produce a NaN. Deterministic and reproducible."
   [seed n]
   (let [us (uniforms seed (* 2 (max 1 n)))]
-    (vec (for [k (range n)]
-           (let [u1 (max (nth us (* 2 k)) 1e-12)
-                 u2 (nth us (inc (* 2 k)))]
+    (vec (for [[u1 u2] (take n (partition 2 us))]
+           (let [u1 (max u1 1e-12)]
              (* (js/Math.sqrt (* -2.0 (js/Math.log u1)))
                 (js/Math.cos (* 2.0 js/Math.PI u2))))))))
 
@@ -312,8 +311,7 @@
                     gs (subvec group-names 0 g)
                     ;; per-group slope (|.|>=0.6) + intercept, drawn from disjoint sub-streams
                     sl (vec (for [k (range g)]
-                              (let [u (nth (uniforms (mix-seed seed 10 k) 2) 0)
-                                    s (nth (uniforms (mix-seed seed 10 k) 2) 1)]
+                              (let [[u s] (uniforms (mix-seed seed 10 k) 2)]
                                 (round1 (* (rand-sign s) (+ 0.6 (* u 1.8)))))))
                     it (vec (for [k (range g)]
                               (round1 (* 4.0 (- (nth (uniforms (mix-seed seed 11 k) 1) 0) 0.5)))))]
