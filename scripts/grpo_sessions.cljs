@@ -33,7 +33,11 @@
 
    Discipline (docs/thor-gpu-discipline.md): heavy runs go through
    scripts/guarded-run.sh; ONE GPU process — never concurrently with a
-   serving agent. The genmlx-li1p rule is enforced: a step that silently
+   serving agent. Run with MLX_ENABLE_CACHE_THRASHING_CHECK=0
+   MLX_CUDA_GRAPH_CACHE_SIZE=64 (genmlx-pnaw): every step's new prompt
+   shape instantiates new CUDA graph execs — driver-side memory invisible
+   to MLX allocator stats — and the fork's thrash-check auto-grow would
+   retain them without bound; a small fixed LRU evicts (frees) them. The genmlx-li1p rule is enforced: a step that silently
    skips its gradient apply FAILS the run (exit 1, no save) — a skipped
    apply means NaN grads or garbage ratios, and the artifact is tainted.
 
@@ -96,8 +100,12 @@
           :kl-coef 0.0
           :loss-type :grpo
           :enable-thinking false
-          :lm-head-chunk-size 2
-          :forward-chunk-size 4
+          ;; genmlx-pnaw: the in-step train transient scales ~linearly with
+          ;; forward-chunk-size x sequence length (measured 2026-07-19 on the
+          ;; 0.8b: 36/20/11GB dip at fc 4/2/1, K=8 x 1900tok, loss
+          ;; bit-identical). Long-prompt corpora at high K want 1/1.
+          :lm-head-chunk-size (env-int "LMHEAD_CHUNK" 2)
+          :forward-chunk-size (env-int "FORWARD_CHUNK" 4)
           :group-size group-size
           :max-completion-length max-completion}
          (when-let [s (env "SEED")] {:seed (js/parseInt s)})
