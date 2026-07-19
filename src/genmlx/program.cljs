@@ -16,6 +16,7 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.selection :as sel]
+            [genmlx.inference.util :as u]
             [genmlx.llm.backend :as llm]
             [genmlx.llm.codegen :as codegen]
             [promesa.core :as pr])
@@ -238,20 +239,11 @@
                  (mx/scalar (get t (next-key v)))])]
     (apply cm/choicemap (apply concat pairs))))
 
-(defn- log-sum-exp
-  "Numerically stable log(sum(exp(xs)))."
-  [xs]
-  (let [max-x (apply max xs)]
-    (if (= max-x ##-Inf)
-      ##-Inf
-      (+ max-x
-         (js/Math.log
-          (reduce + (map #(js/Math.exp (- % max-x)) xs)))))))
-
-(defn log-mean-exp
-  "Numerically stable log(mean(exp(xs))) = log-sum-exp(xs) - log(n)."
-  [xs]
-  (- (log-sum-exp xs) (js/Math.log (count xs))))
+(def log-mean-exp
+  "Numerically stable log(mean(exp(xs))) = log-sum-exp(xs) - log(n), over host
+   JS doubles. Re-export of genmlx.inference.util/host-log-mean-exp — the
+   single shared host-side implementation (genmlx-qma6)."
+  u/host-log-mean-exp)
 
 (defn score-model
   "Estimate the log marginal likelihood of a model against data.
@@ -629,7 +621,7 @@
    Returns the same maps with :posterior added."
   [scored]
   (let [log-mls (mapv :log-ml scored)
-        log-norm (log-sum-exp log-mls)]
+        log-norm (u/host-log-sum-exp log-mls)]
     (mapv (fn [s]
             (assoc s :posterior
                    (js/Math.exp (- (:log-ml s) log-norm))))

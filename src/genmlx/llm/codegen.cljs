@@ -227,7 +227,10 @@ Syntax: (fn [args] body), (let [bindings] body), (case val clauses default),
      :max-bytes      max bytes for byte-level (default 500)
      :min-bytes      min bytes before :complete can stop (default 10)
      :system-prompt  override code-system-prompt
-     :prepared       {:token-index :trie} from bytes/prepare"
+     :trie           pre-built byte trie for byte-level (preferred)
+     :prepared       {:token-index :trie} from bytes/prepare — its :trie is
+                     used when :trie is absent (see make-reader-constrained-gf,
+                     which also documents :min-bytes/:sweep-every)"
   ([model-map prompt] (generate-cljs model-map prompt {}))
   ([model-map prompt opts]
    (let [{:keys [token-level? system-prompt]

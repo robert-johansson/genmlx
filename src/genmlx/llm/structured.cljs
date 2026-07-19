@@ -53,6 +53,46 @@
 (defn- prepared-trie [model-map opts]
   (or (:trie opts) (:trie (bytes/prepare (:tokenizer model-map)))))
 
+(defn- replay-densities
+  "Shared byte-replay backbone for `score` and `dual-density` (genmlx-mlud):
+   teacher-force `text` through the byte trie ONCE (one prefill + one forward
+   per committed token), advancing EACH dfa in `dfas` in CLJS over the shared
+   byte stream and accumulating its constrained log-density.
+
+   Returns a vector parallel to `dfas` of {:lp :state :stuck-at} — :lp is the
+   accumulated constrained log-density (##-Inf once `text` goes off that
+   grammar, with :stuck-at the offending byte index), :state the DFA state
+   after the last scored byte. A dead stream stops being scored (its :lp and
+   :state freeze); the replay stops as soon as EVERY stream is dead, so with a
+   single DFA this is exactly `score`'s old first-off-grammar early exit."
+  [model trie prompt-ids text dfas]
+  (let [tlen (count text)]
+    (bytes/with-byte-cache model
+      (fn []
+        (loop [i 0
+               trie-pos trie
+               streams (mapv (fn [d] {:dfa d :state (:start d) :lp 0.0 :stuck-at nil})
+                             dfas)
+               logprobs (bytes/logits->logprobs (llm/forward-prefill model prompt-ids))]
+          (if (>= i tlen)
+            (mapv #(dissoc % :dfa) streams)
+            (let [c (subs text i (inc i))
+                  [tp* lp*] (bytes/resolve-replay-step model trie trie-pos logprobs c)
+                  streams (mapv (fn [{:keys [dfa state lp] :as s}]
+                                  (if (= ##-Inf lp)
+                                    s
+                                    (let [valid (bytes/alive-byte-lps tp* lp* dfa state)]
+                                      (if (contains? valid c)
+                                        (assoc s
+                                               :lp (+ lp (constrained-lp valid c))
+                                               :state (grammar/dfa-advance dfa state c))
+                                        (assoc s :lp ##-Inf :stuck-at i)))))
+                                streams)]
+              (if (every? #(= ##-Inf (:lp %)) streams)
+                (mapv #(dissoc % :dfa) streams)
+                (let [[next-pos next-lps] (bytes/trie-advance model trie tp* lp* c true)]
+                  (recur (inc i) next-pos streams next-lps))))))))))
+
 ;; ============================================================
 ;; The GF
 ;; ============================================================
@@ -110,26 +150,12 @@
          trie   (prepared-trie model-map opts)
          target (sg/schema->canonical-str schema value)
          dfa    (grammar/compile-regex (sg/schema->regex schema))
-         tlen   (count target)]
-     (bytes/with-byte-cache model
-       (fn []
-         (loop [i 0
-                trie-pos trie
-                dfa-state (:start dfa)
-                logprobs (bytes/logits->logprobs (llm/forward-prefill model prompt-ids))
-                logp 0.0]
-           (if (>= i tlen)
-             {:logp logp :text target :conforms? (contains? (:accept dfa) dfa-state)}
-             (let [c (subs target i (inc i))
-                   [tp* lp*] (bytes/resolve-replay-step model trie trie-pos logprobs c)
-                   valid (bytes/alive-byte-lps tp* lp* dfa dfa-state)]
-               (if-not (contains? valid c)
-                 {:logp ##-Inf :text target
-                  :conforms? false :error :off-grammar :stuck-at i}
-                 (let [lp (constrained-lp valid c)
-                       next-dfa (grammar/dfa-advance dfa dfa-state c)
-                       [next-pos next-lps] (bytes/trie-advance model trie tp* lp* c true)]
-                   (recur (inc i) next-pos next-dfa next-lps (+ logp lp))))))))))))
+         [{:keys [lp state stuck-at]}] (replay-densities model trie prompt-ids
+                                                         target [dfa])]
+     (if stuck-at
+       {:logp ##-Inf :text target
+        :conforms? false :error :off-grammar :stuck-at stuck-at}
+       {:logp lp :text target :conforms? (contains? (:accept dfa) state)}))))
 
 ;; ============================================================
 ;; generate (condition on partial structure; importance weight)
@@ -138,30 +164,11 @@
 (defn- dual-density
   "Replay `text` once through both `base-dfa` and `cond-dfa`, returning
    {:base lp :cond lp} — the log-densities of text under each constrained GF.
-   One forward pass; both DFAs advance in CLJS over the shared byte stream."
+   One forward pass; both DFAs advance in CLJS over the shared byte stream
+   (the replay-densities backbone)."
   [model trie prompt-ids text base-dfa cond-dfa]
-  (let [tlen (count text)]
-    (bytes/with-byte-cache model
-      (fn []
-        (loop [i 0
-               trie-pos trie
-               b-state (:start base-dfa)
-               c-state (:start cond-dfa)
-               logprobs (bytes/logits->logprobs (llm/forward-prefill model prompt-ids))
-               base 0.0 cond* 0.0]
-          (if (>= i tlen)
-            {:base base :cond cond*}
-            (let [c       (subs text i (inc i))
-                  [tp* lp*] (bytes/resolve-replay-step model trie trie-pos logprobs c)
-                  b-valid (bytes/alive-byte-lps tp* lp* base-dfa b-state)
-                  c-valid (bytes/alive-byte-lps tp* lp* cond-dfa c-state)
-                  base'   (if (contains? b-valid c) (+ base (constrained-lp b-valid c)) ##-Inf)
-                  cond*'  (if (contains? c-valid c) (+ cond* (constrained-lp c-valid c)) ##-Inf)
-                  [next-pos next-lps] (bytes/trie-advance model trie tp* lp* c true)]
-              (recur (inc i) next-pos
-                     (grammar/dfa-advance base-dfa b-state c)
-                     (grammar/dfa-advance cond-dfa c-state c)
-                     next-lps base' cond*'))))))))
+  (let [[b c] (replay-densities model trie prompt-ids text [base-dfa cond-dfa])]
+    {:base (:lp b) :cond (:lp c)}))
 
 (defn generate
   "Condition the structured GF on a partial value: fix the fields given in

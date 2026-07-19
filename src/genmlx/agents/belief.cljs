@@ -104,14 +104,18 @@
    (signpost reveal / restaurant open-set / nil) without a host int per step.
    `worlds` is the fixed world ordering."
   [observe worlds S]
-  (let [worlds  (vec worlds)
-        ids     (atom {})
-        next-id (atom 0.0)
-        id-of   (fn [o] (cond
-                          (nil? o)           nil-obs-id
-                          (contains? @ids o) (get @ids o)
-                          :else (let [i @next-id] (swap! ids assoc o i) (swap! next-id inc) i)))
-        rows    (vec (for [s (range S)] (vec (for [w worlds] (id-of (observe w s))))))]
+  (let [worlds   (vec worlds)
+        ;; Row-major [s][w] observation grid; ids assigned by first occurrence
+        ;; in that same row-major order (a pure reduce — no bookkeeping atoms).
+        obs-rows (mapv (fn [s] (mapv #(observe % s) worlds)) (range S))
+        ids      (reduce (fn [m o]
+                           (if (or (nil? o) (contains? m o))
+                             m
+                             (assoc m o (double (count m)))))
+                         {}
+                         (mapcat identity obs-rows))
+        id-of    (fn [o] (if (nil? o) nil-obs-id (get ids o)))
+        rows     (mapv #(mapv id-of %) obs-rows)]
     (mx/array (clj->js rows) mx/float32)))
 
 (defn obs-likelihood-tensor

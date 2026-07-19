@@ -5,7 +5,8 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [genmlx.dynamic :as dyn]))
+            [genmlx.dynamic :as dyn]
+            [genmlx.inference.util :as u]))
 
 ;; ---------------------------------------------------------------------------
 ;; Cartesian product
@@ -51,14 +52,11 @@
               {:choices combo-cm :log-weight weight}))
           combos)))
 
-(defn- realize-log-weights
-  "Materialize each entry's :log-weight and extract it as a JS number.
-   Returns a vector of doubles, one per entry."
+(defn- entries->weight-array
+  "Stack the entries' :log-weight scalars into one materialized [N] MLX array
+   (u/materialize-weights — one MLX call instead of per-entry item)."
   [entries]
-  (mapv (fn [{:keys [log-weight]}]
-          (mx/materialize! log-weight)
-          (mx/item log-weight))
-        entries))
+  (u/materialize-weights (mapv :log-weight entries)))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API
@@ -78,9 +76,8 @@
    (enumerate-joint model args observations addr-supports nil))
   ([model args observations addr-supports opts]
    (let [entries (enumerate-all model args observations addr-supports opts)
-         ;; Realize all weights and extract as JS numbers
-         lw-vals (realize-log-weights entries)
-         w-arr (mx/array (into-array lw-vals))
+         w-arr (entries->weight-array entries)
+         lw-vals (vec (mx/->clj w-arr))
          log-z-val (mx/item (mx/logsumexp w-arr))]
      (->> (map (fn [lw {:keys [choices]}]
                  (let [lp (- lw log-z-val)]
@@ -129,6 +126,5 @@
    (enumerate-marginal-likelihood model args observations addr-supports nil))
   ([model args observations addr-supports opts]
    (let [entries (enumerate-all model args observations addr-supports opts)
-         lw-vals (realize-log-weights entries)
-         w-arr (mx/array (into-array lw-vals))]
+         w-arr (entries->weight-array entries)]
      (mx/logsumexp w-arr))))

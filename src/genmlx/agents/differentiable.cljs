@@ -26,6 +26,7 @@
             [genmlx.mlx.random :as rng]
             [genmlx.agents.gridworld :as gw]
             [genmlx.agents.agent :as agent]
+            [genmlx.agents.helpers :as h]
             [genmlx.learning :as learn]))
 
 (defn build-diff-mdp
@@ -62,7 +63,7 @@
   (let [alpha  (mx/exp log-alpha)
         Q      (diff-q dmdp theta-u tc alpha n-iters)                    ; [S,A]
         logits (mx/multiply alpha Q)                                     ; [S,A]
-        logp   (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1))  ; log_softmax over actions
+        logp   (h/log-softmax-last-axis logits)                          ; log_softmax over actions
         flat   (mx/reshape logp #js [(* S A)])
         idx    (mx/array (clj->js (mapv (fn [s a] (+ (* s A) a)) states-obs actions-obs)) mx/int32)
         ll     (mx/sum (mx/take-idx flat idx 0))]                        ; Σ_m log π(a_m|s_m)

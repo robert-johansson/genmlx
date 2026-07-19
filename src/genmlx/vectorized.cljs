@@ -133,15 +133,22 @@
   (mx/subtract (mx/logsumexp (:weight vtrace))
                (mx/scalar (js/Math.log (:n-particles vtrace)))))
 
-(defn vtrace-ess
-  "Effective sample size from a VectorizedTrace's [N] weights."
-  [vtrace]
-  (let [w (:weight vtrace)
-        log-probs (mx/subtract w (mx/logsumexp w))
+(defn ess-from-log-weights
+  "Effective sample size from an [N]-shaped MLX log-weight array. Returns a JS
+   number (materializes the normalized probabilities). Canonical body — lives
+   here (below genmlx.dynamic in the require graph) so both vtrace-ess and
+   inference.util/ess-from-log-weight-array can share it without a cycle."
+  [lw]
+  (let [log-probs (mx/subtract lw (mx/logsumexp lw))
         probs     (mx/exp log-probs)
         _         (mx/materialize! probs)
         probs-clj (mx/->clj probs)]
     (/ 1.0 (transduce (map #(* % %)) + probs-clj))))
+
+(defn vtrace-ess
+  "Effective sample size from a VectorizedTrace's [N] weights."
+  [vtrace]
+  (ess-from-log-weights (:weight vtrace)))
 
 ;; ---------------------------------------------------------------------------
 ;; Merge two VectorizedTraces by boolean mask (for per-particle MH accept/reject)

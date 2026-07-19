@@ -975,6 +975,12 @@
 ;; analytical-bail fallback (genmlx-0e0j) needs a forward reference.
 (declare strip-analytical-path)
 
+(def ^:private joint-rescore-ops
+  "GFI ops whose joint-scored dispatch must convert the old trace's marginal
+   score first (joint-rescore-marginal). Hoisted so run-dispatched* doesn't
+   rebuild the set on every call."
+  #{:update :project :regenerate})
+
 (defn run-dispatched*
   "Core dispatch: walk the dispatcher stack and execute the first match.
    Public so genmlx.dev can reference it for start!/stop!."
@@ -982,7 +988,7 @@
   (let [spec (dispatch/resolve default-dispatcher-stack op (:schema gf)
                (assoc opts :gf gf))]
     (assert spec (str "No dispatcher resolved for op " op))
-    (let [opts* (if (and (contains? #{:update :project :regenerate} op)
+    (let [opts* (if (and (contains? joint-rescore-ops op)
                          (= :joint (:score-type spec)))
                   (joint-rescore-marginal gf op key opts)
                   opts)]

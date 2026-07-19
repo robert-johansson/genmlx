@@ -32,23 +32,34 @@
   (when (and v lo hi (not= hi lo))
     (max 0.0 (min 1.0 (/ (- v lo) (- hi lo))))))
 
-(defn state->frame
-  "Pure: one Frame picturing the agent at `agent-idx`. `path` (set of visited
-   indices) renders as :path; `vs`/`vlo`/`vhi` (pre-extracted JS value function)
-   shade empty cells."
-  [{:keys [W H walls terminals]} agent-idx
-   {:keys [step action vs vlo vhi path] :or {path #{}}}]
+(defn make-frame
+  "Frame skeleton shared by state->frame and world-specific producers (e.g.
+   pacman/frame): per cell, walls first, then the world's `special-cell-fn`
+   (idx -> cell map, or nil to fall through — the agent/goal/ghost roles),
+   then visited :path, then value-shaded :empty floor."
+  [{:keys [W H walls]}
+   {:keys [step action vs vlo vhi path] :or {path #{}}}
+   special-cell-fn]
   {:W W :H H
    :meta {:step step :action action}
    :cells (vec (for [y (range H) x (range W)
                      :let [idx (+ x (* W y))]]
-                 (cond
-                   (contains? walls idx)     {:glyph "█" :role :wall}
-                   (= idx agent-idx)         {:glyph "@" :role :agent}
-                   (contains? terminals idx) {:glyph (terminal-glyph (terminals idx)) :role :goal}
-                   (contains? path idx)      {:glyph "∘" :role :path}
-                   :else                     {:glyph "·" :role :empty
-                                              :value (when vs (norm01 (nth vs idx) vlo vhi))})))})
+                 (or (when (contains? walls idx) {:glyph "█" :role :wall})
+                     (special-cell-fn idx)
+                     (when (contains? path idx) {:glyph "∘" :role :path})
+                     {:glyph "·" :role :empty
+                      :value (when vs (norm01 (nth vs idx) vlo vhi))})))})
+
+(defn state->frame
+  "Pure: one Frame picturing the agent at `agent-idx`. `path` (set of visited
+   indices) renders as :path; `vs`/`vlo`/`vhi` (pre-extracted JS value function)
+   shade empty cells."
+  [{:keys [terminals] :as mdp} agent-idx opts]
+  (make-frame mdp opts
+    (fn [idx]
+      (cond
+        (= idx agent-idx)         {:glyph "@" :role :agent}
+        (contains? terminals idx) {:glyph (terminal-glyph (terminals idx)) :role :goal}))))
 
 (defn env->trajectory
   "Pure: a Trajectory ([Frame]) from a rollout {:states :actions}. Frame i shows

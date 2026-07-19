@@ -24,5 +24,6 @@
 (def LOG-2PI-HALF (mx/scalar (* 0.5 LOG-2PI)))
 (def LOG-PI (mx/scalar (js/Math.log js/Math.PI)))
 (def MLX-PI (mx/scalar js/Math.PI))
+(def TWO-PI (mx/scalar (* 2.0 js/Math.PI)))
 (def SQRT-TWO (mx/scalar (js/Math.sqrt 2.0)))
 (def TINY (mx/scalar 1e-30))

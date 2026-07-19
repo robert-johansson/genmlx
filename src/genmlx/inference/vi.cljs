@@ -175,9 +175,11 @@
 ;; VI from model (convenience)
 ;; ---------------------------------------------------------------------------
 
-(defn- loop-over-rows
+(defn loop-over-rows
   "Apply a scalar function f: [D] -> scalar to each row of [N,D] matrix.
-   Returns [N] stacked results. Compatible with mx/grad differentiation."
+   Returns [N] stacked results. Compatible with mx/grad differentiation.
+   Public: the canonical mx/vmap bypass for GFI score fns (which use volatile!
+   internally) — compiled-optimizer's :vi path reuses it (b5c923d fix)."
   [f mat]
   (let [n (first (mx/shape mat))]
     (mx/stack (mapv (fn [i] (f (mx/index mat i))) (range n)))))

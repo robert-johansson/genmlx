@@ -231,7 +231,7 @@
         [traces' weights'] (if resample?
                              (let [indices (dispatch-resample resample-method
                                             log-weights particles resample-key)]
-                               [(mapv #(nth traces %) indices)
+                               [(mapv traces indices)
                                 (vec (repeat particles (mx/scalar 0.0)))])
                              [traces log-weights])
         ;; Update each particle with new observations. Per-particle keys —
@@ -503,7 +503,7 @@
                                                        log-weights particles resample-key)
                                              ;; Force reference particle at index 0
                                              indices' (assoc indices ref-idx ref-idx)]
-                                         [(mapv #(nth traces %) indices')
+                                         [(mapv traces indices')
                                           (vec (repeat particles (mx/scalar 0.0)))])
                                        [traces log-weights])
                   ;; Update all particles. The reference particle keeps its
@@ -609,7 +609,7 @@
                         ess (when (= t (dec n-steps))
                               (u/ess-from-log-weight-array w-arr))
                         indices (u/systematic-resample step-weights particles resample-key)
-                        resampled (mapv #(nth new-traces %) indices)]
+                        resampled (mapv new-traces indices)]
                     {:traces resampled :ml-inc ml-inc :ess ess}))
                 (fn [result]
                   ;; Preserve resampled trace arrays and ml-inc

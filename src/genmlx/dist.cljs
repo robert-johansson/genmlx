@@ -10,7 +10,7 @@
             [genmlx.dist.core :as dc]
             [genmlx.mlx.constants :refer [LOG-2PI ZERO ONE TWO HALF
                                           NEG-INF LOG-2PI-HALF MLX-PI LOG-PI
-                                          SQRT-TWO]])
+                                          SQRT-TWO TWO-PI]])
   (:require-macros [genmlx.dist.macros :refer [defdist]]))
 
 ;; ---------------------------------------------------------------------------
@@ -138,6 +138,28 @@
                     {:distribution dist-name :parameter param-name :value v}))))
 
 ;; ---------------------------------------------------------------------------
+;; Shared numeric helpers (genmlx-4pnb)
+;; ---------------------------------------------------------------------------
+
+(defn- normal-log-density
+  "Element-wise Gaussian log-density core:
+   -(0.5*log(2π) + log(sigma) + 0.5*((v-mu)/sigma)²).
+   The exact op sequence shared by gaussian, broadcasted-normal, gaussian-vec,
+   wrapped-normal and iid-gaussian — callers keep their own sum-axis logic.
+   Op order is load-bearing: float32 reassociation is not bit-stable."
+  [v mu sigma]
+  (let [z (mx/divide (mx/subtract v mu) sigma)]
+    (mx/negative
+     (mx/add LOG-2PI-HALF
+             (mx/log sigma)
+             (mx/multiply HALF (mx/square z))))))
+
+(defn- int-support
+  "Enumerable integer support: one int32 MLX scalar per integer in [lo, hi)."
+  [lo hi]
+  (mapv #(mx/scalar % mx/int32) (range lo hi)))
+
+;; ---------------------------------------------------------------------------
 ;; Gaussian
 ;; ---------------------------------------------------------------------------
 
@@ -148,11 +170,7 @@
   (sample [key]
           (mx/add mu (mx/multiply sigma (rng/normal key []))))
   (log-prob [v]
-            (let [z (mx/divide (mx/subtract v mu) sigma)]
-              (mx/negative
-               (mx/add LOG-2PI-HALF
-                       (mx/log sigma)
-                       (mx/multiply HALF (mx/square z))))))
+            (normal-log-density v mu sigma))
   (reparam [key]
            (mx/add mu (mx/multiply sigma (rng/normal key [])))))
 
@@ -544,7 +562,7 @@
   (support []
            (mx/materialize! logits)
            (let [n (last (mx/shape logits))]
-             (mapv #(mx/scalar (int %) mx/int32) (range n)))))
+             (int-support 0 n))))
 
 (defmethod dc/dist-log-prob-support :categorical [d]
   ;; log_softmax(logits) — all K log-probs in one op.
@@ -995,7 +1013,7 @@
            (let [p-val (mx/realize p)
                  max-k (min 10000 (int (js/Math.ceil (/ (js/Math.log 0.001)
                                                         (js/Math.log (- 1.0 p-val))))))]
-             (mapv #(mx/scalar % mx/int32) (range (inc max-k))))))
+             (int-support 0 (inc max-k)))))
 
 (defmethod dc/dist-sample-n* :geometric [d key n]
   (let [{:keys [p]} (:params d)
@@ -1076,7 +1094,7 @@
               (mx/where in-support lp NEG-INF)))
   (support []
            (let [nt (int (mx/realize n-trials))]
-             (mapv #(mx/scalar % mx/int32) (range (inc nt))))))
+             (int-support 0 (inc nt)))))
 
 (defmethod dc/dist-sample-n* :binomial [d key n]
   (let [{:keys [n-trials p]} (:params d)
@@ -1109,7 +1127,7 @@
   (support []
            (let [lo-val (int (mx/realize lo))
                  hi-val (int (mx/realize hi))]
-             (mapv #(mx/scalar % mx/int32) (range lo-val (inc hi-val))))))
+             (int-support lo-val (inc hi-val)))))
 
 (defmethod dc/dist-sample-n* :discrete-uniform [d key n]
   (let [{:keys [lo hi]} (:params d)
@@ -1252,11 +1270,7 @@
             (mx/add mu (mx/multiply sigma (rng/normal key sh)))))
   (log-prob [v]
             (let [k (count (mx/shape mu))   ; event rank (mu carries the event shape)
-                  z (mx/divide (mx/subtract v mu) sigma)
-                  lp (mx/negative
-                      (mx/add LOG-2PI-HALF
-                              (mx/log sigma)
-                              (mx/multiply HALF (mx/square z))))]
+                  lp (normal-log-density v mu sigma)]
               ;; Sum only over the trailing event axes so a leading particle axis
               ;; survives in batched mode: [...mu]->scalar, [N,...mu]->[N]. Summing
               ;; over ALL axes collapsed the particle axis to a scalar and
@@ -1288,13 +1302,7 @@
   (sample [key]
           (mx/add mu (mx/multiply sigma (rng/normal key (mx/shape mu)))))
   (log-prob [v]
-            (let [z (mx/divide (mx/subtract v mu) sigma)]
-              (mx/sum
-               (mx/negative
-                (mx/add LOG-2PI-HALF
-                        (mx/log sigma)
-                        (mx/multiply HALF (mx/square z))))
-               [-1])))
+            (mx/sum (normal-log-density v mu sigma) [-1]))
   (reparam [key]
            (mx/add mu (mx/multiply sigma (rng/normal key (mx/shape mu))))))
 
@@ -1490,11 +1498,10 @@
 (defn- wrap-angle
   "Wrap value to [-π, π)."
   [x]
-  (let [two-pi (mx/scalar (* 2.0 js/Math.PI))]
-    (mx/subtract x
-                 (mx/multiply two-pi
-                              (mx/floor (mx/divide (mx/add x MLX-PI)
-                                                   two-pi))))))
+  (mx/subtract x
+               (mx/multiply TWO-PI
+                            (mx/floor (mx/divide (mx/add x MLX-PI)
+                                                 TWO-PI)))))
 
 (defdist von-mises
   "Von Mises distribution on [-π, π) with mean direction mu and concentration kappa."
@@ -1627,14 +1634,9 @@
   (log-prob [v]
     ;; Series sum: log Σ_{k=-K}^{K} exp(normal-log-prob(x + 2πk; μ, σ))
     ;; Truncated at K=3 terms
-            (let [two-pi (mx/scalar (* 2.0 js/Math.PI))
-                  terms (mapv (fn [k]
-                                (let [shifted (mx/add v (mx/multiply two-pi (mx/scalar k)))
-                                      z (mx/divide (mx/subtract shifted mu) sigma)]
-                                  (mx/negative
-                                   (mx/add LOG-2PI-HALF
-                                           (mx/log sigma)
-                                           (mx/multiply HALF (mx/square z))))))
+            (let [terms (mapv (fn [k]
+                                (let [shifted (mx/add v (mx/multiply TWO-PI (mx/scalar k)))]
+                                  (normal-log-density shifted mu sigma)))
                               (range -3 4))]
       ;; logsumexp over the 7 terms
               (reduce mx/logaddexp terms))))
@@ -1784,11 +1786,7 @@
           ;; All other cases: natural broadcasting works
           :else
           [vs mu])
-        z (mx/divide (mx/subtract vals-bc mu-bc) sigma)
-        element-lps (mx/negative
-                     (mx/add LOG-2PI-HALF
-                             (mx/log sigma)
-                             (mx/multiply HALF (mx/square z))))]
+        element-lps (normal-log-density vals-bc mu-bc sigma)]
     (mx/sum element-lps -1)))
 
 (defmethod dc/dist-sample-n* :iid-gaussian [d key n]

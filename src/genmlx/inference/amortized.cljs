@@ -23,7 +23,7 @@
 ;; Posterior families (20.2)
 ;; ---------------------------------------------------------------------------
 
-(defn- std-normal-logprob
+(defn- std-normal-log-prob
   "Per-dimension log-density of a reparameterized normal sample with
    standardized noise `eps` and `log-sigs` = log standard deviations:
    -(0.5*log(2π) + log-sigma + 0.5*eps²). Returns a [d]-shaped array;
@@ -44,7 +44,7 @@
                    sigs     (mx/exp log-sigs)
                    eps      (rng/normal key [d])]
                {:values (mx/add mus (mx/multiply sigs eps))
-                :log-prob (mx/sum (std-normal-logprob log-sigs eps))}))})
+                :log-prob (mx/sum (std-normal-log-prob log-sigs eps))}))})
 
 (def log-normal-posterior
   "Log-normal posterior family: encoder outputs [mu, log-sigma] per latent.
@@ -59,7 +59,7 @@
                    log-z    (mx/add mus (mx/multiply sigs eps))
                    z        (mx/exp log-z)
                    log-prob (mx/subtract
-                              (mx/sum (std-normal-logprob log-sigs eps))
+                              (mx/sum (std-normal-log-prob log-sigs eps))
                               (mx/sum log-z))]
                {:values z
                 :log-prob log-prob}))})

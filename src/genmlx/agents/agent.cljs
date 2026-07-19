@@ -114,6 +114,32 @@
         z  (reduce + es)]
     (mapv #(/ % z) es)))
 
+(defn- recursive-eu-with
+  "Shared backbone of recursive-eu / recursive-eu-inf: the with-cache'd EU
+   recursion, parameterized by `reduce-qs` — the per-state value reducer that
+   collapses the action EUs [q_a...] to V(s,t). The soft variant passes the
+   softmax(alpha·q) expectation; the hard (alpha = ##Inf) variant passes max.
+   Returns {:eu (fn [s a t]) :soft-v (fn [s t])}."
+  [{:keys [A gamma terminals] :as mdp} reduce-qs]
+  (let [Rh      (mx/->clj (:R mdp))       ; [S][A] JS numbers
+        Th      (mx/->clj (:T mdp))       ; [S][A][S'] JS numbers
+        terms   (set (keys terminals))
+        eu-atom (atom nil)
+        v       (fn [s t]
+                  (reduce-qs (mapv (fn [a] (@eu-atom s a t)) (range A))))
+        eu      (exact/with-cache
+                  (fn [s a t]
+                    (let [u (get-in Rh [s a])]
+                      (if (or (terms s) (<= t 1))
+                        u
+                        (+ u (* gamma
+                                (reduce-kv
+                                  (fn [acc s' prob]
+                                    (if (pos? prob) (+ acc (* prob (v s' (dec t)))) acc))
+                                  0.0 (get-in Th [s a]))))))))]
+    (reset! eu-atom eu)
+    {:eu eu :soft-v v}))
+
 (defn recursive-eu
   "agentmodels' expectedUtility / act, memoized with exact/with-cache (the
    dp.cache analog). SOFT-rational and mutually recursive: the future value is
@@ -126,52 +152,21 @@
 
    Returns {:eu (fn [s a t]) :soft-v (fn [s t])}; EU(s,a,horizon) is the t-step Q
    that `value-iteration` computes with `n = horizon` sweeps."
-  [{:keys [A gamma terminals] :as mdp}]
+  [mdp]
   (when-not (number? (:alpha mdp))
     (throw (ex-info "recursive-eu: mdp is missing a numeric :alpha — callers
 bypassing make-mdp-agent must supply it ((* nil q) silently yields 0, making
 the softmax policy uniform; alpha = ##Inf belongs in recursive-eu-inf)."
                     {:alpha (:alpha mdp)})))
-  (let [Rh      (mx/->clj (:R mdp))       ; [S][A] JS numbers
-        Th      (mx/->clj (:T mdp))       ; [S][A][S'] JS numbers
-        terms   (set (keys terminals))
-        eu-atom (atom nil)
-        soft-v  (fn [s t]
-                  (let [qs (mapv (fn [a] (@eu-atom s a t)) (range A))]
-                    (reduce + (map * (softmax-vec (mapv #(* (:alpha mdp) %) qs)) qs))))
-        eu      (exact/with-cache
-                  (fn [s a t]
-                    (let [u (get-in Rh [s a])]
-                      (if (or (terms s) (<= t 1))
-                        u
-                        (+ u (* gamma
-                                (reduce-kv
-                                  (fn [acc s' prob]
-                                    (if (pos? prob) (+ acc (* prob (soft-v s' (dec t)))) acc))
-                                  0.0 (get-in Th [s a]))))))))]
-    (reset! eu-atom eu)
-    {:eu eu :soft-v soft-v}))
+  (recursive-eu-with mdp
+    (fn [qs]
+      (reduce + (map * (softmax-vec (mapv #(* (:alpha mdp) %) qs)) qs)))))
 
 (defn- recursive-eu-inf
   "alpha = ##Inf limit of recursive-eu: the soft policy expectation collapses to
    the hard max, so V(s,t) = max_a EU(s,a,t). Kept separate to avoid Inf*Q NaNs."
-  [{:keys [A gamma terminals] :as mdp}]
-  (let [Rh (mx/->clj (:R mdp))
-        Th (mx/->clj (:T mdp))
-        terms (set (keys terminals))
-        eu-atom (atom nil)
-        max-v (fn [s t] (apply max (mapv (fn [a] (@eu-atom s a t)) (range A))))
-        eu (exact/with-cache
-             (fn [s a t]
-               (let [u (get-in Rh [s a])]
-                 (if (or (terms s) (<= t 1))
-                   u
-                   (+ u (* gamma (reduce-kv
-                                   (fn [acc s' prob]
-                                     (if (pos? prob) (+ acc (* prob (max-v s' (dec t)))) acc))
-                                   0.0 (get-in Th [s a]))))))))]
-    (reset! eu-atom eu)
-    {:eu eu :soft-v max-v}))
+  [mdp]
+  (recursive-eu-with mdp (fn [qs] (apply max qs))))
 
 ;; ---------------------------------------------------------------------------
 ;; Agent constructor + rollout

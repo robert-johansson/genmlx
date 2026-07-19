@@ -89,7 +89,14 @@
         n-stream (count stream)
         can-propose? (fn [s] (< (:stream-idx s) n-stream))
         can-deepen?  (fn [s] (some? (deepen-target (:pool s) max-depth deepen-margin)))
-        best-entry   (fn [s] (when (seq (:pool s)) (apply max-key :log-ml (:pool s))))]
+        best-entry   (fn [s] (when (seq (:pool s)) (apply max-key :log-ml (:pool s))))
+        ;; The one proposal step both faces share: fetch the next stream
+        ;; candidate, score it, conj the entry into the pool, bump the index.
+        propose-next (fn [s]
+                       (let [cand (nth stream (:stream-idx s))
+                             {:keys [entry cost]} (score-candidate cfg cand)]
+                         {:state (-> s (update :pool conj entry) (update :stream-idx inc))
+                          :cost cost}))]
     {:init (fn [] {:pool [] :stream-idx 0 :stopped? false})
 
      :actions (fn [s]
@@ -101,10 +108,7 @@
      (fn [s action]
        (case action
          :propose
-         (let [cand (nth stream (:stream-idx s))
-               {:keys [entry cost]} (score-candidate cfg cand)]
-           {:state (-> s (update :pool conj entry) (update :stream-idx inc))
-            :cost cost})
+         (propose-next s)
          :deepen
          (let [i (deepen-target (:pool s) max-depth deepen-margin)
                e (nth (:pool s) i)
@@ -125,7 +129,5 @@
      ;; stream is dry, then stop. Drives proc/with-deadline to a committed stop.
      :step (fn [s]
              (if (can-propose? s)
-               (let [cand (nth stream (:stream-idx s))
-                     {:keys [entry]} (score-candidate cfg cand)]
-                 (-> s (update :pool conj entry) (update :stream-idx inc)))
+               (:state (propose-next s))
                (assoc s :stopped? true)))}))

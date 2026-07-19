@@ -19,7 +19,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
             [genmlx.agents.gridworld :as gw]
-            [genmlx.agents.agent :as agent]))
+            [genmlx.agents.agent :as agent]
+            [genmlx.agents.helpers :as h]))
 
 (defn goal-agents
   "Build one agent per candidate goal: the agent that VALUES that goal gives it
@@ -78,7 +79,7 @@
               "posterior-sequence: all goal agents must share one alpha to batch the policy stack"))
     (let [qstack (mx/stack (mapv #(:Q (agents-by-goal %)) goals))       ; [G,S,A]
           logits (mx/multiply (mx/scalar alpha) qstack)                 ; [G,S,A]
-          logp   (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1))]
+          logp   (h/log-softmax-last-axis logits)]
       (mx/materialize! logp)                                            ; eval the stack once
       logp)))
 

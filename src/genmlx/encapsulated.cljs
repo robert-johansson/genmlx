@@ -269,7 +269,7 @@
 ;; independent JS implementation, never this).
 ;; ---------------------------------------------------------------------------
 
-(defn- gauss-logpdf
+(defn- gaussian-log-prob
   "logN(x; mu, sigma), elementwise over MLX arrays. sigma is an MLX scalar."
   [x mu sigma]
   (mx/subtract
@@ -319,11 +319,11 @@
         log-density-estimate
         (fn [_args y z]
           (let [y2 (mx/reshape y [n 1])
-                lp (gauss-logpdf y2 z sigma-mx)            ;; [n,K]
+                lp (gaussian-log-prob y2 z sigma-mx)            ;; [n,K]
                 per-i (mx/subtract (mx/logsumexp lp [1]) log-k)] ;; [n]
             (mx/sum per-i)))
         exact-log-density
-        (fn [args y] (mx/sum (gauss-logpdf y (theta-of args) S-mx)))]
+        (fn [args y] (mx/sum (gaussian-log-prob y (theta-of args) S-mx)))]
     {:gf (encapsulated {:addr addr
                         :sample-value sample-value
                         :sample-omega sample-omega
@@ -375,12 +375,12 @@
           (let [yv (ensure-y y)
                 mu-k (mx/take-idx mu idx)                 ;; [K]
                 sig-k (mx/take-idx sig idx)               ;; [K]
-                lp (gauss-logpdf yv mu-k sig-k)]          ;; [K]
+                lp (gaussian-log-prob yv mu-k sig-k)]          ;; [K]
             (mx/subtract (mx/logsumexp lp [0]) log-k)))
         exact-log-density
         (fn [_args y]
           (let [yv (ensure-y y)
-                lp (mx/add log-pi (gauss-logpdf yv mu sig))]  ;; [m]
+                lp (mx/add log-pi (gaussian-log-prob yv mu sig))]  ;; [m]
             (mx/logsumexp lp [0])))]
     {:gf (encapsulated {:addr addr
                         :sample-value sample-value

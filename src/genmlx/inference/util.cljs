@@ -7,6 +7,7 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
+            [genmlx.vectorized :as vect]
             [genmlx.compiled-ops :as cops]))
 
 (defn materialize-weights
@@ -60,6 +61,29 @@
           _ (mx/materialize! log-probs)
           probs (mx/->clj (mx/exp log-probs))]
       {:log-probs log-probs :probs probs})))
+
+;; ---------------------------------------------------------------------------
+;; Host-double log-space helpers (genmlx-qma6)
+;; ---------------------------------------------------------------------------
+
+(defn host-log-sum-exp
+  "Numerically stable log(sum(exp(xs))) over HOST JS doubles (a seq of numbers,
+   not an MLX array — for MLX arrays use mx/logsumexp): max-shift, then sum,
+   then log, then add the max back. Returns -Inf when every input is -Inf.
+   Shared host-side copy for genmlx.program and genmlx.llm.msa-score."
+  [xs]
+  (let [max-x (apply max xs)]
+    (if (= max-x ##-Inf)
+      ##-Inf
+      (+ max-x
+         (js/Math.log
+          (reduce + (map #(js/Math.exp (- % max-x)) xs)))))))
+
+(defn host-log-mean-exp
+  "Numerically stable log(mean(exp(xs))) = host-log-sum-exp(xs) - log(n),
+   over HOST JS doubles."
+  [xs]
+  (- (host-log-sum-exp xs) (js/Math.log (count xs))))
 
 (defn compute-param-layout
   "Compute the flatten/unflatten layout for addresses that may hold array-valued choices.
@@ -266,13 +290,11 @@
 
 (defn ess-from-log-weight-array
   "Effective sample size from an [N]-shaped MLX log-weight array.
-   Returns a JS number (materializes the normalized probabilities)."
+   Returns a JS number (materializes the normalized probabilities).
+   Delegates to vect/ess-from-log-weights (the canonical body — vectorized
+   sits below genmlx.dynamic, so the shared fn must live there, not here)."
   [lw]
-  (let [log-probs (mx/subtract lw (mx/logsumexp lw))
-        probs (mx/exp log-probs)
-        _ (mx/materialize! probs)
-        probs-clj (mx/->clj probs)]
-    (/ 1.0 (transduce (map #(* % %)) + probs-clj))))
+  (vect/ess-from-log-weights lw))
 
 (defn- walk-value-arrays
   "Recursively find all MLX arrays in a value that may be a scalar, vector, or map."

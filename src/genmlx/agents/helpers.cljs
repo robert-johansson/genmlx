@@ -17,10 +17,23 @@
    over the GFI, not new GFI machinery."
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
+            [genmlx.dist.core :as dc]
             [genmlx.choicemap :as cm]
             [genmlx.combinators :as comb]
             [genmlx.inference.exact :as exact])
   (:require-macros [genmlx.dist.macros :refer [defdist]]))
+
+;; ---------------------------------------------------------------------------
+;; log-softmax-last-axis — the shared logits->log-probs recipe
+;; ---------------------------------------------------------------------------
+
+(defn log-softmax-last-axis
+  "log_softmax along the last axis: logits - logsumexp(logits, last-axis),
+   broadcast back via expand-dims. The one logits->log-action-probs recipe
+   shared by the differentiable planner loss (agents/differentiable) and the
+   stacked inverse-policy tensor (agents/inverse). Pure lazy graph."
+  [logits]
+  (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1)))
 
 ;; ---------------------------------------------------------------------------
 ;; factor-dist — soft conditioning
@@ -50,7 +63,7 @@
 
 ;; Batch-sampling support so factor-dist works under vsimulate/vgenerate too:
 ;; the draw is the constant 0 broadcast to [n] (log-prob already broadcasts w).
-(defmethod genmlx.dist.core/dist-sample-n* :factor-dist [_d _key n]
+(defmethod dc/dist-sample-n* :factor-dist [_d _key n]
   (mx/broadcast-to (mx/scalar 0.0) [n]))
 
 ;; ---------------------------------------------------------------------------

@@ -14,6 +14,18 @@
             [genmlx.inference.differentiable :as diff]))
 
 ;; ---------------------------------------------------------------------------
+;; Shared setup: frozen key + IS loss
+;; ---------------------------------------------------------------------------
+
+(defn- frozen-loss-fn
+  "Shared setup for both compilers: normalize/freeze the PRNG key and build
+   the deterministic IS loss via diff/make-is-loss-fn."
+  [{:keys [n-particles key] :or {n-particles 1000}}
+   model args observations param-names]
+  (diff/make-is-loss-fn model args observations param-names n-particles
+                        (rng/ensure-key key)))
+
+;; ---------------------------------------------------------------------------
 ;; Compiled log-ML (fixed key — deterministic IS)
 ;; ---------------------------------------------------------------------------
 
@@ -24,11 +36,8 @@
    opts:
      :n-particles  - IS particles (default 1000)
      :key          - PRNG key (frozen into the estimator)"
-  [{:keys [n-particles key] :or {n-particles 1000}}
-   model args observations param-names]
-  (let [key (rng/ensure-key key)
-        loss-fn (diff/make-is-loss-fn model args observations param-names n-particles key)]
-    (mx/compile-fn loss-fn)))
+  [opts model args observations param-names]
+  (mx/compile-fn (frozen-loss-fn opts model args observations param-names)))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled gradient (fixed key)
@@ -41,9 +50,7 @@
    opts:
      :n-particles  - IS particles (default 1000)
      :key          - PRNG key (frozen)"
-  [{:keys [n-particles key] :or {n-particles 1000}}
-   model args observations param-names]
-  (let [key (rng/ensure-key key)
-        loss-fn (diff/make-is-loss-fn model args observations param-names n-particles key)]
-    (mx/compile-fn (mx/value-and-grad loss-fn))))
+  [opts model args observations param-names]
+  (mx/compile-fn
+    (mx/value-and-grad (frozen-loss-fn opts model args observations param-names))))
 

@@ -8,7 +8,7 @@
    observations — returning Bayesian model evidence (exact analytical marginal for
    conjugate/eliminable models, importance-sampling log-mean-exp otherwise). They
    depend ONLY on the pure GenMLX core (mlx, dist, dynamic, protocols, choicemap,
-   method-selection) + sci/reader — NOT on genmlx.llm.backend, which ESM-imports the
+   inference.util, method-selection) + sci/reader — NOT on genmlx.llm.backend, which ESM-imports the
    native LM addon. So the Phase-1 reward path (genmlx.world.train-reward) can score
    generated programs WITHOUT loading the policy LLM at all — making reward purity a
    load-time guarantee, not just a convention.
@@ -22,6 +22,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
+            [genmlx.inference.util :as u]
             [genmlx.method-selection :as ms])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -155,16 +156,6 @@
                    [k (if (sequential? v) (mx/array v) (mx/scalar v))])
                  observations)))
 
-(defn- log-sum-exp
-  "Numerically stable log(sum(exp(xs)))."
-  [xs]
-  (let [max-x (apply max xs)]
-    (if (= max-x ##-Inf)
-      ##-Inf
-      (+ max-x
-         (js/Math.log
-          (reduce + (map #(js/Math.exp (- % max-x)) xs)))))))
-
 (defn- score-exact
   "Exact marginal log-evidence for a conjugate/eliminable model: the weight of a
    single analytical p/generate IS the marginal likelihood log p(obs) once the
@@ -187,7 +178,7 @@
                         (mx/force-gc!))
                       (recur (inc i) (conj ws w)))))]
     (mx/force-gc!)
-    (- (log-sum-exp weights) (js/Math.log (count weights)))))
+    (u/host-log-mean-exp weights)))
 
 (defn score-model*
   "Score a gen function against observations, returning {:log-ml :method}.

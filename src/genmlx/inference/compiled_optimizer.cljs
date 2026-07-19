@@ -576,12 +576,9 @@
           filtered (u/filter-addresses addresses eliminated)
           model-keyed (dyn/auto-key model)
           score-fn (u/make-score-fn model-keyed args observations filtered)
-          ;; Bypass mx/vmap — use loop-over-rows like vi-from-model (b5c923d fix).
+          ;; Bypass mx/vmap — vi/loop-over-rows, like vi-from-model (b5c923d fix).
           ;; mx/vmap crashes on GFI score functions that use volatile! internally.
-          vec-score-fn (fn [samples]
-                         (let [n (first (mx/shape samples))]
-                           (mx/stack (mapv (fn [i] (score-fn (mx/index samples i)))
-                                           (range n)))))
+          vec-score-fn (fn [samples] (vi/loop-over-rows score-fn samples))
           {:keys [trace]} (p/generate model-keyed args observations)
           init-params (u/extract-params trace filtered)
           vi-opts (merge {:iterations (or (:iterations opts) 500)

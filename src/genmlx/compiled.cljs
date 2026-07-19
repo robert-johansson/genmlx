@@ -30,12 +30,12 @@
   [tensor idx shape]
   (mx/reshape (mx/take-idx tensor (mx/array [idx] mx/int32) 0) shape))
 
-(defn- diag-gaussian-logprob
+(defn- diag-gaussian-log-prob
   "Log-density of a diagonal Gaussian. `diff` = value - mean, `std` = per-dim
    std, `dim` = dimensionality. With `sum-axis` the quadratic term is reduced
    along that axis (per-row [N] log-probs); without it the result is a scalar
    full reduction."
-  ([diff std dim] (diag-gaussian-logprob diff std dim nil))
+  ([diff std dim] (diag-gaussian-log-prob diff std dim nil))
   ([diff std dim sum-axis]
    (let [quad (mx/divide (mx/multiply diff diff) (mx/multiply std std))
          quad-sum (if sum-axis (mx/sum quad sum-axis) (mx/sum quad))]
@@ -159,11 +159,11 @@
           new-state (mx/add t-mean (mx/multiply t-std noise-row))
           ;; Transition log-prob
           t-diff (mx/subtract new-state t-mean)
-          t-lp (diag-gaussian-logprob t-diff t-std state-dim)
+          t-lp (diag-gaussian-log-prob t-diff t-std state-dim)
           ;; Observation log-prob
           [o-mean o-std] (observation-fn new-state)
           o-diff (mx/subtract obs-row o-mean)
-          o-lp (diag-gaussian-logprob o-diff o-std obs-dim)
+          o-lp (diag-gaussian-log-prob o-diff o-std obs-dim)
           ;; score = transition + observation, weight = observation
           score (mx/add t-lp o-lp)]
       [new-state score o-lp])))
@@ -276,7 +276,7 @@
           ;; obs-row is [M], o-mean is [N,M] — broadcast subtraction
           o-diff (mx/subtract obs-row o-mean)
           ;; Per-particle log-prob: sum over obs dimensions (axis=1)
-          log-weights (diag-gaussian-logprob o-diff o-std obs-dim 1)]
+          log-weights (diag-gaussian-log-prob o-diff o-std obs-dim 1)]
       [new-states log-weights])))
 
 ;; ===========================================================================

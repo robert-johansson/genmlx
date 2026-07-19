@@ -261,31 +261,23 @@
   (into {} (for [{:keys [cell glyph]} legend :when (#{:pellet :power :fruit} cell)]
              [cell (str glyph)])))
 
-(defn- norm01 [v lo hi]
-  (when (and v lo hi (not= hi lo)) (max 0.0 (min 1.0 (/ (- v lo) (- hi lo))))))
-
 (defn frame
   "A Pac-Man presentation Frame — {:W :H :cells [{:glyph :role :value?}] :meta
    {:step :action}} (the genmlx.agents.presentation contract, with roles extended to
    :pacman / :pellet / :power / :fruit / :ghost) — picturing the agent at `agent-idx`
    on a pacman-mdp. Opts: :step :action :vs/:vlo/:vhi (pre-extracted value function
-   to shade empty floor) :path (visited set) :ghost-idx (latent / belief-peak ghost)."
-  [{:keys [W H walls terminals]} agent-idx
-   {:keys [step action vs vlo vhi path ghost-idx] :or {path #{}}}]
-  {:W W :H H
-   :meta {:step step :action action}
-   :cells (vec (for [y (range H) x (range W)
-                     :let [idx (+ x (* W y))]]
-                 (cond
-                   (contains? walls idx)     {:glyph "█" :role :wall}
-                   (= idx agent-idx)         {:glyph "ᗧ" :role :pacman}
-                   (= idx ghost-idx)         {:glyph "ᗣ" :role :ghost}
-                   (contains? terminals idx) (let [kw (terminals idx)]
-                                               {:glyph (get cache-glyph kw (subs (name kw) 0 1))
-                                                :role  kw})
-                   (contains? path idx)      {:glyph "∘" :role :path}
-                   :else                     {:glyph "·" :role :empty
-                                              :value (when vs (norm01 (nth vs idx) vlo vhi))})))})
+   to shade empty floor) :path (visited set) :ghost-idx (latent / belief-peak ghost).
+   Wall/path/value-shaded-floor cells come from present/make-frame; only the
+   Pac-Man-specific roles live here."
+  [{:keys [terminals] :as mdp} agent-idx {:keys [ghost-idx] :as opts}]
+  (present/make-frame mdp opts
+    (fn [idx]
+      (cond
+        (= idx agent-idx)         {:glyph "ᗧ" :role :pacman}
+        (= idx ghost-idx)         {:glyph "ᗣ" :role :ghost}
+        (contains? terminals idx) (let [kw (terminals idx)]
+                                    {:glyph (get cache-glyph kw (subs (name kw) 0 1))
+                                     :role  kw})))))
 
 (defn trajectory
   "A Pac-Man Trajectory ([Frame]) from a rollout {:states :actions} on a pacman-mdp.
