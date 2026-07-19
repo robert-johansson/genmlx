@@ -60,7 +60,7 @@
   (let [{:keys [T terminals alpha noise]} mdp
         noise     (or noise 0.0)
         det?      (and (= alpha ##Inf) (zero? noise))
-        keys      (when-not det? (rng/split-n (rng/ensure-key key) (* 2 (max 1 horizon))))
+        ks        (when-not det? (rng/split-n (rng/ensure-key key) (* 2 (max 1 horizon))))
         s0        (mx/array (int start) mx/int32)]
     (loop [s s0, t 0, states [s0], actions []]
       (if (>= t horizon)
@@ -77,6 +77,6 @@
                              (count avec))]
             {:states  (subvec svec 0 (inc term-idx))
              :actions (subvec avec 0 (min term-idx (count avec)))}))
-        (let [a  (step-action Q s alpha (when keys (nth keys (* 2 t))))
-              s' (step-next T s a noise (when keys (nth keys (inc (* 2 t)))))]
+        (let [a  (step-action Q s alpha (when ks (nth ks (* 2 t))))
+              s' (step-next T s a noise (when ks (nth ks (inc (* 2 t)))))]
           (recur s' (inc t) (conj states s') (conj actions a)))))))

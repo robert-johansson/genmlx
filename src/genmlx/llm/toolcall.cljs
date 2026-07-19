@@ -76,8 +76,8 @@
    any-text slot: the DFA models only the ENVELOPE there (a single
    self-loop state the hybrid masker parks in while the reader governs the
    value bytes — see hybrid-masker)."
-  [{:keys [name pattern schema cljs]}]
-  (str "<parameter=" (sg/re-quote name) ">\\n"
+  [{pname :name :keys [pattern schema cljs]}]
+  (str "<parameter=" (sg/re-quote pname) ">\\n"
        (or (when-not cljs pattern)
            (when (and schema (not cljs)) (sg/schema->regex schema))
            "([^<]|\\n)*")
@@ -89,8 +89,8 @@
    useful when sampling under a token budget (an unbounded star lets a
    hot-temperature model add parameters until max-tokens truncates the
    block mid-tag — a sampling artifact, not a grammar failure)."
-  [{:keys [name params]} max-params]
-  (str (sg/re-quote name) ">\\n"
+  [{tool-name :name :keys [params]} max-params]
+  (str (sg/re-quote tool-name) ">\\n"
        (when (seq params)
          (str "(" (str/join "|" (map param-regex params)) ")"
               (if max-params (str "{0," max-params "}") "*")))))

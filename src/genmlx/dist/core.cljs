@@ -67,8 +67,8 @@
 
 ;; Default dist-sample-n*: sequential fallback for distributions that can't batch.
 (defmethod dist-sample-n* :default [d key n]
-  (let [keys (rng/split-n (rng/ensure-key key) n)]
-    (mx/stack (mapv #(dist-sample d %) keys))))
+  (let [ks (rng/split-n (rng/ensure-key key) n)]
+    (mx/stack (mapv #(dist-sample d %) ks))))
 
 ;; ---------------------------------------------------------------------------
 ;; GFI bridge: distribution -> trace
@@ -209,8 +209,8 @@
      :reparam   - (fn [key] -> MLX-value) reparameterized sample
      :support   - (fn [] -> seq) enumerable support
      :sample-n  - (fn [key n] -> MLX-array) batch sampling"
-  [{:keys [type sample log-prob reparam support sample-n]}]
-  (let [type-kw (or type (keyword (gensym "custom-dist")))]
+  [{opt-type :type :keys [sample log-prob reparam support sample-n]}]
+  (let [type-kw (or opt-type (keyword (gensym "custom-dist")))]
     (when (and (contains? (methods dist-sample*) type-kw)
                (not (contains? @map->dist-types type-kw)))
       (throw (ex-info (str "map->dist: " type-kw " is already a registered "
@@ -294,13 +294,13 @@
   (let [{:keys [form components]} (:params d)
         key (rng/ensure-key key)]
     (if (= form :vector)
-      (let [keys (rng/split-n key (count components))]
-        (mapv f components keys))
+      (let [ks (rng/split-n key (count components))]
+        (mapv f components ks))
       (let [entries (vec components)
-            keys (rng/split-n key (count entries))]
+            ks (rng/split-n key (count entries))]
         (into {}
-          (map (fn [[k comp] sub-key] [k (f comp sub-key)])
-               entries keys))))))
+          (map (fn [[k component] sub-key] [k (f component sub-key)])
+               entries ks))))))
 
 (defmethod dist-sample* :product [d key]
   (product-map d key dist-sample))
@@ -309,13 +309,13 @@
   (let [{:keys [form components]} (:params d)]
     (if (= form :vector)
       (reduce mx/add
-              (map-indexed (fn [i comp]
-                             (dist-log-prob comp (nth value i)))
+              (map-indexed (fn [i component]
+                             (dist-log-prob component (nth value i)))
                            components))
       ;; map form
       (reduce mx/add
-              (map (fn [[k comp]]
-                     (dist-log-prob comp (get value k)))
+              (map (fn [[k component]]
+                     (dist-log-prob component (get value k)))
                    components)))))
 
 (defmethod dist-reparam :product [d key]
@@ -335,8 +335,8 @@
         ;; Map form: Cartesian product with keys
         (let [entries (vec components)
               ks (mapv first entries)
-              supports (mapv (fn [[_ comp]] (dist-support comp)) entries)]
-          (mapv (fn [vals] (zipmap ks vals)) (cartesian supports)))))))
+              supports (mapv (fn [[_ component]] (dist-support component)) entries)]
+          (mapv (fn [vs] (zipmap ks vs)) (cartesian supports)))))))
 
 (defmethod dist-sample-n* :product [d key n]
-  (product-map d key (fn [comp k] (dist-sample-n comp k n))))
+  (product-map d key (fn [component k] (dist-sample-n component k n))))

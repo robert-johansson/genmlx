@@ -51,14 +51,14 @@
       (into {}
             (map-indexed
              (fn [i addr]
-               (let [vals (mapv #(nth % i) samples)
-                     mean (/ (reduce + vals) n)
+               (let [vs (mapv #(nth % i) samples)
+                     mean (/ (reduce + vs) n)
                      variance (if (> n 1)
-                                (/ (transduce (map #(let [d (- % mean)] (* d d))) + vals)
+                                (/ (transduce (map #(let [d (- % mean)] (* d d))) + vs)
                                    (dec n))
                                 0.0)
                      std (js/Math.sqrt variance)]
-                 [addr {:mean mean :std std :samples vals}]))
+                 [addr {:mean mean :std std :samples vs}]))
              addrs)))))
 
 ;; ---------------------------------------------------------------------------

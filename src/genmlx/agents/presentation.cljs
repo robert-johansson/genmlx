@@ -113,10 +113,10 @@
 
 (defn render-frame-text
   "ASCII render of a Frame: a header line + rows of glyphs, top row first."
-  [{:keys [W H cells meta]}]
+  [{m :meta :keys [W H cells]}]
   (str/join
     "\n"
-    (cons (str "step " (:step meta) (when (:action meta) (str "  →" (name (:action meta)))))
+    (cons (str "step " (:step m) (when (:action m) (str "  →" (name (:action m)))))
           (for [y (range H)]
             (str/join " " (for [x (range W)] (:glyph (nth cells (+ x (* W y))))))))))
 

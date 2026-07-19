@@ -368,7 +368,7 @@
                             :conjugate-posteriors (or init-posteriors {})}
                      param-store (assoc :param-store param-store))]
     (rt/run-handler transition init-state
-      (fn [rt] (apply (:body-fn gf) rt args)))))
+      (fn [runtime] (apply (:body-fn gf) runtime args)))))
 
 (defn- add-ll
   "Nil-safe marginal-LL accumulation: nil is the additive identity, so a

@@ -568,9 +568,9 @@
                          :weight (mx/add weight (mx/subtract new-lp old-lp))
                          :key k1})
                       ;; Not selected: keep old value, no key split
-                      (let [val (cm/get-value (cm/get-submap old-choices addr))
-                            lp (apply log-prob-fn val eval-args)]
-                        {:values (assoc values addr val)
+                      (let [v (cm/get-value (cm/get-submap old-choices addr))
+                            lp (apply log-prob-fn v eval-args)]
+                        {:values (assoc values addr v)
                          :score (mx/add score lp)
                          :weight weight
                          :key key}))))))]
@@ -598,8 +598,8 @@
                    :weight weight
                    :key k1})
                 ;; Not selected: keep old value, lp = 0
-                (let [val (cm/get-value (cm/get-submap old-choices addr))]
-                  {:values (assoc values addr val)
+                (let [v (cm/get-value (cm/get-submap old-choices addr))]
+                  {:values (assoc values addr v)
                    :score score
                    :weight weight
                    :key key}))))
@@ -901,7 +901,7 @@
                                  merged-score
                                  k2))))
                     touched (set sweep-addrs)
-                    final-choices (reduce (fn [cm a] (cm/set-value cm a (get values a)))
+                    final-choices (reduce (fn [acc a] (cm/set-value acc a (get values a)))
                                           old-choices touched)]
                 ;; sweep-end sync: settle every still-lazy merged leaf
                 (apply mx/materialize! score (map values touched))

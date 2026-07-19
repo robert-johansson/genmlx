@@ -138,12 +138,12 @@
 
       ;; Keep old value
       (cm/has-value? old-choice)
-      (let [val (cm/get-value old-choice)
-            lp (dc/dist-log-prob dist val)]
-        [val (-> state
-                 (update :choices cm/set-value addr val)
-                 (update :score mx/add lp)
-                 (update :weight mx/add lp))])
+      (let [v (cm/get-value old-choice)
+            lp (dc/dist-log-prob dist v)]
+        [v (-> state
+               (update :choices cm/set-value addr v)
+               (update :score mx/add lp)
+               (update :weight mx/add lp))])
 
       ;; New address: sample fresh
       :else (simulate-transition state addr dist))))
@@ -169,16 +169,16 @@
                      (update :score mx/add new-lp)
                      (update :weight mx/add (mx/subtract new-lp old-lp)))])
       ;; Not selected: keep old
-      (let [val (when (cm/has-value? old-choice)
-                  (cm/get-value old-choice))]
-        (when (nil? val)
+      (let [v (when (cm/has-value? old-choice)
+                (cm/get-value old-choice))]
+        (when (nil? v)
           (throw (ex-info (str "regenerate: address " addr " not found in previous trace choices. "
                                "Cannot keep old value for an address that was never sampled.")
                           {:addr addr})))
-        (let [lp (dc/dist-log-prob dist val)]
-          [val (-> state
-                   (update :choices cm/set-value addr val)
-                   (update :score mx/add lp))])))))
+        (let [lp (dc/dist-log-prob dist v)]
+          [v (-> state
+                 (update :choices cm/set-value addr v)
+                 (update :score mx/add lp))])))))
 
 (defn regenerate-transition-general
   "Pure: the retained-only regenerate transition (genmlx-hmch, genmlx-yep2).
@@ -214,29 +214,29 @@
                      (update :choices cm/set-value addr new-val)
                      (update :score mx/add new-lp))])
       ;; Retained: keep old value, score, no key split
-      (let [val (cm/get-value old-choice)
-            lp (dc/dist-log-prob dist val)]
-        [val (-> state
-                 (update :choices cm/set-value addr val)
-                 (update :score mx/add lp))]))))
+      (let [v (cm/get-value old-choice)
+            lp (dc/dist-log-prob dist v)]
+        [v (-> state
+               (update :choices cm/set-value addr v)
+               (update :score mx/add lp))]))))
 
 (defn project-transition
   "Pure: replay old value, accumulate log-prob for selected addresses."
   [state addr dist]
   (let [old-choice (cm/get-submap (:old-choices state) addr)
-        val (when (cm/has-value? old-choice)
-              (cm/get-value old-choice))]
-    (when (nil? val)
+        v (when (cm/has-value? old-choice)
+            (cm/get-value old-choice))]
+    (when (nil? v)
       (throw (ex-info (str "project: address not found in previous trace choices. "
                            "Cannot replay a value for an address that was never sampled.")
                       {})))
-    (let [lp (dc/dist-log-prob dist val)
+    (let [lp (dc/dist-log-prob dist v)
           sel (:selection state)]
-      [val (-> state
-               (update :choices cm/set-value addr val)
-               (update :score mx/add lp)
-               (cond-> (and sel (sel/selected? sel addr))
-                 (update :weight mx/add lp)))])))
+      [v (-> state
+             (update :choices cm/set-value addr v)
+             (update :score mx/add lp)
+             (cond-> (and sel (sel/selected? sel addr))
+               (update :weight mx/add lp)))])))
 
 ;; ---------------------------------------------------------------------------
 ;; Batched state transitions (vectorized: [N]-shaped values)
@@ -326,13 +326,13 @@
 
       ;; Keep old [N]-shaped values
       (cm/has-value? old-choice)
-      (let [val (cm/get-value old-choice)
-            lp (dc/dist-log-prob dist val)]
+      (let [v (cm/get-value old-choice)
+            lp (dc/dist-log-prob dist v)]
         (check-batched-lp! addr n lp)
-        [val (-> state
-                 (update :choices cm/set-value addr val)
-                 (update :score mx/add lp)
-                 (update :weight mx/add lp))])
+        [v (-> state
+               (update :choices cm/set-value addr v)
+               (update :score mx/add lp)
+               (update :weight mx/add lp))])
 
       ;; New address: sample [N] fresh values
       :else (batched-simulate-transition state addr dist))))
@@ -361,18 +361,18 @@
       ;; Not selected: keep old [N]-shaped values — same informative throw as
       ;; the scalar counterpart on a missing retained address (genmlx-a6o5),
       ;; instead of nil into dist-log-prob -> opaque native error
-      (let [val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
-        (when (nil? val)
+      (let [v (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+        (when (nil? v)
           (throw (ex-info (str "batched regenerate: address " addr
                                " not found in previous trace choices. Cannot "
                                "keep old value for an address that was never "
                                "sampled.")
                           {:addr addr})))
-        (let [lp (dc/dist-log-prob dist val)]
+        (let [lp (dc/dist-log-prob dist v)]
           (check-batched-lp! addr n lp)
-          [val (-> state
-                   (update :choices cm/set-value addr val)
-                   (update :score mx/add lp))])))))
+          [v (-> state
+                 (update :choices cm/set-value addr v)
+                 (update :score mx/add lp))])))))
 
 (defn batched-project-transition
   "Pure: batched project — replay the [N]-shaped old value, accumulate its
@@ -381,19 +381,19 @@
   [state addr dist]
   (let [n (:batch-size state)
         old-choice (cm/get-submap (:old-choices state) addr)
-        val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
-    (when (nil? val)
+        v (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+    (when (nil? v)
       (throw (ex-info (str "batched project: address " addr
                            " not found in previous trace choices.")
                       {:addr addr})))
-    (let [lp (dc/dist-log-prob dist val)
+    (let [lp (dc/dist-log-prob dist v)
           sel (:selection state)]
       (check-batched-lp! addr n lp)
-      [val (-> state
-               (update :choices cm/set-value addr val)
-               (update :score mx/add lp)
-               (cond-> (and sel (sel/selected? sel addr))
-                 (update :weight mx/add lp)))])))
+      [v (-> state
+             (update :choices cm/set-value addr v)
+             (update :score mx/add lp)
+             (cond-> (and sel (sel/selected? sel addr))
+               (update :weight mx/add lp)))])))
 
 (defn batched-regenerate-transition-general
   "Pure: batched retained-only regenerate transition (genmlx-8xia) — the
@@ -419,18 +419,18 @@
       ;; retained: informative throw on a missing address (genmlx-a6o5),
       ;; matching the scalar general transition's structure-change contract
       ;; note — this batched path never sees fresh sites, so absence is a bug
-      (let [val (when (cm/has-value? old-choice) (cm/get-value old-choice))]
-        (when (nil? val)
+      (let [v (when (cm/has-value? old-choice) (cm/get-value old-choice))]
+        (when (nil? v)
           (throw (ex-info (str "batched regenerate (general): address " addr
                                " not found in previous trace choices — the "
                                "batched general path requires a fixed address "
                                "set across the batch (no structure change).")
                           {:addr addr})))
-        (let [lp (dc/dist-log-prob dist val)]
+        (let [lp (dc/dist-log-prob dist v)]
           (check-batched-lp! addr n lp)
-          [val (-> state
-                   (update :choices cm/set-value addr val)
-                   (update :score mx/add lp))])))))
+          [v (-> state
+                 (update :choices cm/set-value addr v)
+                 (update :score mx/add lp))])))))
 
 ;; ---------------------------------------------------------------------------
 ;; Pure helpers used by runtime.cljs

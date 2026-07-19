@@ -109,11 +109,11 @@
    past the joint-scoring guard (genmlx-a6o5)."
   [tt]
   (let [values-map (unpack-values (:values tt) (:addr-index tt))
-        cm (cm/from-flat-map values-map)]
+        cmap (cm/from-flat-map values-map)]
     (tr/with-score-type
       (tr/make-trace {:gen-fn (:gen-fn tt)
                       :args (:args tt)
-                      :choices cm
+                      :choices cmap
                       :retval (:retval tt)
                       :score (:score tt)})
       (tr/score-type tt))))

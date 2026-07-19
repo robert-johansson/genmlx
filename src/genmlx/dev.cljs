@@ -52,11 +52,11 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- default-thrower
-  [type {:keys [entry value context fn-name op schema-key] :as data}]
+  [type-kw {:keys [entry value context fn-name op schema-key] :as data}]
   (let [humanized (me/humanize ((:explain entry) value))
         label (or fn-name context (some-> schema-key name) (some-> op name))]
-    (throw (ex-info (str "Schema violation in " label ": " type)
-                    {:type type
+    (throw (ex-info (str "Schema violation in " label ": " type-kw)
+                    {:type type-kw
                      :errors humanized
                      :label label
                      :data (dissoc data :value :entry)}))))

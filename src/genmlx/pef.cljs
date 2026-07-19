@@ -838,10 +838,10 @@
     :compare {:type :eps :tol eps}}
 
    {:name :p4-batched-vs-scalar
-    :applicable? (fn [{:keys [meta]}]
+    :applicable? (fn [{m :meta}]
                    ;; site-conditioned branches call mx/item in the body,
                    ;; which breaks batched execution by contract
-                   (not (:has-site-branches? meta)))
+                   (not (:has-site-branches? m)))
     :run p4-batched-vs-scalar
     :compare {:type :eps :tol eps}}
 
@@ -851,7 +851,7 @@
     :compare {:type :statistical :seeds 5}}
 
    {:name :p6-smc-vs-is
-    :applicable? (fn [{:keys [meta]}] (not (:has-site-branches? meta)))
+    :applicable? (fn [{m :meta}] (not (:has-site-branches? m)))
     :run p6-smc-vs-is
     :compare {:type :statistical :seeds 4}}
 

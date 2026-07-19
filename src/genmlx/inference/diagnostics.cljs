@@ -77,8 +77,8 @@
 
 (defn- quantile
   "Type-7 (linear-interpolation) quantile of a vector of doubles."
-  [vals p]
-  (let [sorted (vec (sort vals))
+  [vs p]
+  (let [sorted (vec (sort vs))
         s (count sorted)
         h (* (dec s) p)
         lo (int (js/Math.floor h))
@@ -250,14 +250,14 @@
         ;; Sum of squared deviations of xs from their mean mu
         ss (fn [xs mu] (reduce + (map #(let [d (- % mu)] (* d d)) xs)))
         ;; Chain means
-        chain-means (mapv (fn [vals] (/ (reduce + vals) n)) chain-vals)
+        chain-means (mapv (fn [vs] (/ (reduce + vs) n)) chain-vals)
         overall-mean (/ (reduce + chain-means) m)
         ;; Between-chain variance
         B (* (/ n (dec m))
              (ss chain-means overall-mean))
         ;; Within-chain variance
-        W (/ (reduce + (map (fn [vals mu]
-                              (/ (ss vals mu) (dec n)))
+        W (/ (reduce + (map (fn [vs mu]
+                              (/ (ss vs mu) (dec n)))
                             chain-vals chain-means))
              m)
         ;; R-hat

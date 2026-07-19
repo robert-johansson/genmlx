@@ -13,7 +13,7 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dynamic :as dyn]
-            [genmlx.vectorized :as vec]
+            [genmlx.vectorized :as vect]
             [genmlx.learning :as learn]))
 
 ;; ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@
   (let [store {:params (learn/array->params p param-names)}
         gf (vary-meta model assoc :genmlx.dynamic/param-store store)
         vtrace (dyn/vgenerate gf args observations n-particles key)]
-    (mx/negative (vec/vtrace-log-ml-estimate vtrace))))
+    (mx/negative (vect/vtrace-log-ml-estimate vtrace))))
 
 (defn make-is-loss-fn
   "Build a differentiable loss function: params → neg-log-ML via IS.

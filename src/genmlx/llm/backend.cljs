@@ -1030,7 +1030,7 @@
                        MLX buffer pool (unlike force-gc!, whose cache clear
                        would thrash the decode allocator)."
   ([model-map prompt] (generate-text-raw+ model-map prompt {}))
-  ([{:keys [model tokenizer type]} prompt {:keys [max-tokens temperature seed system-prompt
+  ([{model-type :type :keys [model tokenizer]} prompt {:keys [max-tokens temperature seed system-prompt
                                                   sweep-every]
                                           :or {max-tokens 100
                                                temperature 0
@@ -1040,7 +1040,7 @@
          chat-str (render-chat [{:role "system" :content system-prompt}
                                 {:role "user" :content prompt}]
                                {:think-skip? (contains? #{:qwen3 :qwen3_5 :qwen3_5_moe}
-                                                        type)})
+                                                        model-type)})
          eos-id (eos-token-id tokenizer)
          greedy? (or (nil? temperature) (<= temperature 0))
          inv-temp (when-not greedy? (mx/scalar (/ 1.0 temperature)))

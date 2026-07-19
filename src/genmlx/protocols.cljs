@@ -2,7 +2,8 @@
   "GFI (Generative Function Interface) protocol definitions.
    Eleven single-operation protocols. There are no protocol-level defaults: each
    generative function implements the operations it supports (simulate is the
-   conceptual primitive; the generic run-* dispatch logic lives in the handler).")
+   conceptual primitive; the generic run-* dispatch logic lives in the handler)."
+  (:refer-clojure :exclude [update]))
 
 (defprotocol IGenerativeFunction
   (simulate [gf args]

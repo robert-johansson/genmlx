@@ -214,25 +214,25 @@
 ;; ============================================================
 
 (defn constrain-schema
-  "Return a new schema with the fields named in `partial` (a map address->value,
-   or a nested map mirroring the schema) replaced by [:= value], so that
-   `schema->regex` of the result forces those fields. Only :map schemas support
-   keyed conditioning; for other schemas a non-nil `partial` fixes the whole
-   value to [:= partial]."
-  [schema partial]
+  "Return a new schema with the fields named in `partial-value` (a map
+   address->value, or a nested map mirroring the schema) replaced by [:= value],
+   so that `schema->regex` of the result forces those fields. Only :map schemas
+   support keyed conditioning; for other schemas a non-nil `partial-value` fixes
+   the whole value to [:= partial-value]."
+  [schema partial-value]
   (let [s  (m/schema schema)
         t  (m/type s)
         ch (m/children s)]
     (cond
-      (and (= t :map) (map? partial))
+      (and (= t :map) (map? partial-value))
       (into [:map]
             (map (fn [[k props vschema]]
-                   (if (contains? partial k)
-                     (let [pv (get partial k)]
+                   (if (contains? partial-value k)
+                     (let [pv (get partial-value k)]
                        [k props (if (map? pv) (constrain-schema vschema pv) [:= pv])])
                      [k props vschema])))
             ch)
-      (some? partial) [:= partial]
+      (some? partial-value) [:= partial-value]
       :else schema)))
 
 ;; ============================================================

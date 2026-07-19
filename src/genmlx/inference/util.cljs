@@ -91,24 +91,24 @@
        ;; Array-valued path: unflatten params into original shapes
        (let [entries (:layout layout)]
          (fn [params]
-           (let [cm (reduce
-                     (fn [cm {:keys [addr shape offset size]}]
-                       (let [v (if (= size 1)
-                                 (mx/index params offset)
-                                 (mx/reshape (mx/slice params offset (+ offset size)) shape))]
-                         (cm/set-choice cm [addr] v)))
-                     observations
-                     entries)]
-             (:weight (p/generate model args cm)))))
+           (let [cmap (reduce
+                       (fn [acc {:keys [addr shape offset size]}]
+                         (let [v (if (= size 1)
+                                   (mx/index params offset)
+                                   (mx/reshape (mx/slice params offset (+ offset size)) shape))]
+                           (cm/set-choice acc [addr] v)))
+                       observations
+                       entries)]
+             (:weight (p/generate model args cmap)))))
        ;; Scalar-only path (original, unchanged)
        (let [indexed-addrs (mapv vector (range) addresses)]
          (fn [params]
-           (let [cm (reduce
-                     (fn [cm [i addr]]
-                       (cm/set-choice cm [addr] (mx/index params i)))
-                     observations
-                     indexed-addrs)]
-             (:weight (p/generate model args cm)))))))))
+           (let [cmap (reduce
+                       (fn [acc [i addr]]
+                         (cm/set-choice acc [addr] (mx/index params i)))
+                       observations
+                       indexed-addrs)]
+             (:weight (p/generate model args cmap)))))))))
 
 (defn make-batched-score-fn
   "Build a batched score function via shape-based batching.
@@ -121,14 +121,14 @@
         idx-scalars (mapv #(mx/scalar % mx/int32) (range (count addresses)))]
     (fn [params]
       (let [params-t (mx/transpose params)
-            cm (reduce
-                (fn [cm [i addr]]
+            cmap (reduce
+                  (fn [acc [i addr]]
                    ;; take-idx with axis=0 extracts row i of [D,N] → [N]-shaped
-                  (cm/set-choice cm [addr]
-                                 (mx/take-idx params-t (nth idx-scalars i) 0)))
-                observations
-                indexed-addrs)]
-        (:weight (p/generate model args cm))))))
+                    (cm/set-choice acc [addr]
+                                   (mx/take-idx params-t (nth idx-scalars i) 0)))
+                  observations
+                  indexed-addrs)]
+        (:weight (p/generate model args cmap))))))
 
 (defn make-vectorized-score-fn
   "Build a compiled vectorized score function for N parallel chains.
@@ -192,14 +192,14 @@
                        (range d))]
     (fn [params]
       (let [;; Extract column i via dot product: params [N,D] . one-hot [D] -> [N]
-            cm (reduce
-                (fn [cm [i addr]]
+            cmap (reduce
+                  (fn [acc [i addr]]
                    ;; matmul [N,D] x [D,1] -> [N,1], squeeze -> [N]
-                  (cm/set-choice cm [addr]
-                                 (mx/squeeze (mx/matmul params (mx/reshape (nth one-hots i) [d 1])))))
-                observations
-                indexed-addrs)]
-        (:weight (p/generate model args cm))))))
+                    (cm/set-choice acc [addr]
+                                   (mx/squeeze (mx/matmul params (mx/reshape (nth one-hots i) [d 1])))))
+                  observations
+                  indexed-addrs)]
+        (:weight (p/generate model args cmap))))))
 
 (defn make-vectorized-grad-score
   "Per-chain gradients for N parallel chains via the sum trick.
@@ -278,7 +278,7 @@
   [v arrays]
   (cond
     (mx/array? v) (vswap! arrays conj! v)
-    (map? v) (doseq [[_ val] v] (walk-value-arrays val arrays))
+    (map? v) (doseq [[_ mv] v] (walk-value-arrays mv arrays))
     (sequential? v) (doseq [item v] (walk-value-arrays item arrays))))
 
 (defn collect-trace-arrays
@@ -286,14 +286,14 @@
    Recursively walks retval to find arrays inside maps/vectors (e.g., Unfold state)."
   [trace]
   (let [arrays (volatile! (transient []))]
-    (letfn [(walk [cm]
+    (letfn [(walk [cmap]
               (cond
-                (nil? cm) nil
-                (cm/has-value? cm)
-                (let [v (cm/get-value cm)]
+                (nil? cmap) nil
+                (cm/has-value? cmap)
+                (let [v (cm/get-value cmap)]
                   (when (mx/array? v) (vswap! arrays conj! v)))
-                (instance? cm/Node cm)
-                (run! (fn [[_ sub]] (walk sub)) (cm/-submaps cm))))]
+                (instance? cm/Node cmap)
+                (run! (fn [[_ sub]] (walk sub)) (cm/-submaps cmap))))]
       (when-let [choices (:choices trace)]
         (walk choices)))
     (when-let [s (:score trace)]
@@ -404,8 +404,8 @@
       {:score-fn
        (fn [params]
          (let [constraints (reduce
-                            (fn [cm [i addr]]
-                              (cm/set-choice cm [addr] (mx/index params i)))
+                            (fn [acc [i addr]]
+                              (cm/set-choice acc [addr] (mx/index params i)))
                             observations
                             indexed-addrs)]
            (:weight (compiled-gen (rng/fresh-key) mlx-args constraints))))

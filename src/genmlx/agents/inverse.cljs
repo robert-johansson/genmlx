@@ -69,14 +69,14 @@
    one gather, with no per-cell mx/item. Requires a finite, shared alpha (a hard
    argmax would give -inf likelihoods for sub-optimal actions and collapse the
    posterior — the soft-rationality invariant of inverse inference)."
-  [goals goal-agents]
-  (let [alpha (:alpha (:params (goal-agents (first goals))))]
+  [goals agents-by-goal]
+  (let [alpha (:alpha (:params (agents-by-goal (first goals))))]
     (assert (and (number? alpha) (js/isFinite alpha))
             "posterior-sequence: batched inverse inference needs a finite alpha (hard argmax is degenerate)")
     (doseq [g (rest goals)]
-      (assert (== alpha (:alpha (:params (goal-agents g))))
+      (assert (== alpha (:alpha (:params (agents-by-goal g))))
               "posterior-sequence: all goal agents must share one alpha to batch the policy stack"))
-    (let [qstack (mx/stack (mapv #(:Q (goal-agents %)) goals))          ; [G,S,A]
+    (let [qstack (mx/stack (mapv #(:Q (agents-by-goal %)) goals))       ; [G,S,A]
           logits (mx/multiply (mx/scalar alpha) qstack)                 ; [G,S,A]
           logp   (mx/subtract logits (mx/expand-dims (mx/logsumexp logits [-1]) -1))]
       (mx/materialize! logp)                                            ; eval the stack once
@@ -101,9 +101,9 @@
    is one [G] readout per prefix posterior (T+1 total), not G·T per-cell mx/item.
    Numerically identical (to float32) to the per-cell action-loglik path, which is
    retained above as the ground truth."
-  [goal-agents prior observations]
-  (let [goals (vec (keys goal-agents))                 ; pin order: same axis for stack + readout
-        logp-policies (stack-log-policies goals goal-agents)
+  [agents-by-goal prior observations]
+  (let [goals (vec (keys agents-by-goal))              ; pin order: same axis for stack + readout
+        logp-policies (stack-log-policies goals agents-by-goal)
         logp0 (mx/log (mx/array (clj->js (mapv #(double (prior %)) goals)) mx/float32))]
     (loop [obs  observations
            logp logp0

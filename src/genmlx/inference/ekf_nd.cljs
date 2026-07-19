@@ -252,11 +252,11 @@
       (let [n (:ekf-nd-n state)
             means (or (:ekf-nd-means state) (make-zero-means latent-addrs n))
             covs (or (:ekf-nd-covs state) (make-zero-covs latent-addrs n))
-            [val new-means new-covs] (predict-fn latent-addrs addr means covs dist)]
-        [val (-> state
-                 (assoc :ekf-nd-means new-means
-                        :ekf-nd-covs new-covs)
-                 (update :choices cm/set-value addr val))])
+            [v new-means new-covs] (predict-fn latent-addrs addr means covs dist)]
+        [v (-> state
+               (assoc :ekf-nd-means new-means
+                      :ekf-nd-covs new-covs)
+               (update :choices cm/set-value addr v))])
       nil)))
 
 (defn- make-obs-handler
@@ -358,7 +358,7 @@
                                              (make-zero-covs latent-addrs n))}
                      param-store (assoc :param-store param-store))]
     (rt/run-handler transition init-state
-      (fn [rt] (apply (:body-fn gf) rt args)))))
+      (fn [runtime] (apply (:body-fn gf) runtime args)))))
 
 (defn ekf-nd-fold
   "Fold a per-step gen function over T timesteps under multi-dim EKF handler.

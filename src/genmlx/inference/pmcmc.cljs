@@ -26,8 +26,8 @@
 (defn- build-constraints
   "Merge parameter values into an observation choicemap."
   [param-addrs param-vals observations]
-  (reduce (fn [cm [addr val]]
-            (cm/set-choice cm [addr] val))
+  (reduce (fn [acc [addr v]]
+            (cm/set-choice acc [addr] v))
           observations
           (map vector param-addrs param-vals)))
 
@@ -87,7 +87,7 @@
    model args]
   (let [burn (or burn n-samples)
         model (dyn/auto-key model)
-        extract (or extract-fn (fn [vals] (mapv mx/item vals)))
+        extract (or extract-fn (fn [vs] (mapv mx/item vs)))
         stds (if (number? proposal-std)
                (repeat (count param-addrs) proposal-std)
                proposal-std)

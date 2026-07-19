@@ -17,6 +17,7 @@
    smcp3 driver loop body exactly (same kernels, same order, same log-ml
    accumulation graph), so a stepped run equals the batch driver to float32
    noise (see steppable_test.cljs)."
+  (:refer-clojure :exclude [peek])
   (:require [genmlx.inference.smcp3 :as smcp3]
             [genmlx.inference.smc :as smc]
             [genmlx.inference.util :as u]

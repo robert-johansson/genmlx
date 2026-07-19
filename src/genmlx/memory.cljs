@@ -63,7 +63,7 @@
    is never itself a generative function."
   (:require [genmlx.serialize :as ser]
             [genmlx.trace :as tr]
-            [genmlx.vectorized :as vec]
+            [genmlx.vectorized :as vect]
             [clojure.string :as str]
             [cljs.reader :as reader]))
 
@@ -419,7 +419,7 @@
         score   (ser/data->value (:score data))
         weight  (ser/data->value (:weight data))
         args    (mapv ser/data->value (:args data))]
-    (vec/->VectorizedTrace gen-fn args choices score weight (:n-particles data) nil)))
+    (vect/->VectorizedTrace gen-fn args choices score weight (:n-particles data) nil)))
 
 ;; --- parameter store (named-key; overwrite semantics) ----------------------
 
@@ -447,7 +447,7 @@
   [v]
   (cond
     (record? v)     (deep-plain (into {} v))
-    (map? v)        (into {} (map (fn [[k val]] [k (deep-plain val)])) v)
+    (map? v)        (into {} (map (fn [[k mv]] [k (deep-plain mv)])) v)
     (set? v)        (into #{} (map deep-plain) v)
     (vector? v)     (mapv deep-plain v)
     (seq? v)        (mapv deep-plain v)

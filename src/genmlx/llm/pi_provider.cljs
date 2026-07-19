@@ -347,9 +347,9 @@
   [text sid-counter]
   (let [{:keys [calls errors]} (tc/parse-tool-calls text)]
     {:toolCalls (vec (map-indexed
-                      (fn [i {:keys [name args]}]
+                      (fn [i {tool-name :name :keys [args]}]
                         {:id (str "call_" sid-counter "_" (inc i))
-                         :name name
+                         :name tool-name
                          :arguments args
                          :status "ok"})
                       calls))

@@ -18,7 +18,8 @@
 
    Most ops are direct references to Rust NAPI exports (genmlx.rs).
    Rust's Either<&MxArray, f64> handles both array and JS number inputs,
-   so no type coercion is needed on the ClojureScript side.")
+   so no type coercion is needed on the ClojureScript side."
+  (:refer-clojure :exclude [abs flatten]))
 
 ;; =========================================================================
 ;; Module loading
@@ -718,7 +719,7 @@
 (defn ones
   ([sh]       (.ones c (clj->js sh)))
   ([sh dtype] (.ones c (clj->js sh) dtype)))
-(defn full [sh val] (.full c (clj->js sh) val))
+(defn full [sh v] (.full c (clj->js sh) v))
 (defn eye
   ([n]       (.eye c n))
   ([n dtype] (.eye c n nil nil dtype)))

@@ -62,13 +62,13 @@
 
 (defn- choice-val
   "The raw leaf value at a single-keyword address in a choicemap."
-  [cm addr]
-  (cm/get-value (cm/get-submap cm addr)))
+  [cmap addr]
+  (cm/get-value (cm/get-submap cmap addr)))
 
 (defn- choice-num
   "The realized numeric leaf value at a single-keyword address."
-  [cm addr]
-  (ev (choice-val cm addr)))
+  [cmap addr]
+  (ev (choice-val cmap addr)))
 
 (defn path->selection
   "Convert an address path like [:x] or [:inner :z] to a selection."
@@ -658,9 +658,9 @@
                (if (< (count addrs) 2)
                  true
                  (let [first-addr (first (first addrs))
-                       val (choice-val (:choices t) first-addr)
-                       partial (cm/choicemap first-addr val)
-                       {:keys [trace weight]} (p/generate model args partial)]
+                       v (choice-val (:choices t) first-addr)
+                       partial-constraints (cm/choicemap first-addr v)
+                       {:keys [trace weight]} (p/generate model args partial-constraints)]
                    (and (js/Number.isFinite (ev (:score trace)))
                         (js/Number.isFinite (ev weight)))))))}
 
@@ -2461,9 +2461,9 @@
   [report]
   (println (str "\nGFI Algebraic Theory: " (:n-laws report) " laws, "
                 (:n-trials report) " trials each\n"))
-  (doseq [{:keys [name from pass? passes fails theorem]} (:results report)]
+  (doseq [{law-name :name :keys [from pass? passes fails theorem]} (:results report)]
     (println (str (if pass? "  PASS " "  FAIL ")
-                  name
+                  law-name
                   " (" passes "/" (+ passes fails) ")"
                   "\n        " from
                   (if pass? "" (str "\n        " theorem)))))

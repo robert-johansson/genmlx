@@ -136,25 +136,25 @@
       (if (empty? unseen)
         comps
         (let [start (first unseen)
-              comp  (loop [stack [start] seen #{}]
-                      (if (empty? stack)
-                        seen
-                        (let [x (peek stack) stack' (pop stack)]
-                          (if (contains? seen x)
-                            (recur stack' seen)
-                            (recur (into stack' (get adj x)) (conj seen x))))))]
-          (recur (set/difference unseen comp)
-                 (conj comps {:nodes comp
-                              :latents (set/intersection comp priors)
-                              :obs (set/difference comp priors)
-                              :pairs (filterv #(contains? comp (:prior-addr %)) pairs)})))))))
+              component (loop [stack [start] seen #{}]
+                          (if (empty? stack)
+                            seen
+                            (let [x (peek stack) stack' (pop stack)]
+                              (if (contains? seen x)
+                                (recur stack' seen)
+                                (recur (into stack' (get adj x)) (conj seen x))))))]
+          (recur (set/difference unseen component)
+                 (conj comps {:nodes component
+                              :latents (set/intersection component priors)
+                              :obs (set/difference component priors)
+                              :pairs (filterv #(contains? component (:prior-addr %)) pairs)})))))))
 
 (defn- concern?
   "Is this component a regression-block concern (beyond the correct single-latent
    :direct scalar path)? True when ≥2 latents, or any dependency is affine."
-  [comp]
-  (or (>= (count (:latents comp)) 2)
-      (some #(= :affine (:type (:dependency-type %))) (:pairs comp))))
+  [component]
+  (or (>= (count (:latents component)) 2)
+      (some #(= :affine (:type (:dependency-type %))) (:pairs component))))
 
 (defn- mean-form [site] (first (:dist-args site)))
 (defn- sigma-form [site] (second (:dist-args site)))
@@ -208,9 +208,9 @@
    (read at runtime from :choices). Such residual noise latents must precede the
    block obs in dep-order, and are recorded as :noise-latents so the obs handlers
    inject their sampled values when evaluating the noise form."
-  [comp schema binding-env site-map dep-idx all-trace-addrs]
-  (let [latents (:latents comp)
-        obs     (:obs comp)
+  [component schema binding-env site-map dep-idx all-trace-addrs]
+  (let [latents (:latents component)
+        obs     (:obs component)
         latent-sites (map site-map latents)
         obs-sites    (map site-map obs)
         ;; latents ordered by dep-order; obs likewise
@@ -305,12 +305,12 @@
             dep-idx (into {} (map-indexed (fn [i a] [a i])) dep-order)
             all-trace-addrs (set (map :addr (:trace-sites schema)))]
         (reduce
-          (fn [acc comp]
+          (fn [acc component]
             (let [{:keys [eligible? block]}
-                  (eligible-block comp schema binding-env site-map dep-idx all-trace-addrs)]
+                  (eligible-block component schema binding-env site-map dep-idx all-trace-addrs)]
               (if eligible?
                 (update acc :blocks conj block)
-                (update acc :declined-addrs set/union (:nodes comp)))))
+                (update acc :declined-addrs set/union (:nodes component)))))
           {:blocks [] :declined-addrs #{}}
           comps)))))
 

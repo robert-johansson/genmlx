@@ -349,9 +349,9 @@
 (defn optimizer
   "Create an optimizer function: (fn [params grads] -> new-params).
    type: :sgd, :adam, or :adamw."
-  [type lr & {:as opts}]
+  [opt-type lr & {:as opts}]
   (let [opts (or opts {})]
-    (case type
+    (case opt-type
       :sgd   (sgd-step lr)
       :adam  (adam-step lr opts)
       :adamw (let [wd  (:weight-decay opts 0.01)

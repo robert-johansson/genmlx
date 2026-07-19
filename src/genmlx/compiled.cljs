@@ -17,7 +17,7 @@
                                           LOG-2PI LOG-2PI-HALF LOG-2 LOG-PI MLX-PI]]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]
-            [genmlx.vectorized :as vec]
+            [genmlx.vectorized :as vect]
             [genmlx.handler :as h]))
 
 ;; ---------------------------------------------------------------------------
@@ -134,8 +134,8 @@
         _ (mx/materialize! final-state states total-score)
         ;; Build choicemap from states tensor
         choices (reduce
-                 (fn [cm t]
-                   (cm/set-value cm (addr-fn t) (slice-row states t [state-dim])))
+                 (fn [acc t]
+                   (cm/set-value acc (addr-fn t) (slice-row states t [state-dim])))
                  cm/EMPTY
                  (range n-steps))]
     (tr/make-trace {:gen-fn nil :args [n-steps init-state]
@@ -220,7 +220,7 @@
                     ml-inc (mx/subtract (mx/logsumexp log-weights)
                                         (mx/scalar (js/Math.log n-particles)))
                     ;; 3. Resample (deterministic with pre-generated u0)
-                    indices (vec/systematic-resample-indices-deterministic
+                    indices (vect/systematic-resample-indices-deterministic
                              log-weights n-particles u0)
                     resampled (mx/take-idx new-states indices 0)]
                 (recur (inc t)
@@ -895,8 +895,8 @@
                    (step-fn state idx noise-array args-vec))
                  {:values init-values :score (mx/scalar 0.0)}
                  step-fns)
-         vals (mapv #(get (:values result) %) addrs)]
-     (to-array (conj vals (:score result))))))
+         site-vals (mapv #(get (:values result) %) addrs)]
+     (to-array (conj site-vals (:score result))))))
 
 (defn- unpack-result
   "Unpack a flat [v0 ... vN score] JS array (from run-site-steps) into

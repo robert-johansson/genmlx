@@ -220,11 +220,11 @@
    top of `prior` cached ones: row i attends to every cached column and to
    new columns j <= i. Broadcasts to [1 H seq prior+seq] inside SDPA.
    prior=0 gives the classic square causal mask."
-  ([seq dtype] (causal-mask seq 0 dtype))
-  ([seq prior dtype]
-   (let [flat (vec (for [i (range seq) j (range (+ prior seq))]
+  ([seq-len dtype] (causal-mask seq-len 0 dtype))
+  ([seq-len prior dtype]
+   (let [flat (vec (for [i (range seq-len) j (range (+ prior seq-len))]
                      (if (<= j (+ prior i)) 0.0 -1e9)))]
-     (mx/astype (mx/array flat [seq (+ prior seq)]) dtype))))
+     (mx/astype (mx/array flat [seq-len (+ prior seq-len)]) dtype))))
 
 (defn- mlp
   "SwiGLU MLP over the post-attention-normed hidden `hn`: down(silu(gate)·up)."
@@ -549,27 +549,28 @@
    Mirrors attention.rs::Qwen3_5Attention::forward. `b` is threaded from
    forward-hidden (one shape query per forward, genmlx-t2cz)."
   [cfg w prefix hn b T ce offset mask mrope]
-  (let [{:keys [n-heads n-kv-heads head-dim eps rope-theta partial]} cfg
+  (let [{partial-factor :partial
+         :keys [n-heads n-kv-heads head-dim eps rope-theta]} cfg
         H   n-heads
         Hkv n-kv-heads
         hd  head-dim
-        rope-dims (js/Math.floor (* hd partial))
+        rope-dims (js/Math.floor (* hd partial-factor))
         scale (js/Math.pow hd -0.5)
         g   (fn [s] (get w (str prefix s)))
         qg  (mx/reshape (linear hn (g "q_proj.weight")) [b T H (* 2 hd)])
         queries (slice-ax qg 4 3 0 hd)                          ; [B T H hd]
         gate    (mx/reshape (slice-ax qg 4 3 hd (* 2 hd)) [b T (* H hd)])
-        keys    (mx/reshape (linear hn (g "k_proj.weight")) [b T Hkv hd])
+        ks      (mx/reshape (linear hn (g "k_proj.weight")) [b T Hkv hd])
         values  (mx/reshape (linear hn (g "v_proj.weight")) [b T Hkv hd])
         queries (mx/rms-norm queries (g "q_norm.weight") eps)
-        keys    (mx/rms-norm keys    (g "k_norm.weight") eps)
+        ks      (mx/rms-norm ks      (g "k_norm.weight") eps)
         ;; transpose to [1 heads T hd], then rotate: 3-axis interleaved M-RoPE
         ;; over the partial dims (VLM prefill) or scalar-offset partial RoPE.
         rot (if mrope
               (fn [x] (mrope-apply x mrope hd))
               (fn [x] (mx/rope x rope-dims false rope-theta 1.0 offset)))
         q (rot (mx/transpose queries [0 2 1 3]))
-        k (rot (mx/transpose keys    [0 2 1 3]))
+        k (rot (mx/transpose ks      [0 2 1 3]))
         v (mx/transpose values [0 2 1 3])
         k-full (if ce (mx/concatenate [(:k ce) k] 2) k)        ; concat along seq
         v-full (if ce (mx/concatenate [(:v ce) v] 2) v)
@@ -700,9 +701,10 @@
    physical tokens already in `cache` (0 for the first chunk).
    Returns [logits new-cache]."
   [{:keys [config] :as model} h0 cache position-ids prior]
-  (let [{:keys [head-dim partial rope-theta mrope-section vocab]} config
+  (let [{partial-factor :partial
+         :keys [head-dim rope-theta mrope-section vocab]} config
         T     (count (first position-ids))
-        dims  (js/Math.floor (* head-dim partial))
+        dims  (js/Math.floor (* head-dim partial-factor))
         mrope (mrope-tables position-ids (or mrope-section [11 11 10]) dims rope-theta)
         [logits new-cache] (forward-hidden model h0 T cache 0 mrope prior)]
     [(mx/reshape logits [T vocab]) new-cache]))

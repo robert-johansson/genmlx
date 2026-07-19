@@ -205,7 +205,7 @@
                             :ekf-belief (or init-belief (kal/zero-belief n))}
                      param-store (assoc :param-store param-store))]
     (rt/run-handler transition init-state
-      (fn [rt] (apply (:body-fn gf) rt args)))))
+      (fn [runtime] (apply (:body-fn gf) runtime args)))))
 
 (defn ekf-fold
   "Fold a per-step gen function over T timesteps under the EKF handler.

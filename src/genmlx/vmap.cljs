@@ -90,14 +90,14 @@
 
 (defn- scalar-leaf?
   "Check if all leaves in a choicemap are scalar (not [N]-shaped)."
-  [cm]
+  [cmap]
   (cond
-    (= cm cm/EMPTY) true
-    (cm/has-value? cm)
-    (let [v (cm/get-value cm)]
+    (= cmap cm/EMPTY) true
+    (cm/has-value? cmap)
+    (let [v (cm/get-value cmap)]
       (or (not (mx/array? v)) (= [] (mx/shape v))))
-    (instance? cm/Node cm)
-    (every? (fn [[_ sub]] (scalar-leaf? sub)) (:m cm))
+    (instance? cm/Node cmap)
+    (every? (fn [[_ sub]] (scalar-leaf? sub)) (:m cmap))
     :else true))
 
 (defn- scalar-constraints?
@@ -134,8 +134,8 @@
 (defn- unstack-choices
   "Split a choicemap with [N]-shaped leaves into N scalar choicemaps.
    Scalar leaves are replicated to all N elements."
-  [cm n]
-  (cm/unstack-choicemap cm n mx/index scalar-value-leaf?))
+  [cmap n]
+  (cm/unstack-choicemap cmap n mx/index scalar-value-leaf?))
 
 (defn- stack-retvals
   "Stack N return values into a single value."

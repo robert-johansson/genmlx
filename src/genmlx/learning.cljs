@@ -21,14 +21,14 @@
 
 (defn get-param
   "Get a parameter value from the store."
-  [store name]
-  (get-in store [:params name]))
+  [store pname]
+  (get-in store [:params pname]))
 
 (defn set-param
   "Set a parameter value in the store."
-  [store name value]
+  [store pname value]
   (-> store
-      (assoc-in [:params name] (if (mx/array? value) value (mx/scalar value)))
+      (assoc-in [:params pname] (if (mx/array? value) value (mx/scalar value)))
       (update :version inc)))
 
 (defn update-params
@@ -51,8 +51,8 @@
 (defn array->params
   "Unflatten a 1-D MLX array back into named parameters."
   [arr names]
-  (into {} (map-indexed (fn [i name]
-                          [name (mx/index arr i)])
+  (into {} (map-indexed (fn [i pname]
+                          [pname (mx/index arr i)])
                         names)))
 
 ;; ---------------------------------------------------------------------------
@@ -185,8 +185,8 @@
   "Build a guide choicemap by setting each address from params, where the
    address's position in the addresses vector is its index into params."
   [params addresses]
-  (reduce-kv (fn [cm i addr]
-               (cm/set-choice cm [addr] (mx/index params i)))
+  (reduce-kv (fn [acc i addr]
+               (cm/set-choice acc [addr] (mx/index params i)))
              cm/EMPTY addresses))
 
 (defn wake-phase-loss

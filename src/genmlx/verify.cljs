@@ -201,8 +201,8 @@
    :halting-trial-error, not non-termination."
   [gf args n-trials key]
   (try
-    (let [keys (rng/split-n key n-trials)]
-      (doseq [k keys]
+    (let [ks (rng/split-n key n-trials)]
+      (doseq [k ks]
         (p/simulate (dyn/with-key gf k) args))
       [])
     (catch :default e

@@ -1121,8 +1121,8 @@
   [current-trace addr support-values key]
   (let [gf (:gen-fn current-trace)
         ;; For each candidate value, compute model score
-        log-scores (mapv (fn [val]
-                           (:score (:trace (p/update gf current-trace (cm/choicemap addr val)))))
+        log-scores (mapv (fn [v]
+                           (:score (:trace (p/update gf current-trace (cm/choicemap addr v)))))
                          support-values)
         ;; Normalize via log-softmax
         log-scores-arr (mx/array (mapv mx/realize log-scores))
@@ -1151,12 +1151,12 @@
     (kern/collect-samples
      {:samples samples :burn burn :thin thin :callback callback :key key}
      (fn [state step-key]
-       (let [keys (rng/split-n (rng/ensure-key step-key) (count schedule))
+       (let [ks (rng/split-n (rng/ensure-key step-key) (count schedule))
              new-trace (reduce (fn [t [spec ki]]
                                  (gibbs-step-with-support
                                   t (:addr spec) (:support spec) ki))
                                state
-                               (map vector schedule keys))]
+                               (map vector schedule ks))]
          {:state new-trace :accepted? true}))
      identity
      trace)))
@@ -2759,8 +2759,8 @@
             ;; Break lazy graph — proposal needed for trace update below
             _ (mx/materialize! f')
             ;; Update trace at selected addresses
-            constraints (reduce (fn [cm [i addr]]
-                                  (cm/set-choice cm [addr] (mx/index f' i)))
+            constraints (reduce (fn [acc [i addr]]
+                                  (cm/set-choice acc [addr] (mx/index f' i)))
                                 cm/EMPTY (map-indexed vector addrs))
             {:keys [trace]} (p/update gf current-trace constraints)
             new-score (mx/realize (:score trace))
@@ -2832,21 +2832,21 @@
            ;; Reconstruct final choicemap from params
                  (let [final-cm (if latent-index
                             ;; Tensor-native: unpack using latent-index ordering
-                                  (reduce (fn [cm [addr idx]]
-                                            (cm/set-choice cm [addr] (mx/index params idx)))
+                                  (reduce (fn [acc [addr idx]]
+                                            (cm/set-choice acc [addr] (mx/index params idx)))
                                           observations
                                           latent-index)
                             ;; GFI fallback: unpack using layout/addresses
                                   (if (:array-valued? layout)
-                                    (reduce (fn [cm {:keys [addr shape offset size]}]
+                                    (reduce (fn [acc {:keys [addr shape offset size]}]
                                               (let [v (if (= size 1)
                                                         (mx/index params offset)
                                                         (mx/reshape (mx/slice params offset (+ offset size)) shape))]
-                                                (cm/set-choice cm [addr] v)))
+                                                (cm/set-choice acc [addr] v)))
                                             observations
                                             (:layout layout))
-                                    (reduce (fn [cm [j addr]]
-                                              (cm/set-choice cm [addr] (mx/index params j)))
+                                    (reduce (fn [acc [j addr]]
+                                              (cm/set-choice acc [addr] (mx/index params j)))
                                             observations
                                             (map-indexed vector addresses))))
                        {:keys [trace]} (p/generate model args final-cm)
@@ -2922,8 +2922,8 @@
                                  best-params-raw)
                    best-score (if scalar? (mx/item final-scores) (mx/item (mx/index final-scores best-idx)))
                  ;; Reconstruct trace from best params
-                   final-cm (reduce (fn [cm [j addr]]
-                                      (cm/set-choice cm [addr] (mx/index best-params j)))
+                   final-cm (reduce (fn [acc [j addr]]
+                                      (cm/set-choice acc [addr] (mx/index best-params j)))
                                     observations
                                     (map-indexed vector addresses))
                    {:keys [trace]} (p/generate model args final-cm)]

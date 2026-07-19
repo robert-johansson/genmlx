@@ -21,6 +21,7 @@
    - All free trace sites must have finite discrete support (dist-support)
    - Model must not use mx/item or scalar if/when on traced values
    - Same constraints as vsimulate (shape-based batching)"
+  (:refer-clojure :exclude [pr])
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.choicemap :as cm]
@@ -592,8 +593,8 @@
    Used with the bernoulli conditioning trick: (trace addr (dist/bernoulli mask)).
    Merges with existing constraints."
   [constraints condition-addrs]
-  (reduce (fn [cm addr]
-            (cm/merge-cm cm (cm/choicemap addr (mx/scalar 1))))
+  (reduce (fn [acc addr]
+            (cm/merge-cm acc (cm/choicemap addr (mx/scalar 1))))
           (or constraints cm/EMPTY)
           condition-addrs))
 

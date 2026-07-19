@@ -130,8 +130,8 @@
               ;; Handler path — gradients flow through the generate weight
               ;; (one connected lazy graph; the volatile! is host-side only)
               (let [obs (observations-fn data)
-                    constraints (reduce (fn [cm [i addr]]
-                                          (cm/set-choice cm [addr] (mx/index values i)))
+                    constraints (reduce (fn [acc [i addr]]
+                                          (cm/set-choice acc [addr] (mx/index values i)))
                                         obs
                                         (map-indexed vector latent-addrs))
                     model-args (model-args-fn data)
@@ -159,14 +159,15 @@
      :shuffle     shuffle dataset at epoch boundaries (default true when batch-size > 1)
 
    Returns vector of loss values (JS numbers)."
-  [encoder loss-fn dataset & {:keys [iterations optimizer lr batch-size shuffle]
-                               :or {iterations 300 optimizer :adam lr 0.01
-                                    batch-size 1}}]
+  [encoder loss-fn dataset & {shuffle-opt :shuffle
+                              :keys [iterations optimizer lr batch-size]
+                              :or {iterations 300 optimizer :adam lr 0.01
+                                   batch-size 1}}]
   (let [enc-ref  (ensure-ref encoder)
-        shuffle? (if (some? shuffle) shuffle (> batch-size 1))
+        shuffle? (if (some? shuffle-opt) shuffle-opt (> batch-size 1))
         n        (count dataset)
         opt      (nn/optimizer optimizer lr)
-        shuffled-order (fn [] (vec (clojure.core/shuffle (range n))))]
+        shuffled-order (fn [] (vec (shuffle (range n))))]
     (if (<= batch-size 1)
       ;; Single-sample mode
       (let [vg (nn/value-and-grad enc-ref loss-fn)]

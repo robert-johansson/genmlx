@@ -496,10 +496,10 @@
         key (rng/ensure-key key)
         alpha-vals (mx/->clj alpha)
         k (count alpha-vals)
-        keys (rng/split-n key k)
+        ks (rng/split-n key k)
         ;; Sample k gamma arrays, each [n], then stack to [k n]
         gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a ONE ki n))
-                               alpha-vals keys))
+                               alpha-vals ks))
         ;; gammas is [k n], sum along axis 0 -> [n], then transpose and divide
         totals (mx/sum gammas [0])]
     ;; Result shape [n k]: transpose [k n] -> [n k]
@@ -890,13 +890,13 @@
   (sample [key]
           (let [alpha-vals (mx/->clj alpha)
                 k (count alpha-vals)
-                keys (rng/split-n key k)
+                ks (rng/split-n key k)
                 ;; Call gamma-sample-scalar directly: it already returns a host
                 ;; float, so the old (dist-sample → mx/scalar wrap → mx/realize)
                 ;; round-tripped a value we already had on the host — one wasted
                 ;; GPU eval per component, k per Dirichlet draw (genmlx-3rkq).
                 gammas (mapv (fn [a ki] (gamma-sample-scalar (mx/scalar a) ONE ki))
-                             alpha-vals keys)
+                             alpha-vals ks)
                 total (reduce + gammas)
                 normalized (mapv #(/ % total) gammas)]
             (mx/array normalized)))
@@ -1132,11 +1132,11 @@
   [n-trials p]
   (sample [key]
           (let [nt (int (mx/realize n-trials))
-                keys (rng/split-n key nt)
+                ks (rng/split-n key nt)
                 successes (reduce (fn [acc ki]
                                     (let [u (mx/realize (rng/uniform ki []))]
                                       (if (< u (mx/realize p)) (inc acc) acc)))
-                                  0 keys)]
+                                  0 ks)]
             (mx/scalar successes)))
   (log-prob [v]
     ;; log C(n, k) + k*log(p) + (n-k)*log(1-p)
@@ -1485,7 +1485,7 @@
         key (rng/ensure-key key)
         ;; Pre-split enough keys for all samples: k diagonal + k*(k-1)/2 off-diagonal
         n-keys (+ k (quot (* k (dec k)) 2))
-        keys (rng/split-n key n-keys)
+        ks (rng/split-n key n-keys)
         ;; Build lower-triangular A (Bartlett decomposition)
         ;; Diagonal: A_ii ~ sqrt(chi²(df - i + 1)), chi²(n) = Gamma(n/2, 1/2)
         ;; Off-diagonal: A_ij ~ N(0,1)
@@ -1501,10 +1501,10 @@
                       (let [chi2-df (- df i)
                             g (dc/dist-sample (gamma-dist (mx/scalar (/ chi2-df 2.0))
                                                           ONE)
-                                              (nth keys ki))]
+                                              (nth ks ki))]
                         [(conj cols (mx/sqrt (mx/multiply TWO g))) (inc ki)])
                       (> i j) ;; below diagonal: N(0,1)
-                      [(conj cols (rng/normal (nth keys ki) [])) (inc ki)]
+                      [(conj cols (rng/normal (nth ks ki) [])) (inc ki)]
                       :else ;; above diagonal: 0
                       [(conj cols ZERO) ki]))
                   [[] ki]
@@ -1728,8 +1728,8 @@
 
 (defmethod dc/dist-sample-n* :wrapped-cauchy [d key n]
   (let [key (rng/ensure-key key)
-        keys (rng/split-n key n)]
-    (mx/stack (mapv #(dc/dist-sample d %) keys))))
+        ks (rng/split-n key n)]
+    (mx/stack (mapv #(dc/dist-sample d %) ks))))
 
 ;; ---------------------------------------------------------------------------
 ;; Wrapped Normal — Gaussian wrapped onto circle
@@ -1795,8 +1795,8 @@
   (let [{:keys [base-dist t]} (:params d)
         key (rng/ensure-key key)
         ;; Sample T values independently via split keys
-        keys (rng/split-n key t)
-        samples (mx/stack (mapv #(dc/dist-sample base-dist %) keys))
+        ks (rng/split-n key t)
+        samples (mx/stack (mapv #(dc/dist-sample base-dist %) ks))
         ;; samples shape: [T] for scalar params, [T, N] for [N]-shaped params
         ;; We need [T] or [N, T] respectively
         ndim (count (mx/shape samples))]
@@ -1806,10 +1806,10 @@
       ;; [T] — scalar mode, already correct
       samples)))
 
-(defmethod dc/dist-log-prob :iid [d vals]
+(defmethod dc/dist-log-prob :iid [d vs]
   (let [{:keys [base-dist]} (:params d)            ; t unused here (genmlx-21kt)
-        vals (mx/ensure-array vals)
-        val-shape (mx/shape vals)
+        vs (mx/ensure-array vs)
+        val-shape (mx/shape vs)
         ndim (count val-shape)
         ;; Compute element-wise log-probs via base dist.
         ;; Broadcasting handles all shape combinations:
@@ -1818,7 +1818,7 @@
         ;;   vals [T], params [N,T] → lps [N,T] (broadcast [T] with [N,T])
         ;;   vals [N,T], params scalar → lps [N,T]
         ;;   vals [N,T], params [N,T] → lps [N,T]
-        element-lps (dc/dist-log-prob base-dist vals)]
+        element-lps (dc/dist-log-prob base-dist vs)]
     ;; Sum over the T dimension (last axis) to get per-particle log-prob.
     (mx/sum element-lps -1)))
 
@@ -1849,12 +1849,12 @@
 (defmethod dc/dist-reparam :iid [d key]
   (let [{:keys [base-dist t]} (:params d)
         key (rng/ensure-key key)
-        keys (rng/split-n key t)
+        ks (rng/split-n key t)
         ;; Mirror dist-sample* :iid exactly: [T,N] -> [N,T] for [N]-batched base
         ;; params so reparam values are laid out [N,T] like the sampling path,
         ;; not transposed (which would mis-pair particles with scores). No-op for
         ;; the scalar [T] case (genmlx-exw9).
-        stacked (mx/stack (mapv #(dc/dist-reparam base-dist %) keys))]
+        stacked (mx/stack (mapv #(dc/dist-reparam base-dist %) ks))]
     (if (> (count (mx/shape stacked)) 1)
       (mx/transpose stacked)
       stacked)))
@@ -1884,19 +1884,19 @@
         noise (rng/normal key [t])]
     (mx/add mu (mx/multiply sigma noise))))
 
-(defmethod dc/dist-log-prob :iid-gaussian [d vals]
+(defmethod dc/dist-log-prob :iid-gaussian [d vs]
   (let [{:keys [mu sigma]} (:params d)
-        vals (mx/ensure-array vals)
+        vs (mx/ensure-array vs)
         ;; Handle broadcasting for batched case
         mu-shape (mx/shape mu)
-        val-shape (mx/shape vals)
+        val-shape (mx/shape vs)
         [vals-bc mu-bc]
         (cond
           ;; Both 1D, different lengths: outer-product case (vgenerate constraint)
           (and (= (count val-shape) 1)
                (= (count mu-shape) 1)
                (not= (first val-shape) (first mu-shape)))
-          [(mx/reshape vals [1 (first val-shape)])
+          [(mx/reshape vs [1 (first val-shape)])
            (mx/expand-dims mu -1)]
 
           ;; vals 2D, mu 1D matching first axis: batched with scalar mu
@@ -1904,11 +1904,11 @@
                (> (count val-shape) 1)
                (= (first mu-shape) (first val-shape))
                (not= (first mu-shape) (last val-shape)))
-          [vals (mx/expand-dims mu -1)]
+          [vs (mx/expand-dims mu -1)]
 
           ;; All other cases: natural broadcasting works
           :else
-          [vals mu])
+          [vs mu])
         z (mx/divide (mx/subtract vals-bc mu-bc) sigma)
         element-lps (mx/negative
                      (mx/add LOG-2PI-HALF

@@ -30,12 +30,12 @@
    declared-check shape [{:name n :params [{:name p}...]}], name-sorted —
    an honest stand-in when the deployed tool declarations are not passed."
   [points]
-  (let [calls (mapcat (fn [{:keys [prompt meta]}]
+  (let [calls (mapcat (fn [{m :meta :keys [prompt]}]
                         (concat (mapcat :toolCalls prompt)
-                                (:toolCalls (:completion meta))))
+                                (:toolCalls (:completion m))))
                       points)
-        by-name (reduce (fn [acc {:keys [name arguments]}]
-                          (update acc name (fnil into #{})
+        by-name (reduce (fn [acc {tool-name :name :keys [arguments]}]
+                          (update acc tool-name (fnil into #{})
                                   (keys (js->clj (js/JSON.parse
                                                   (or arguments "{}"))))))
                         {} calls)]
@@ -67,8 +67,8 @@
   (into {} (map (fn [[k v]] [(str k) (str v)])) m))
 
 (defn- administered-calls [completion-msg]
-  (mapv (fn [{:keys [name arguments]}]
-          {:name name
+  (mapv (fn [{tool-name :name :keys [arguments]}]
+          {:name tool-name
            :args (norm-args (js->clj (js/JSON.parse (or arguments "{}"))))})
         (:toolCalls completion-msg)))
 
@@ -93,8 +93,8 @@
          reward-floor
          (let [admin (administered-calls (:completion prov))
                {:keys [calls errors]} (tc/parse-tool-calls (str completion))
-               regen (mapv (fn [{:keys [name args]}]
-                             {:name name :args (norm-args args)})
+               regen (mapv (fn [{tool-name :name :keys [args]}]
+                             {:name tool-name :args (norm-args args)})
                            calls)]
            (if (seq errors)
              reward-floor

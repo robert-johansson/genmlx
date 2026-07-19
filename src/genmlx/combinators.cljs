@@ -22,8 +22,8 @@
 (defn- assemble-choices
   "Reduce indexed results into a choice map, extracting choices via `choices-fn`."
   [results choices-fn]
-  (reduce (fn [cm [i r]]
-            (cm/set-choice cm [i] (choices-fn r)))
+  (reduce (fn [acc [i r]]
+            (cm/set-choice acc [i] (choices-fn r)))
           cm/EMPTY
           (map-indexed vector results)))
 
@@ -109,11 +109,11 @@
    discard under a compacted (wrong) index, breaking backward-request
    reversibility (genmlx-v740)."
   [results]
-  (reduce (fn [cm [i r]]
+  (reduce (fn [acc [i r]]
             (let [d (:discard r)]
               (if (and d (not= d cm/EMPTY))
-                (cm/set-choice cm [i] d)
-                cm)))
+                (cm/set-choice acc [i] d)
+                acc)))
           cm/EMPTY
           (map-indexed vector results)))
 
@@ -233,10 +233,10 @@
                           elem-args (mapv #(nth % i) args)
                           result (csim k1 (vec elem-args))]
                       (recur (inc i) k2 (conj acc result)))))
-        choices (reduce (fn [cm [i r]]
-                          (reduce-kv (fn [cm2 addr val]
-                                       (cm/set-choice cm2 [i addr] val))
-                                     cm (:values r)))
+        choices (reduce (fn [acc [i r]]
+                          (reduce-kv (fn [acc2 addr v]
+                                       (cm/set-choice acc2 [i addr] v))
+                                     acc (:values r)))
                         cm/EMPTY (map-indexed vector results))
         retvals (mapv :retval results)
         score (sum-field results :score)
@@ -695,8 +695,8 @@
         {:trace trace :weight ZERO :discard cm/EMPTY}
         ;; Build prefix from old trace (steps 0..first-changed-1)
         (let [prefix-choices (if (pos? first-changed)
-                               (reduce (fn [cm t]
-                                         (cm/set-choice cm [t] (cm/get-submap choices t)))
+                               (reduce (fn [acc t]
+                                         (cm/set-choice acc [t] (cm/get-submap choices t)))
                                        cm/EMPTY (range first-changed))
                                cm/EMPTY)
               prefix-score (if (pos? first-changed)
@@ -1482,8 +1482,8 @@
     {:choices (if leaf?
                 (cm/->Value (mx/stack (mapv #(cm/get-value (:choices %)) traces)))
                 (let [addrs (cm/addresses first-choices)]
-                  (reduce (fn [cm addr-path]
-                            (cm/set-choice cm addr-path
+                  (reduce (fn [acc addr-path]
+                            (cm/set-choice acc addr-path
                                            (mx/stack (mapv #(cm/get-choice (:choices %) addr-path) traces))))
                           cm/EMPTY addrs)))
      :score (mx/stack (mapv :score traces))
@@ -1514,26 +1514,26 @@
         combined-choices
         (if leaf?
           ;; Distribution branches: combine leaf values
-          (let [vals (mapv #(cm/get-value (:choices %)) branch-data)
+          (let [vs (mapv #(cm/get-value (:choices %)) branch-data)
                 combined (reduce-kv
                           (fn [acc i v]
                             (if (zero? i) acc
                                 (mx/where (idx-mask index i) v acc)))
-                          (first vals) vals)]
+                          (first vs) vs)]
             (cm/->Value combined))
           ;; GF branches: combine per-address
           (let [all-addrs (into #{} (mapcat #(cm/addresses (:choices %)) branch-data))]
             (reduce
-             (fn [cm addr-path]
-               (let [vals (mapv #(cm/get-choice (:choices %) addr-path)
-                                branch-data)
+             (fn [cmap addr-path]
+               (let [vs (mapv #(cm/get-choice (:choices %) addr-path)
+                              branch-data)
                      combined (reduce-kv
                                (fn [acc i v]
                                  (if (or (zero? i) (nil? v)) acc
                                      (mx/where (idx-mask index i) v acc)))
-                               (or (first vals) (mx/zeros [n-val]))
-                               vals)]
-                 (cm/set-choice cm addr-path combined)))
+                               (or (first vs) (mx/zeros [n-val]))
+                               vs)]
+                 (cm/set-choice cmap addr-path combined)))
              cm/EMPTY all-addrs)))
         ;; Combine scores using where
         combined-score (reduce-kv
@@ -1796,8 +1796,8 @@
         {:trace trace :weight ZERO :discard cm/EMPTY}
         ;; Build prefix from old trace (steps 0..first-changed-1)
         (let [prefix-choices (if (pos? first-changed)
-                               (reduce (fn [cm t]
-                                         (cm/set-choice cm [t] (cm/get-submap choices t)))
+                               (reduce (fn [acc t]
+                                         (cm/set-choice acc [t] (cm/get-submap choices t)))
                                        cm/EMPTY (range first-changed))
                                cm/EMPTY)
               prefix-score (if (pos? first-changed)
@@ -2878,8 +2878,8 @@
                          :else (recur (inc t))))
                      0)
           prefix-choices (if (pos? boundary)
-                           (reduce (fn [cm t]
-                                     (cm/set-choice cm [t] (cm/get-submap choices t)))
+                           (reduce (fn [acc t]
+                                     (cm/set-choice acc [t] (cm/get-submap choices t)))
                                    cm/EMPTY (range boundary))
                            cm/EMPTY)
           prefix-score (if (pos? boundary)
@@ -2977,8 +2977,8 @@
                          :else (recur (inc t))))
                      0)
           prefix-choices (if (pos? boundary)
-                           (reduce (fn [cm t]
-                                     (cm/set-choice cm [t] (cm/get-submap choices t)))
+                           (reduce (fn [acc t]
+                                     (cm/set-choice acc [t] (cm/get-submap choices t)))
                                    cm/EMPTY (range boundary))
                            cm/EMPTY)
           prefix-score (if (pos? boundary)

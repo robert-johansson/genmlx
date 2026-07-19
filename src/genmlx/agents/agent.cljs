@@ -144,8 +144,8 @@ the softmax policy uniform; alpha = ##Inf belongs in recursive-eu-inf)."
                         u
                         (+ u (* gamma
                                 (reduce-kv
-                                  (fn [acc s' pr]
-                                    (if (pos? pr) (+ acc (* pr (soft-v s' (dec t)))) acc))
+                                  (fn [acc s' prob]
+                                    (if (pos? prob) (+ acc (* prob (soft-v s' (dec t)))) acc))
                                   0.0 (get-in Th [s a]))))))))]
     (reset! eu-atom eu)
     {:eu eu :soft-v soft-v}))
@@ -165,8 +165,8 @@ the softmax policy uniform; alpha = ##Inf belongs in recursive-eu-inf)."
                  (if (or (terms s) (<= t 1))
                    u
                    (+ u (* gamma (reduce-kv
-                                   (fn [acc s' pr]
-                                     (if (pos? pr) (+ acc (* pr (max-v s' (dec t)))) acc))
+                                   (fn [acc s' prob]
+                                     (if (pos? prob) (+ acc (* prob (max-v s' (dec t)))) acc))
                                    0.0 (get-in Th [s a]))))))))]
     (reset! eu-atom eu)
     {:eu eu :soft-v max-v}))

@@ -13,7 +13,7 @@
      (gen-structured model-map schema opts) -> DynamicGF over [prompt-ids max-bytes]
      (sample   model-map schema prompt-ids opts)        -> {:value :text :trace}
      (score    model-map schema prompt-ids value opts)  -> {:logp :text :conforms?}
-     (generate model-map schema prompt-ids partial opts)-> {:value :weight :text ...}
+     (generate model-map schema prompt-ids partial-value opts)-> {:value :weight :text ...}
 
    Scoring contract (documents genmlx-h2ki): `:logp` is the log-density of the
    value under the SCHEMA-CONSTRAINED byte GF — i.e. the sum over bytes of the
@@ -163,7 +163,7 @@
 
 (defn generate
   "Condition the structured GF on a partial value: fix the fields given in
-   `partial` (a map keyed like the schema), sample the rest from the model
+   `partial-value` (a map keyed like the schema), sample the rest from the model
    constrained to the schema, and return the importance weight.
 
    Because the model is autoregressive and the fixed-field bytes are forced in
@@ -173,20 +173,20 @@
 
    Returns {:value :weight :text :trace :base-logp :cond-logp :ok?}.
    prompt-ids: pre-encoded. opts: :max-bytes (256), :trie (shared)."
-  ([model-map schema prompt-ids partial] (generate model-map schema prompt-ids partial {}))
-  ([model-map schema prompt-ids partial opts]
+  ([model-map schema prompt-ids partial-value] (generate model-map schema prompt-ids partial-value {}))
+  ([model-map schema prompt-ids partial-value opts]
    (let [{:keys [model]} model-map
          trie        (prepared-trie model-map opts)
          opts*       (assoc opts :trie trie)
-         cond-schema (sg/constrain-schema schema partial)
+         cond-schema (sg/constrain-schema schema partial-value)
          base-dfa    (grammar/compile-regex (sg/schema->regex schema))
          cond-dfa    (grammar/compile-regex (sg/schema->regex cond-schema))
          max-bytes   (:max-bytes opts 256)
          tr          (p/simulate (gen-structured model-map cond-schema opts*) [prompt-ids max-bytes])
          text        (apply str (:retval tr))
-         {:keys [base cond]} (dual-density model trie prompt-ids text base-dfa cond-dfa)
+         {base :base cond-lp :cond} (dual-density model trie prompt-ids text base-dfa cond-dfa)
          parsed      (sg/parse-and-validate schema text)]
-     (merge {:weight (- base cond) :base-logp base :cond-logp cond :text text :trace tr}
+     (merge {:weight (- base cond-lp) :base-logp base :cond-logp cond-lp :text text :trace tr}
             parsed))))
 
 ;; ============================================================

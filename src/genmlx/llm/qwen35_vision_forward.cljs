@@ -102,8 +102,8 @@
                               (/ 1.0 (js/Math.pow theta (/ (* 2 i) half)))))
                        [1 quarter] mx/float32)
         max-size (reduce max 1 (mapcat (fn [[_ h w]] [h w]) grids))
-        seq  (mx/reshape (mx/astype (mx/arange 0 max-size) mx/float32) [max-size 1])
-        freqs (mx/multiply seq inv)                       ; [max, quarter]
+        positions (mx/reshape (mx/astype (mx/arange 0 max-size) mx/float32) [max-size 1])
+        freqs (mx/multiply positions inv)                 ; [max, quarter]
         h-ids (vec (mapcat (fn [[t h w]]
                              (apply concat (repeat t (for [i (range (* h w))] (quot i w)))))
                            grids))

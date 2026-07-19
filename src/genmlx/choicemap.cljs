@@ -199,7 +199,7 @@
    Each key becomes a top-level Value entry."
   [m]
   (reduce-kv
-    (fn [cm addr val] (set-value cm addr val))
+    (fn [cm addr v] (set-value cm addr v))
     EMPTY
     m))
 

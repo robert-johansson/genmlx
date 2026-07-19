@@ -140,9 +140,9 @@
                         u
                         (+ u (* gamma
                                 (reduce-kv
-                                  (fn [acc s' pr]
-                                    (if (pos? pr)
-                                      (+ acc (* pr (backup s' (dec t) (inc d) (pd-fn d))))
+                                  (fn [acc s' prob]
+                                    (if (pos? prob)
+                                      (+ acc (* prob (backup s' (dec t) (inc d) (pd-fn d))))
                                       acc))
                                   0.0 (get-in Th [s a]))))))))]
     (reset! eu-atom eu)
@@ -178,9 +178,9 @@
         {:keys [eu]} (if (= alpha ##Inf) (biased-eu-inf mdp biasm) (biased-eu mdp biasm))
         H      n-iters
         A      (:A mdp)
-        eu-row (fn [s] (mapv (fn [a] (eu s a H 0)) (range A)))
+        row-of (fn [s] (mapv (fn [a] (eu s a H 0)) (range A)))
         policy (gen [s] (trace :action
-                               (h/softmax-action alpha (mx/array (clj->js (eu-row s)) mx/float32))))]
+                               (h/softmax-action alpha (mx/array (clj->js (row-of s)) mx/float32))))]
     {:mdp mdp
      :policy policy
      ;; 2-arity like agent/make-mdp-agent: (act s) draws fresh entropy, (act s key)
@@ -558,9 +558,9 @@
                         u
                         (+ u (* gamma
                                 (reduce-kv
-                                  (fn [acc s' pr]
-                                    (if (pos? pr)
-                                      (+ acc (* pr
+                                  (fn [acc s' prob]
+                                    (if (pos? prob)
+                                      (+ acc (* prob
                                                 ;; expectation over the observation at s'
                                                 (reduce-kv
                                                   (fn [acc2 o po]
@@ -609,11 +609,11 @@
                         z   (reduce + raw)]
                     (assert (pos? z) "make-biased-pomdp-agent: :prior must have positive total mass")
                     (mapv #(/ % z) raw))
-        eu-row    (fn [bvec s] (mapv #(eu bvec s % H 0) (range A)))
+        row-of    (fn [bvec s] (mapv #(eu bvec s % H 0) (range A)))
         ;; action selection through the GFI, mirroring make-biased-mdp-agent: a
         ;; softmax(alpha·EU) policy — Boltzmann at finite alpha, argmax at ##Inf.
         policy    (gen [bvec s] (trace :action
-                                       (h/softmax-action alpha (mx/array (clj->js (eu-row bvec s)) mx/float32))))
+                                       (h/softmax-action alpha (mx/array (clj->js (row-of bvec s)) mx/float32))))
         act       (fn [bvec s] (int (mx/item (:retval (p/simulate (dyn/auto-key policy) [bvec s])))))]
     {:worlds worlds :prior prior :prior-vec prior-vec :observe observe :signpost signpost
      :start-idx (:start-idx m0) :T T :terminals (:terminals m0)

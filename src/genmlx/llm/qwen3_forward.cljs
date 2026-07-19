@@ -341,9 +341,9 @@
 
 (defn- causal-mask
   "Additive causal mask [seq seq]: 0 on/below the diagonal, large-negative above."
-  [seq dtype]
-  (let [flat (vec (for [i (range seq) j (range seq)] (if (<= j i) 0.0 -1e9)))]
-    (mx/astype (mx/array flat [seq seq]) dtype)))
+  [seq-len dtype]
+  (let [flat (vec (for [i (range seq-len) j (range seq-len)] (if (<= j i) 0.0 -1e9)))]
+    (mx/astype (mx/array flat [seq-len seq-len]) dtype)))
 
 (defn- linear
   "HF Linear with no bias: y = x W^T (W is [out, in]). Wᵀ comes from the
@@ -364,12 +364,12 @@
   (let [B     (first (mx/shape hn))
         g     (fn [s] (get w (str prefix s)))
         scale (/ 1.0 (js/Math.sqrt head-dim))
-        proj-heads (fn [name nh norm?]
-                     (let [t (-> (linear hn (g (str name "_proj.weight")))
+        proj-heads (fn [pname nh norm?]
+                     (let [t (-> (linear hn (g (str pname "_proj.weight")))
                                  (mx/reshape [B T nh head-dim])
                                  (mx/transpose [0 2 1 3]))]      ; [B nh T d]
                        (if norm?
-                         (-> t (mx/rms-norm (g (str name "_norm.weight")) eps)
+                         (-> t (mx/rms-norm (g (str pname "_norm.weight")) eps)
                                (mx/rope head-dim false rope-theta 1.0 offset))
                          t)))
         q (proj-heads "q" n-heads true)
@@ -426,12 +426,12 @@
    attends to the whole cache unmasked. Returns [logits new-cache] where logits
    is [seq vocab]."
   [{:keys [config weights] :as model} token-ids cache offset]
-  (let [seq   (count token-ids)
-        ids   (mx/array (vec token-ids) [1 seq] mx/int32)
+  (let [seq-len (count token-ids)
+        ids   (mx/array (vec token-ids) [1 seq-len] mx/int32)
         embed (get weights "model.embed_tokens.weight")
         h0    (mx/take-idx embed ids 0)                          ; [1 seq hidden]
-        [logits new-cache] (forward-hidden model h0 seq cache offset)]
-    [(mx/reshape logits [seq (:vocab config)]) new-cache]))
+        [logits new-cache] (forward-hidden model h0 seq-len cache offset)]
+    [(mx/reshape logits [seq-len (:vocab config)]) new-cache]))
 
 (defn step-batched
   "Advance K lockstep lanes one token each from a [K …]-shaped `cache`

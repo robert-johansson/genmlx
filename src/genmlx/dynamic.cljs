@@ -11,13 +11,13 @@
             [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.selection :as sel]
-            [genmlx.vectorized :as vec]
+            [genmlx.vectorized :as vect]
             [genmlx.edit :as edit]
             [genmlx.diff :as diff]
             [genmlx.schema :as schema]
             [genmlx.compiled :as compiled]
             [genmlx.compiled-ops :as cops]
-            [genmlx.conjugacy :as conj]
+            [genmlx.conjugacy :as cnj]
             [genmlx.rewrite :as rewrite]
             [genmlx.linear-gaussian :as lg]
             [genmlx.inference.auto-analytical :as auto]
@@ -633,7 +633,7 @@
                  (fn [rt] (run-body gf rt (:args trace))))
         regen-result (make-regen-result gf trace result old-score)]
     (if (analytical-fired? result)
-      (clojure.core/update regen-result :trace tr/with-score-type :marginal)
+      (update regen-result :trace tr/with-score-type :marginal)
       regen-result)))
 
 (defn- run-update-analytical
@@ -668,7 +668,7 @@
                         (mx/subtract (:weight result) (:score trace))
                         (:discard result) constraints (:choices result) result)]
     (if (analytical-fired? result)
-      (clojure.core/update update-result :trace tr/with-score-type :marginal)
+      (update update-result :trace tr/with-score-type :marginal)
       update-result)))
 
 ;; -- Utility --
@@ -1338,7 +1338,7 @@
         ;; Skip for opaque-escape bodies: conjugacy detection over only the
         ;; visible sites could mis-fire while real obs sites are hidden.
         schema (if (and schema (not (:opaque-gen-escape? schema)))
-                 (let [augmented (conj/augment-schema-with-conjugacy schema)]
+                 (let [augmented (cnj/augment-schema-with-conjugacy schema)]
                    (if (:has-conjugate? augmented)
                      (let [plan (rewrite/build-analytical-plan augmented source)
                            ;; Keep both declined concern-components AND linear-Gaussian
@@ -1457,7 +1457,7 @@
                                 :param-store (param-store gf)}
                                (fn [rt] (run-body gf rt args)))]
     (tag-vtrace
-      (vec/->VectorizedTrace gf args (:choices result) (:score result)
+      (vect/->VectorizedTrace gf args (:choices result) (:score result)
                              (mx/zeros [n]) n (:retval result)))))
 
 (defn vgenerate
@@ -1482,7 +1482,7 @@
                                 :param-store (param-store gf)}
                                (fn [rt] (run-body gf rt args)))]
     (tag-vtrace
-      (vec/->VectorizedTrace gf args (:choices result) (:score result)
+      (vect/->VectorizedTrace gf args (:choices result) (:score result)
                              (:weight result) n (:retval result)))))
 
 (defn- vupdate*
@@ -1519,7 +1519,7 @@
         discard (add-deleted-to-discard (:discard result)
                                         (:choices vtrace) (:choices result))]
     {:vtrace (tag-vtrace
-               (vec/->VectorizedTrace gf exec-args (:choices result)
+               (vect/->VectorizedTrace gf exec-args (:choices result)
                                       (:score result) weight
                                       n (:retval result)))
      :weight weight
@@ -1575,14 +1575,14 @@
                   :executor execute-sub :param-store (param-store gf)}
                  (fn [rt] (run-body gf rt (:args vtrace))))
         new-score (:score result)
-        new-vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+        new-vtrace (vect/->VectorizedTrace gf (:args vtrace) (:choices result)
                                           new-score nil n (:retval result))
         retained-sel (regen-retained-selection (:choices result) (:choices vtrace) selection)
         weight (if retained-sel
                  (mx/subtract (vproject gf new-vtrace retained-sel k2)
                               (vproject gf vtrace retained-sel k2))
                  (mx/subtract new-score new-score))]  ; [N]-shaped zero (select-all)
-    {:vtrace (tag-vtrace (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+    {:vtrace (tag-vtrace (vect/->VectorizedTrace gf (:args vtrace) (:choices result)
                                                 new-score weight n (:retval result)))
      :weight weight}))
 
@@ -1609,14 +1609,14 @@
                       {:genmlx/error :batched-nested-splice-regenerate :addr sub-args})))
     (let [sub-gf (propagate-meta sub-gf nil param-store)
           [k1 k2] (rng/split key)
-          old-vt (vec/->VectorizedTrace sub-gf sub-args sub-old-choices SCORE-ZERO nil n nil)
+          old-vt (vect/->VectorizedTrace sub-gf sub-args sub-old-choices SCORE-ZERO nil n nil)
           result (rt/run-handler h/batched-regenerate-transition-general
                    {:choices cm/EMPTY :score SCORE-ZERO :key k1 :selection sub-selection
                     :old-choices sub-old-choices :batch-size n :batched? true
                     :executor execute-sub :param-store param-store}
                    (fn [rt] (run-body sub-gf rt sub-args)))
           child-new-score (:score result)
-          new-vt (vec/->VectorizedTrace sub-gf sub-args (:choices result)
+          new-vt (vect/->VectorizedTrace sub-gf sub-args (:choices result)
                                         child-new-score nil n (:retval result))
           retained-sel (regen-retained-selection (:choices result) sub-old-choices sub-selection)
           w-child (if retained-sel
@@ -1682,7 +1682,7 @@
           proposal-ratio (:weight result)
           weight (mx/subtract (mx/subtract new-score old-score) proposal-ratio)]
       {:vtrace (tag-vtrace
-                 (vec/->VectorizedTrace gf (:args vtrace) (:choices result)
+                 (vect/->VectorizedTrace gf (:args vtrace) (:choices result)
                                         new-score weight n (:retval result)))
        :weight weight})
 
@@ -1753,5 +1753,5 @@
    Returns the default value as an MLX array (no param store available
    outside gen body execution). Inside gen bodies, use the param local
    binding from the gen macro instead."
-  [name default-value]
+  [pname default-value]
   (if (mx/array? default-value) default-value (mx/scalar default-value)))

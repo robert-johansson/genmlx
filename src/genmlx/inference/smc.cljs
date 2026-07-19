@@ -146,9 +146,9 @@
   [log-weights n key]
   (let [{:keys [probs]} (u/normalize-log-weights log-weights)
         ;; Generate N stratified uniforms
-        keys (rng/split-n (rng/ensure-key key) n)
+        ks (rng/split-n (rng/ensure-key key) n)
         uniforms (mapv (fn [j]
-                         (let [u (mx/realize (rng/uniform (nth keys j) []))]
+                         (let [u (mx/realize (rng/uniform (nth ks j) []))]
                            (/ (+ j u) n)))
                        (range n))]
     (loop [i 0, cumsum 0.0, j 0, indices (transient [])]
@@ -200,14 +200,14 @@
    Returns vector of (possibly updated) traces."
   [traces rejuvenation-steps rejuvenation-selection key]
   (if (pos? rejuvenation-steps)
-    (let [keys (if key (rng/split-n key (count traces)) (repeat (count traces) nil))]
+    (let [ks (if key (rng/split-n key (count traces)) (repeat (count traces) nil))]
       (mapv (fn [i trace ki]
               (let [trace-keys (if ki (rng/split-n ki rejuvenation-steps)
                                       (repeat rejuvenation-steps nil))]
                 (break-trace-graph!
                  (rejuvenate-trace trace rejuvenation-selection trace-keys)
                  i)))
-            (range) traces keys))
+            (range) traces ks))
     traces))
 
 (defn- smc-step
@@ -531,9 +531,9 @@
                   new-weights (mapv mx/add weights' update-weights)
                   ;; Rejuvenate all except reference
                   final-traces (if (pos? rejuvenation-steps)
-                                 (let [keys (if rejuv-key
-                                              (rng/split-n rejuv-key particles)
-                                              (repeat particles nil))]
+                                 (let [ks (if rejuv-key
+                                            (rng/split-n rejuv-key particles)
+                                            (repeat particles nil))]
                                    (mapv (fn [i trace ki]
                                            (if (= i ref-idx)
                                              trace  ;; Don't rejuvenate reference
@@ -543,7 +543,7 @@
                                                (if ki (rng/split-n ki rejuvenation-steps)
                                                       (repeat rejuvenation-steps nil)))
                                               i)))
-                                         (range particles) new-traces keys))
+                                         (range particles) new-traces ks))
                                  new-traces)
                   ;; Same adaptive-resampling increment as smc-step: subtract
                   ;; the carried mass when the resample was skipped.

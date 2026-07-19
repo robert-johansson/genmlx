@@ -28,7 +28,6 @@
    The GFI never appears here: these are Layer-8 supporting primitives, pure
    graph construction except the BFS level loop, which is an inference-style
    hot loop (per-level materialize! + one host sync on frontier emptiness)."
-  (:refer-clojure :exclude [])
   (:require [genmlx.mlx :as mx]))
 
 ;; ---------------------------------------------------------------------------

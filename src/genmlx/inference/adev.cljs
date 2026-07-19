@@ -122,10 +122,10 @@
         loss-fn (fn [p]
                   (let [store {:params (learn/array->params p param-names)}
                         gf' (vary-meta gf assoc :genmlx.dynamic/param-store store)
-                        keys (rng/split-n (rng/fresh-key) n-samples)
+                        ks (rng/split-n (rng/fresh-key) n-samples)
                         surrogates (mapv (fn [k]
                                           (adev-surrogate gf' args cost-fn k bl))
-                                        keys)]
+                                        ks)]
                     ;; Average over samples
                     (mx/divide (reduce mx/add surrogates)
                                (mx/scalar (double n-samples)))))

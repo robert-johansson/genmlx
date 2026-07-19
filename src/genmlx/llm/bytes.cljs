@@ -198,8 +198,8 @@
   (mx/eval! logits)
   (let [f32 (.toFloat32 logits)
         n (.-length f32)
-        m (loop [i 0 mx js/Number.NEGATIVE_INFINITY]
-            (if (< i n) (recur (inc i) (let [v (aget f32 i)] (if (> v mx) v mx))) mx))]
+        m (loop [i 0 m js/Number.NEGATIVE_INFINITY]
+            (if (< i n) (recur (inc i) (let [v (aget f32 i)] (if (> v m) v m))) m))]
     (if (= m js/Number.NEGATIVE_INFINITY)
       js/Number.NEGATIVE_INFINITY
       (let [s (loop [i 0 s 0.0]

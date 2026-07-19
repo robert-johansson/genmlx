@@ -93,11 +93,11 @@
   "Internal: compose kernels without reversal propagation."
   [kernels]
   (fn [trace key]
-    (let [keys (rng/split-n (rng/ensure-key key) (count kernels))]
+    (let [ks (rng/split-n (rng/ensure-key key) (count kernels))]
       (reduce (fn [t [kernel ki]]
                 (kernel t ki))
               trace
-              (map vector kernels keys)))))
+              (map vector kernels ks)))))
 
 (defn chain
   "Compose inference kernels sequentially.
@@ -117,10 +117,10 @@
   "Internal: repeat kernel n times without reversal propagation."
   [n kernel]
   (fn [trace key]
-    (let [keys (rng/split-n (rng/ensure-key key) n)]
+    (let [ks (rng/split-n (rng/ensure-key key) n)]
       (reduce (fn [t ki] (kernel t ki))
               trace
-              keys))))
+              ks))))
 
 (defn repeat-kernel
   "Apply kernel n times sequentially.
@@ -163,11 +163,11 @@
   [n kernel-vec]
   (let [k (count kernel-vec)]
     (fn [trace key]
-      (let [keys (rng/split-n (rng/ensure-key key) n)]
+      (let [ks (rng/split-n (rng/ensure-key key) n)]
         (reduce (fn [t [i ki]]
                   ((nth kernel-vec (mod i k)) t ki))
                 trace
-                (map-indexed vector keys))))))
+                (map-indexed vector ks))))))
 
 (defn cycle-kernels
   "Cycle through kernels repeatedly for n total applications.
