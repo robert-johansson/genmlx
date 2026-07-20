@@ -12,6 +12,7 @@
               ids (vec (llm/encode (:tokenizer m) \"Hello\"))]
        (p/simulate gf [ids 20]))"
   (:require [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.llm.backend :as llm]
@@ -171,6 +172,14 @@
      :pad-id      — the frozen-lane filler token (default: tokenizer pad if
                     valid, else eos; ANY in-vocab id is correct — it only
                     needs lp 0 under the pad row and a harmless embedding).
+     :temperature — sampling temperature (default nil = 1.0/raw logits).
+                    Applied as a 1/T logit scale BEFORE the hook, so the
+                    :hook slot stays free for grammar; -inf grammar masks
+                    are unmoved by scaling. The gf's DISTRIBUTION is then
+                    defined over the scaled logits (assess/score use the
+                    same scaling — the L1 law holds per gf instance).
+                    Must be > 0 (greedy is a scalar-path concern —
+                    generate-text-raw+).
      :hook        — stateful per-step logits middleware
                     {:init (fn [] state), :mask (fn [state logits i] logits'),
                      :advance (fn [state tok-K] state')} — all-MLX state; the
@@ -196,13 +205,18 @@
    Retval: {:tokens [K max-tokens] int matrix ([max-tokens] under scalar
    execution), :active the final lane-liveness mask, :prompt-ids}."
   ([model-map] (make-llm-gf-batched model-map {}))
-  ([model-map {:keys [pad-id hook check-every sweep-every]
+  ([model-map {:keys [pad-id temperature hook check-every sweep-every]
                :or {sweep-every 32}}]
    (let [{:keys [model tokenizer]} model-map
          _ (when-not (llm/cljs-forward-model? model)
              (throw (ex-info "make-llm-gf-batched requires the OWNED forward (CljsForwardModel) — load with {:cljs-forward? true} (or a supported family's smart default)."
                              {:genmlx/error :batched-gf-owned-only
                               :model-type (type model)})))
+         _ (when (and temperature (not (pos? temperature)))
+             (throw (ex-info "make-llm-gf-batched :temperature must be > 0 (greedy decoding is the scalar path's concern)."
+                             {:genmlx/error :bad-temperature :temperature temperature})))
+         inv-temp (when (and temperature (not= temperature 1.0))
+                    (mx/scalar (/ 1.0 temperature)))
          eos     (llm/eos-token-id tokenizer)
          vocab   (get-in model [:fwd :config :vocab])
          pad     (or pad-id
@@ -244,7 +258,8 @@
                         active nil
                         hs     (when hook ((:init hook)))
                         toks   []]
-                   (let [lg   (if hook ((:mask hook) hs logits i) logits)
+                   (let [lg   (if inv-temp (mx/multiply logits inv-temp) logits)
+                         lg   (if hook ((:mask hook) hs lg i) lg)
                          lg   (if active (mask-inactive-logits lg active pad-row) lg)
                          tok  (trace (t-addr i) (dist/categorical lg))
                          act' (advance-active active tok eos)
@@ -300,6 +315,63 @@
              (let [txt (if (= eos (peek toks)) (pop toks) toks)]
                (llm/decode tokenizer (js/Uint32Array.from (clj->js txt)))))
            (vtrace-lane-tokens vtrace eos)))))
+
+(defn generate-texts-batched
+  "K sampled chat completions from ONE batched owned forward — the Route B
+   (genmlx-9uyg) text-level API (genmlx-789s). Replaces K sequential
+   generate-text-raw+ calls with a single shared-prefill, K-lane lockstep
+   decode: measured K=8 decode ≈ 1.33× ONE scalar step's cost, i.e. ~6×
+   throughput on best-of-K proposal generation.
+
+   Prompt rendering matches generate-text-raw+ (render-chat: system + user,
+   think-skip on the Qwen3/3.5 families); per-lane early stop is the
+   masked-EOS algebra + a :check-every host early-exit (safe here —
+   unconstrained sampling only).
+
+   model-map: from load-model, OWNED forward required ({:cljs-forward? true}
+   or a supported family's smart default).
+   opts:
+     :n            lanes / completions (default 4)
+     :max-tokens   per-lane cap (default 256)
+     :temperature  sampling temperature, must be > 0 (default 0.8; greedy
+                   best-of-K is meaningless — lanes would be identical)
+     :seed         PRNG seed; same seed => same K texts (default 1)
+     :system-prompt (default \"You are a helpful assistant.\")
+     :check-every  host early-exit period in sites (default 32; 0/nil off)
+     :sweep-every  dead-wrapper sweep period (default 32)
+
+   Returns a promise of {:texts [str ...K] :n-tokens [int ...K] :gen-ms n}
+   — :n-tokens counts each lane's tokens up to and including its eos
+   (trailing pads excluded); :gen-ms is wall-clock through the last decode
+   step (text decode excluded, as in generate-text-raw+)."
+  ([model-map prompt] (generate-texts-batched model-map prompt {}))
+  ([{model-type :type :keys [model tokenizer] :as model-map} prompt
+    {:keys [n max-tokens temperature seed system-prompt check-every sweep-every]
+     :or {n 4 max-tokens 256 temperature 0.8 seed 1
+          system-prompt "You are a helpful assistant."
+          check-every 32 sweep-every 32}}]
+   (let [t0 (.now js/Date)
+         chat-str (llm/render-chat
+                   [{:role "system" :content system-prompt}
+                    {:role "user" :content prompt}]
+                   {:think-skip? (contains? #{:qwen3 :qwen3_5 :qwen3_5_moe}
+                                            model-type)})
+         eos (llm/eos-token-id tokenizer)
+         gf  (make-llm-gf-batched model-map
+                                  (cond-> {:temperature temperature
+                                           :sweep-every sweep-every}
+                                    (and check-every (pos? check-every))
+                                    (assoc :check-every check-every)))]
+     (pr/let [ids-raw (llm/encode tokenizer chat-str true)]
+       (let [prompt-ids (vec ids-raw)
+             vt (dyn/vsimulate gf [prompt-ids max-tokens] n
+                               (rng/fresh-key seed))
+             lanes (vtrace-lane-tokens vt eos)
+             gen-ms (- (.now js/Date) t0)]
+         (pr/let [texts (decode-vtrace tokenizer vt)]
+           {:texts (vec texts)
+            :n-tokens (mapv count lanes)
+            :gen-ms gen-ms}))))))
 
 (defn decode-trace
   "Extract generated token IDs from a trace and decode to text.

@@ -343,31 +343,59 @@
 
 (defn- real-generate!
   "Dynamically require the LLM backend (which js/require's the native model path —
-   this is what keeps STUB=1 runs checkpoint-free) and load the model ONCE; the
-   returned fn decodes the request's :n samples sequentially (seeds :seed+i) and
-   sweeps dead decode graphs between samples (Tegra dark-pages lesson, genmlx-h3p5)."
+   this is what keeps STUB=1 runs checkpoint-free) and load the model ONCE.
+
+   Two decode routes (genmlx-789s, Tier-1 of the paper campaign):
+   - BATCHED (default on the owned forward): the request's :n samples come
+     from ONE Route-B batched forward (llm.core/generate-texts-batched —
+     shared prefill, K lockstep lanes, masked-EOS early stop; K=8 ≈ 1.33×
+     one scalar decode). Requires temperature > 0 (best-of-K at greedy
+     would collapse the lanes anyway).
+   - SEQUENTIAL (BATCHED=0, native-loaded models, or temperature <= 0):
+     the original per-sample loop (seeds :seed+i), sweeping dead decode
+     graphs between samples (Tegra dark-pages lesson, genmlx-h3p5)."
   []
   (p/let [_ (require '[genmlx.llm.backend]
+                     '[genmlx.llm.core]
                      '[genmlx.mlx])]
     (let [load-model (resolve 'genmlx.llm.backend/load-model)
           gen+       (resolve 'genmlx.llm.backend/generate-text-raw+)
+          owned?     (resolve 'genmlx.llm.backend/cljs-forward-model?)
+          gen-batch  (resolve 'genmlx.llm.core/generate-texts-batched)
           force-gc!  (resolve 'genmlx.mlx/force-gc!)
           _          (reset! native-gc! force-gc!)
           t0         (.now js/Date)]
       (p/let [m (load-model model-dir)]
-        (println (str "  loaded: " (name (:type m)) " in "
-                      (js/Math.round (/ (- (.now js/Date) t0) 1000)) " s"))
-        (fn [_task {:keys [system prompt n temperature max_tokens] :as req}]
-          (p/loop [i 0, comps [], toks 0, ms 0]
-            (if (>= i (max 1 (or n 1)))
-              (p/resolved {:completions comps :completion-tokens toks :gen-ms ms})
-              (p/let [r (gen+ m prompt {:max-tokens  (or max_tokens max-tokens)
-                                        :temperature (or temperature temp)
-                                        :seed        (+ (or (:seed req) 1) i)
-                                        :system-prompt (or system lp/default-system)})]
-                (force-gc!)
-                (p/recur (inc i) (conj comps (:text r))
-                         (+ toks (:n-tokens r)) (+ ms (:gen-ms r)))))))))))
+        (let [batched? (and (not= "0" (env "BATCHED" "1")) (owned? (:model m)))
+              sequential
+              (fn [{:keys [system prompt n temperature max_tokens] :as req}]
+                (p/loop [i 0, comps [], toks 0, ms 0]
+                  (if (>= i (max 1 (or n 1)))
+                    (p/resolved {:completions comps :completion-tokens toks :gen-ms ms})
+                    (p/let [r (gen+ m prompt {:max-tokens  (or max_tokens max-tokens)
+                                              :temperature (or temperature temp)
+                                              :seed        (+ (or (:seed req) 1) i)
+                                              :system-prompt (or system lp/default-system)})]
+                      (force-gc!)
+                      (p/recur (inc i) (conj comps (:text r))
+                               (+ toks (:n-tokens r)) (+ ms (:gen-ms r)))))))]
+          (println (str "  loaded: " (name (:type m)) " in "
+                        (js/Math.round (/ (- (.now js/Date) t0) 1000)) " s"
+                        "  [decode: " (if batched? "batched Route B" "sequential") "]"))
+          (fn [_task {:keys [system prompt n temperature max_tokens] :as req}]
+            (let [eff-temp (or temperature temp)]
+              (if (and batched? (pos? eff-temp))
+                (p/let [r (gen-batch m prompt
+                                     {:n (max 1 (or n 1))
+                                      :max-tokens (or max_tokens max-tokens)
+                                      :temperature eff-temp
+                                      :seed (or (:seed req) 1)
+                                      :system-prompt (or system lp/default-system)})]
+                  (force-gc!)
+                  {:completions (:texts r)
+                   :completion-tokens (reduce + 0 (:n-tokens r))
+                   :gen-ms (:gen-ms r)})
+                (sequential req)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; One task through the search loop (async trampoline around sync se/search).

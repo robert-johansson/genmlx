@@ -148,10 +148,11 @@
 
 (defn materialize-cache!
   "Force-evaluate every array in a per-layer cache — the chunked-continuation
-   eval boundary (family-agnostic: entries are maps of arrays or nils).
+   eval boundary (family-agnostic: entries are maps of arrays or nils; the
+   qwen3.5 static-KV entries also carry host ints (:len/:cap), skipped here).
    Returns the cache."
   [cache]
-  (apply mx/materialize! (mapcat vals (remove nil? cache)))
+  (apply mx/materialize! (filter mx/array? (mapcat vals (remove nil? cache))))
   cache)
 
 ;; --- [K]-particle batch axis (genmlx-9uyg) ---------------------------------
@@ -182,13 +183,15 @@
           (when ce
             (reduce-kv
              (fn [m' kk arr]
-               (let [sh (mx/shape arr)]
-                 (when-not (= 1 (first sh))
-                   (throw (ex-info (str "broadcast-cache: entry " kk
-                                        " has leading dim " (first sh)
-                                        " — expected a B=1 cache")
-                                   {:key kk :shape (vec sh)})))
-                 (assoc m' kk (mx/broadcast-to arr (into [k] (rest sh))))))
+               (if-not (mx/array? arr)
+                 (assoc m' kk arr)   ; static-KV host ints (:len/:cap) pass through
+                 (let [sh (mx/shape arr)]
+                   (when-not (= 1 (first sh))
+                     (throw (ex-info (str "broadcast-cache: entry " kk
+                                          " has leading dim " (first sh)
+                                          " — expected a B=1 cache")
+                                     {:key kk :shape (vec sh)})))
+                   (assoc m' kk (mx/broadcast-to arr (into [k] (rest sh)))))))
              {} ce)))
         cache))
 
@@ -205,5 +208,8 @@
   (let [idx (if (mx/array? idx) idx (mx/array (vec idx) [(count idx)] mx/int32))]
     (mapv (fn [ce]
             (when ce
-              (update-vals ce (fn [arr] (mx/take-idx arr idx 0)))))
+              (update-vals ce (fn [arr]
+                                (if (mx/array? arr)   ; static-KV :len/:cap ints
+                                  (mx/take-idx arr idx 0)
+                                  arr)))))
           cache)))

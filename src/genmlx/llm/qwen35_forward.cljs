@@ -536,6 +536,83 @@
     (mx/concatenate [rot xp] 3)))
 
 ;; ----------------------------------------------------------------------------
+;; Static-KV decode cache (genmlx-krma)
+;;
+;; The concat cache ({:k :v} growing by one along seq per step) changes every
+;; decode step's tensor shapes, so the CUDA backend's graph cache — keyed on
+;; kernel-node TOPOLOGY and hit via cudaGraphExecUpdate — never replays: each
+;; token instantiates a fresh graph (measured on the 0.8b: graphs ON == OFF
+;; == ~25 ms/token, cache thrash, ~19 ms/token of launch overhead over ~2 ms
+;; of arithmetic). The static layout {:k :v [B H cap hd] :len :cap} keeps
+;; decode-step shapes CONSTANT: the new k/v row is written at :len with
+;; put-along-axis (a pure graph op — the cache stays a persistent VALUE, so
+;; branches/lanes keep their semantics), and SDPA runs over the full capacity
+;; under an additive mask that closes positions > :len. Capacity grows by
+;; kv-block (one topology change per kv-block tokens). Prefill (T>1) keeps
+;; the concat path unchanged; the first decode step migrates the entry.
+;;
+;; STATUS (2026-07-20, measured on the 0.8b): parity-verified (tracks the
+;; uncached slab forward at least as closely as the concat path), but NO
+;; speed win — 28.6 vs 25.9 ms/token. Root cause of the floor, established
+;; by the same investigation: the CUDA graph cache DOES hit on stable
+;; topologies, but a hit only skips exec INSTANTIATION — every eval still
+;; re-builds the graph op-by-op (capture + key walk + cudaGraphExecUpdate
+;; are all O(op count)), so per-token cost stays proportional to the ~10³
+;; ops of a decode step regardless of shape stability. The decode lever is
+;; therefore OP-COUNT REDUCTION (native fusion — the genmlx-ps8a prefill
+;; treatment applied to the step) or true exec-replay-without-rebuild
+;; (backend C++). Static-KV stays as the OPT-IN prerequisite for any such
+;; replay work: GENMLX_STATIC_KV=1 enables; default = concat (fastest
+;; today).
+;; ----------------------------------------------------------------------------
+
+(def ^:private static-kv?
+  (= "1" (aget (.-env js/process) "GENMLX_STATIC_KV")))
+
+(def ^:private kv-block 256)
+
+(defn- kv-capacity
+  "Smallest kv-block multiple with room for index `t` (i.e. > t)."
+  [t]
+  (* kv-block (inc (quot t kv-block))))
+
+(defn- pad-kv
+  "Pad [B H t hd] to [B H cap hd] along seq with zeros (masked out)."
+  [a t cap]
+  (let [[b h _ hd] (vec (mx/shape a))]
+    (mx/concatenate [a (mx/zeros [b h (- cap t) hd] (mx/dtype a))] 2)))
+
+(defn- static-entry
+  "Migrate a concat-layout {:k :v} entry (from prefill, seq len t) to the
+   fixed-capacity static layout."
+  [{:keys [k v]}]
+  (let [t   (nth (vec (mx/shape k)) 2)
+        cap (kv-capacity t)]
+    {:k (pad-kv k t cap) :v (pad-kv v t cap) :len t :cap cap}))
+
+(defn- grow-entry
+  "Extend a full static entry by one kv-block (rare topology change)."
+  [{:keys [k v len cap]}]
+  (let [cap' (+ cap kv-block)]
+    {:k (pad-kv k cap cap') :v (pad-kv v cap cap') :len len :cap cap'}))
+
+(defn- concat-entry
+  "Demote a static entry to concat layout (multi-token continuation on top
+   of decoded tokens — e.g. a fed tool-result block; the concat path handles
+   arbitrary T)."
+  [{:keys [k v len]}]
+  {:k (slice-ax k 4 2 0 len) :v (slice-ax v 4 2 0 len)})
+
+(defn- decode-mask
+  "Additive [1 1 1 cap] mask closing positions > len (the new token sits AT
+   len). Shape depends only on cap — stable across steps; only the len value
+   changes (a graph input, updated on replay)."
+  [cap len dtype]
+  (let [open (mx/greater (mx/reshape (mx/arange cap) [1 1 1 cap])
+                         (mx/scalar len mx/int32))]
+    (mx/astype (mx/multiply (mx/astype open mx/float32) -1e9) dtype)))
+
+;; ----------------------------------------------------------------------------
 ;; Full softmax attention layer (partial RoPE + output gate)
 ;; ----------------------------------------------------------------------------
 
@@ -573,13 +650,37 @@
         q (rot (mx/transpose queries [0 2 1 3]))
         k (rot (mx/transpose ks      [0 2 1 3]))
         v (mx/transpose values [0 2 1 3])
-        k-full (if ce (mx/concatenate [(:k ce) k] 2) k)        ; concat along seq
-        v-full (if ce (mx/concatenate [(:v ce) v] 2) v)
-        o (-> (mx/scaled-dot-product-attention q k-full v-full scale mask)
-              (mx/transpose [0 2 1 3])                          ; [B T H hd]
-              (mx/reshape [b T (* H hd)]))
-        o (mx/multiply o (mx/sigmoid gate))]                   ; output gate
-    [(linear o (g "o_proj.weight")) {:k k-full :v v-full}]))
+        static? (and static-kv? (= T 1) (nil? mrope))
+        finish (fn [o entry]
+                 (let [o (-> o
+                             (mx/transpose [0 2 1 3])           ; [B T H hd]
+                             (mx/reshape [b T (* H hd)]))
+                       o (mx/multiply o (mx/sigmoid gate))]     ; output gate
+                   [(linear o (g "o_proj.weight")) entry]))]
+    (if static?
+      ;; Static-KV decode step (genmlx-krma): stable shapes -> graph replay.
+      (let [st (cond
+                 (nil? ce)  {:k (mx/zeros [b Hkv (kv-capacity 0) hd] (mx/dtype v))
+                             :v (mx/zeros [b Hkv (kv-capacity 0) hd] (mx/dtype v))
+                             :len 0 :cap (kv-capacity 0)}
+                 (:cap ce)  ce
+                 :else      (static-entry ce))
+            st (if (= (:len st) (:cap st)) (grow-entry st) st)
+            {sk :k sv :v len :len cap :cap} st
+            idx (mx/broadcast-to (mx/array [len] [1 1 1 1] mx/int32)
+                                 [b Hkv 1 hd])
+            k'  (mx/put-along-axis sk idx k 2)
+            v'  (mx/put-along-axis sv idx v 2)
+            am  (decode-mask cap len (mx/dtype q))]
+        (finish (mx/scaled-dot-product-attention q k' v' scale am)
+                {:k k' :v v' :len (inc len) :cap cap}))
+      ;; Concat path: prefill / VLM prefill / multi-token continuation (a
+      ;; static entry is demoted first — rare, e.g. a fed tool-result block).
+      (let [ce (if (and ce (:cap ce)) (concat-entry ce) ce)
+            k-full (if ce (mx/concatenate [(:k ce) k] 2) k)    ; concat along seq
+            v-full (if ce (mx/concatenate [(:v ce) v] 2) v)]
+        (finish (mx/scaled-dot-product-attention q k-full v-full scale mask)
+                {:k k-full :v v-full})))))
 
 ;; ----------------------------------------------------------------------------
 ;; Forward
@@ -719,7 +820,8 @@
    that pressure — T=624 unchunked now holds >120 GB free — so this boundary
    is a cheap memory backstop, not a correctness requirement."
   [cache]
-  (apply mx/materialize! (mapcat vals (remove nil? cache)))
+  ;; static-KV entries carry host ints (:len/:cap) next to the arrays
+  (apply mx/materialize! (filter mx/array? (mapcat vals (remove nil? cache))))
   cache)
 
 (defn forward
