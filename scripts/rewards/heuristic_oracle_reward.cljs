@@ -24,6 +24,17 @@
 ;;             parse only — no eval at reward time); no code = neutral 0.5
 ;;   :brevity  budget/len decay past :brevity-budget chars (default 1200)
 ;;
+;; TRUNCATION IS NEUTRAL, NOT FLOORED (genmlx-lkt0): a completion cut off
+;; by the token cap mid-<tool_call> used to parse as "unclosed" and floor
+;; at -1. On the 2026-07-20 night 34/50 steps had ALL rollouts hit the cap
+;; and 28.5% of completions floored — the dominant advantage signal was
+;; WHERE the cap fell (verbosity roulette), training terseness/avoidance,
+;; not tool quality. Now the trailing truncated block is STRIPPED
+;; (tc/strip-truncated-tail) and the completion is scored on the visible
+;; prefix: closed calls before the cut score normally; a completion that
+;; is ALL unclosed block scores like prose (~0.4, the no-call landing).
+;; Only genuine dialect violations in the remaining text still floor.
+;;
 ;; USE: REWARD=scripts/rewards/heuristic_oracle_reward.cljs (from repo root)
 (ns heuristic-oracle-reward
   (:require [genmlx.llm.toolcall :as tc]
@@ -69,7 +80,9 @@
                                 toolset))]
     (fn [_prompt completion]
       (try
-        (let [text (str completion)
+        ;; Score the judgeable prefix: a trailing cap-truncated block tells
+        ;; us nothing about form quality (genmlx-lkt0, header note).
+        (let [{text :text} (tc/strip-truncated-tail (str completion))
               {:keys [calls errors]} (tc/parse-tool-calls text)]
           (if (seq errors)
             reward-floor

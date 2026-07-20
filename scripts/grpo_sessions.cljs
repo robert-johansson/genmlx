@@ -19,6 +19,22 @@
      MAX_PROMPT_TOKENS skip points whose injected prompt exceeds this
                    (0 = off; genmlx-pnaw — per-step memory scales with
                    prompt length, MODE=all prompts grow within a session)
+     PROBE         1 (default) to run the probe-set eval (genmlx-lkt0):
+                   a FIXED prompt set scored with generation-only rollouts
+                   through the SAME reward, before and after training —
+                   the 2026-07-20 night's epoch-pair comparison had an MDE
+                   of ~±0.25 reward (t=-0.74, uninterpretable); the probe
+                   brings it to ~0.06-0.1. 0 disables.
+     PROBE_PROMPTS probe-set size, evenly spaced over the kept corpus
+                   (default 6)
+     PROBE_ROLLOUTS rollouts per probe prompt per pass (default 64;
+                   generated in engine group-size batches — generation
+                   only, so memory matches a train step's generate phase)
+     PROBE_EVERY   additionally probe every K steps (default 0 = pre/post
+                   only). SIZE THE NIGHT: one pass = PROBE_PROMPTS x
+                   PROBE_ROLLOUTS/GROUP_SIZE generation calls (~50 min at
+                   the 35B night config, 6x64/8 = 48 calls) — count passes
+                   against STEPS when fitting a night.
      LR            learning rate (default 2e-6)
      TEMPERATURE   rollout temperature (default 0.9)
      SEED          model-thread RNG seed (optional)
@@ -50,6 +66,7 @@
             [genmlx.llm.pi-session :as ps]
             [genmlx.llm.qwen3-forward :as q3f]
             [genmlx.mlx :as mx]
+            [genmlx.world.probe :as probe]
             [genmlx.world.session-grpo :as sg]
             [genmlx.world.session-reward :as sr]
             [genmlx.world.train :as train]
@@ -84,6 +101,11 @@
 ;; short runs (process restart clears the engine's per-step growth) cover the
 ;; corpus instead of retraining the same first prompts every chunk.
 (def step-offset (env-int "STEP_OFFSET" 0))
+;; genmlx-lkt0 probe-set eval (see the ns docstring env section)
+(def probe?          (not= "0" (env "PROBE" "1")))
+(def probe-prompts-n (env-int "PROBE_PROMPTS" 6))
+(def probe-rollouts  (env-int "PROBE_ROLLOUTS" 64))
+(def probe-every     (env-int "PROBE_EVERY" 0))
 (def date-tag     (-> (.toISOString (js/Date.)) (subs 0 10) (str/replace "-" "")))
 (def ckpt-out     (env "CKPT_OUT"
                        (home "genmlx-checkpoints"
@@ -233,6 +255,75 @@
   (.mkdirSync fs (path/dirname metrics-out) #js {:recursive true})
   (fs/appendFileSync metrics-out (str (js/JSON.stringify (clj->js m)) "\n")))
 
+;; ---------------------------------------------------------------------------
+;; Probe-set eval (genmlx-lkt0): a FIXED prompt set scored with generation-only
+;; rollouts (train/generate-batch — no weight update) through the SAME
+;; reward-fn as training, before and after the run (+ optionally every K
+;; steps). The pure statistics live in genmlx.world.probe; each pass appends
+;; a {:probe label ...} record to the metrics JSONL, and the post pass logs
+;; the paired pre/post delta with its SEM and t — the power the night's
+;; epoch-pair comparison lacked.
+;; ---------------------------------------------------------------------------
+
+(defn- probe-key [prompt]
+  (let [{:keys [session-id turn-index]} (sg/prompt-meta prompt)]
+    (str session-id "/" turn-index)))
+
+(defn- probe-rollouts!
+  "Generation-only rollouts for ONE prompt until >= n completions.
+   generate-batch yields the engine's configured group-size per call, so
+   memory matches a train step's generate phase — never more."
+  [trainer prompt n]
+  (p/loop [acc []]
+    (if (>= (count acc) n)
+      (p/resolved (vec (take n acc)))
+      (p/let [batch (train/generate-batch trainer [prompt])]
+        (when (empty? batch)
+          (throw (ex-info "probe: generate-batch yielded no completions"
+                          {:genmlx/error :probe-empty-batch})))
+        (p/recur (into acc batch))))))
+
+(defn- run-probe!
+  "One probe pass over `probe-set`. Returns the per-prompt summaries (the
+   post pass pairs them against the pre pass for the delta)."
+  [trainer probe-set reward-fn label step]
+  (let [t0 (js/Date.now)]
+    (p/loop [ps (seq probe-set), summaries []]
+      (if-not ps
+        (let [rec (assoc (probe/pass-record label step summaries)
+                         :probe-ms (- (js/Date.now) t0))
+              {:keys [mean se n-prompts]} (:pooled rec)]
+          (metric-line! rec)
+          (println (str "  probe " label ": " n-prompts " prompts x "
+                        probe-rollouts " rollouts  mean="
+                        (.toFixed mean 3)
+                        (when se (str " ±" (.toFixed se 3)))
+                        "  truncated-frac "
+                        (.toFixed (or (:truncated-frac (:pooled rec)) 0) 2)
+                        "  (" (js/Math.round (/ (- (js/Date.now) t0) 1000))
+                        "s)"))
+          (p/resolved summaries))
+        (let [prompt (first ps)]
+          (p/let [completions (probe-rollouts! trainer prompt probe-rollouts)]
+            (let [rewards (mapv #(double (reward-fn prompt %)) completions)]
+              (mx/force-gc!)
+              (p/recur (next ps)
+                       (conj summaries
+                             (probe/summarize-prompt (probe-key prompt)
+                                                     rewards completions))))))))))
+
+(defn- probe-delta!
+  "Log + print the paired pre/post delta (nil-safe on disabled probes)."
+  [pre post]
+  (when (and (seq pre) (seq post))
+    (let [d (probe/delta pre post)]
+      (metric-line! {:probe "delta" :step steps :delta d})
+      (println (str "  probe delta: " (.toFixed (:mean d) 3)
+                    (when (:sem d) (str " ± " (.toFixed (:sem d) 3)))
+                    (when (:t d) (str "  t=" (.toFixed (:t d) 2)))
+                    "  (paired, " (:n-pairs d) " prompts)"))
+      d)))
+
 (def gcore (js/require "@genmlx/core"))
 
 (defn- model-family
@@ -350,6 +441,11 @@
               "  max-completion=" max-completion))
 (println (str "  metrics -> " metrics-out))
 (when save? (println (str "  ckpt -> " ckpt-out)))
+(when probe?
+  (println (str "  probe: " probe-prompts-n " prompts x " probe-rollouts
+                " rollouts, pre/post"
+                (when (pos? probe-every)
+                  (str " + every " probe-every " steps")))))
 
 (->
  (p/let [files (p/resolved (session-files sessions-dir))
@@ -420,7 +516,16 @@
          history
          (train/with-trainer model grpo-cfg {:family (:family fam)}
            (fn [trainer]
-             (p/let [hist
+             (p/let [probe-set (p/resolved
+                                (if probe?
+                                  (mapv #(nth prompts %)
+                                        (probe/probe-indices (count prompts)
+                                                             probe-prompts-n))
+                                  []))
+                     pre (if (seq probe-set)
+                           (run-probe! trainer probe-set reward-fn "pre" 0)
+                           (p/resolved nil))
+                     hist
                      (p/loop [i 0, hist []]
                        (if (= i steps)
                          hist
@@ -460,7 +565,19 @@
                              ;; pinned by JS refs with no collection pressure
                              ;; inside a sync step loop.
                              (mx/force-gc!)
-                             (p/recur (inc i) (conj hist r))))))]
+                             (p/let [_ (if (and (seq probe-set)
+                                                (pos? probe-every)
+                                                (zero? (mod (inc i) probe-every))
+                                                (< (inc i) steps))
+                                         (run-probe! trainer probe-set reward-fn
+                                                     (str "step-" (inc i))
+                                                     (inc i))
+                                         (p/resolved nil))]
+                               (p/recur (inc i) (conj hist r)))))))
+                     post (if (seq probe-set)
+                           (run-probe! trainer probe-set reward-fn "post" steps)
+                           (p/resolved nil))]
+               (probe-delta! pre post)
                ;; optimizer moments must be saved INSIDE the trainer scope
                (when (and save? (every? :gradients-applied? hist))
                  (.mkdirSync fs ckpt-out #js {:recursive true})

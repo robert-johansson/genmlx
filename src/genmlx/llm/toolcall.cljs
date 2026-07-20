@@ -516,3 +516,30 @@
                  (recur (subs after (+ close (count tool-call-close-tag)))
                         (if (:error parsed) calls (conj calls (dissoc parsed :error)))
                         (into errors errs)))))))))))
+
+(defn strip-truncated-tail
+  "Strip a TRAILING unclosed <tool_call> block from `text` — the signature
+   of a completion cut off by a token cap mid-block (genmlx-lkt0: on the
+   2026-07-20 GRPO night 34/50 steps had every rollout hit the cap, and an
+   unclosed block floored the whole completion at -1, so the dominant
+   group-advantage signal was WHERE the cap fell, not policy quality).
+
+   A trailing truncated block is: the last occurrence of \"<tool_call>\"
+   with no \"</tool_call>\" anywhere after it. That covers both parse-error
+   shapes a cap produces (cut after the full opener -> \"unclosed
+   <tool_call>\"; cut inside the opener's newline -> \"unterminated/
+   misformatted opener\"). A cut mid-tag (e.g. \"<tool_ca\") parses as
+   plain prose and needs no stripping. Malformations that are NOT trailing
+   (a misformatted opener followed by more text, a closed block with a bad
+   envelope) are genuine dialect violations, remain in the text, and still
+   parse to errors downstream.
+
+   Returns {:text stripped :truncated? bool}; :text is `text` unchanged
+   when there is nothing to strip."
+  [text]
+  (let [s (str text)
+        open (.lastIndexOf s "<tool_call>")]
+    (if (and (>= open 0)
+             (neg? (.indexOf s tool-call-close-tag open)))
+      {:text (subs s 0 open) :truncated? true}
+      {:text s :truncated? false})))

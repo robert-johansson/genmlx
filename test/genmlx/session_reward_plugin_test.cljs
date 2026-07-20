@@ -7,9 +7,13 @@
    Pins: seam contract shape, finiteness, floor on malformed, determinism,
    the discrimination ladder (well-formed declared call > declared call with
    undeclared params > undeclared call >= prose > malformed), code-parse
-   grading, and non-degenerate spread across completion variants — the
-   property match-administered lacks on self-imitating regenerations."
+   grading, non-degenerate spread across completion variants — the property
+   match-administered lacks on self-imitating regenerations — and the
+   genmlx-lkt0 truncation-neutral contract: a trailing cap-truncated block
+   is STRIPPED (scored like the visible prefix), never floored; only
+   genuine dialect violations floor."
   (:require [genmlx.world.session-reward :as sr]
+            [genmlx.llm.toolcall :as tc]
             [promesa.core :as p]))
 
 (def ^:private pass (atom 0))
@@ -32,7 +36,13 @@
 (def undeclared
   (str "<tool_call>\n<function=rm_rf>\n"
        "<parameter=path>\n/\n</parameter>\n</function>\n</tool_call>"))
-(def malformed "<tool_call>\n<function=get_weather>")
+;; genmlx-lkt0: an UNCLOSED trailing block is the token-cap truncation
+;; signature — reward-neutral (stripped), NOT floored. The floor pin moved
+;; to a CLOSED block with a bad envelope (a genuine dialect violation no
+;; cap can produce).
+(def truncated "<tool_call>\n<function=get_weather>")
+(def good-truncated (str good "\n<tool_call>\n<function=get_w"))
+(def malformed "<tool_call>\nnot a function envelope\n</tool_call>")
 (def prose "The weather in Paris is sunny.")
 (def code-good (str prose "\n```clojure\n(+ 1 2)\n```"))
 (def code-bad (str prose "\n```clojure\n(+ 1 2\n```"))
@@ -42,18 +52,39 @@
 (-> (p/let [reward (sr/resolve-reward "scripts/rewards/heuristic_oracle_reward.cljs"
                                       {:points [] :toolset toolset :opts {}})]
       (assert-true "seam returns a reward-fn" (fn? reward))
+      ;; strip-truncated-tail unit pins (the helper the plugin + probe use)
+      (let [t1 (tc/strip-truncated-tail truncated)
+            t2 (tc/strip-truncated-tail good-truncated)
+            t3 (tc/strip-truncated-tail good)]
+        (assert-true "strip: bare unclosed block -> empty text, truncated"
+                     (and (:truncated? t1) (= "" (:text t1))))
+        (assert-true "strip: closed call + unclosed tail -> prefix kept, truncated"
+                     (and (:truncated? t2) (= (str good "\n") (:text t2))))
+        (assert-true "strip: fully closed block untouched, not truncated"
+                     (and (not (:truncated? t3)) (= good (:text t3))))
+        (assert-true "strip: closed block with bad envelope is NOT truncation"
+                     (not (:truncated? (tc/strip-truncated-tail malformed)))))
       (let [r-good (reward "p" good)
             r-badp (reward "p" bad-param)
             r-und  (reward "p" undeclared)
             r-mal  (reward "p" malformed)
+            r-tru  (reward "p" truncated)
+            r-gtru (reward "p" good-truncated)
             r-pro  (reward "p" prose)
             r-cg   (reward "p" code-good)
             r-cb   (reward "p" code-bad)
             all    [r-good r-badp r-und r-mal r-pro r-cg r-cb]]
         (assert-true "every reward is finite (GRPO-poison guard)"
                      (every? finite? all))
-        (assert-true "malformed block scores exactly the floor"
+        (assert-true "genuinely malformed CLOSED block scores exactly the floor"
                      (= -1.0 r-mal))
+        ;; genmlx-lkt0 truncation-neutral contract
+        (assert-true "truncated-only completion is NEUTRAL (scores like prose), not floored"
+                     (= r-tru r-pro))
+        (assert-true "closed call before the cut scores as if untruncated"
+                     (= r-gtru r-good))
+        (assert-true "truncation beats genuine malformation"
+                     (> r-tru r-mal))
         (assert-true "deterministic per completion"
                      (= r-good (reward "other-prompt" good)))
         (assert-true "ladder: well-formed declared call is best"
