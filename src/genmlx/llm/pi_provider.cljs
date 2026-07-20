@@ -716,9 +716,9 @@
                                         :cached cached :sid sid
                                         :extra {:bestOfK k :winnerIndex widx
                                                 :candidateCount (count candidates)}})))))))
-                          ;; pr/handle, not pr/finally: a downstream pr/catch (line
-                          ;; ~698) after a pr/finally teardown double-settles under
-                          ;; nbb (genmlx-tb5f) — dispose on both arms, re-raise once.
+                          ;; pr/handle, not pr/finally: a downstream pr/catch after
+                          ;; a pr/finally teardown double-settles under nbb
+                          ;; (genmlx-tb5f) — dispose on both arms, re-raise once.
                           (pr/handle (fn [r e]
                                        (llm/dispose-branch! model fork)
                                        (if e (throw e) r))))))]

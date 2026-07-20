@@ -1028,39 +1028,47 @@
    is replaced with <<<HOLE>>>. FIM fills the holes.
 
    var-names: [:x :y]
+   priors:    optional override map merged over default-priors. The scaffold
+              must integrate against the SAME prior hyperparameters as
+              param-bindings / the analytical extractor (genmlx-b4z9) — a
+              hardcoded prior here reintroduces the 0.3-vs-3.0 mismatch that
+              named constant exists to prevent (genmlx-vbxd).
    Returns the template string with <<<HOLE>>> markers."
-  [var-names]
-  (let [ar-bindings (mapv (fn [v]
-                            (str "ar-" (name v) " (trace :ar-" (name v)
-                                 " (dist/gaussian 0.5 0.3))"))
-                          var-names)
-        cross-bindings (vec
-                        (for [src var-names, tgt var-names
-                              :when (not= src tgt)]
-                          (str "beta-" (name src) "->" (name tgt)
-                               " (trace :beta-" (name src) "->" (name tgt)
-                               " (dist/gaussian 0 0.3))")))
-        sigma-bindings (mapv (fn [v]
-                               (str "sigma-" (name v)
-                                    " (trace :sigma-" (name v)
-                                    " (dist/exponential 1))"))
-                             var-names)
-        all-bindings (vec (concat ar-bindings cross-bindings sigma-bindings))
-        binding-str (str/join "\n        " all-bindings)
-        destructure-keys (str/join " " (map #(str (name %) "-prev") var-names))
-        hint ";; mean: use mx/multiply, mx/add with ar-VAR, VAR-prev, optionally beta-SRC->TGT\n      ;; e.g. (mx/add (mx/multiply ar-y y-prev) (mx/multiply beta-x->y x-prev))\n      "
-        trace-lines
-        (mapv (fn [v]
-                (str hint
-                     "(trace (keyword (str \"" (name v) "\" i))\n"
-                     "             (dist/gaussian " hole-marker
-                     " sigma-" (name v) "))"))
-              var-names)
-        body-str (str/join "\n      " trace-lines)]
-    (str "(fn [trace transitions]\n"
-         "  (let [" binding-str "]\n"
-         "    (doseq [[i {:keys [" destructure-keys "]}] (map-indexed vector transitions)]\n"
-         "      " body-str ")))")))
+  ([var-names] (build-scaffold var-names {}))
+  ([var-names priors]
+   (let [{:keys [ar-prior-mean ar-prior-std beta-prior-mean beta-prior-std]}
+         (merge default-priors priors)
+         ar-bindings (mapv (fn [v]
+                             (str "ar-" (name v) " (trace :ar-" (name v)
+                                  " (dist/gaussian " ar-prior-mean " " ar-prior-std "))"))
+                           var-names)
+         cross-bindings (vec
+                         (for [src var-names, tgt var-names
+                               :when (not= src tgt)]
+                           (str "beta-" (name src) "->" (name tgt)
+                                " (trace :beta-" (name src) "->" (name tgt)
+                                " (dist/gaussian " beta-prior-mean " " beta-prior-std "))")))
+         sigma-bindings (mapv (fn [v]
+                                (str "sigma-" (name v)
+                                     " (trace :sigma-" (name v)
+                                     " (dist/exponential 1))"))
+                              var-names)
+         all-bindings (vec (concat ar-bindings cross-bindings sigma-bindings))
+         binding-str (str/join "\n        " all-bindings)
+         destructure-keys (str/join " " (map #(str (name %) "-prev") var-names))
+         hint ";; mean: use mx/multiply, mx/add with ar-VAR, VAR-prev, optionally beta-SRC->TGT\n      ;; e.g. (mx/add (mx/multiply ar-y y-prev) (mx/multiply beta-x->y x-prev))\n      "
+         trace-lines
+         (mapv (fn [v]
+                 (str hint
+                      "(trace (keyword (str \"" (name v) "\" i))\n"
+                      "             (dist/gaussian " hole-marker
+                      " sigma-" (name v) "))"))
+               var-names)
+         body-str (str/join "\n      " trace-lines)]
+     (str "(fn [trace transitions]\n"
+          "  (let [" binding-str "]\n"
+          "    (doseq [[i {:keys [" destructure-keys "]}] (map-indexed vector transitions)]\n"
+          "      " body-str ")))"))))
 
 (defn scaffold-holes
   "Find all hole positions in a scaffold template.
@@ -1125,14 +1133,18 @@
    var-names:  all variables [:x :y]
    opts:
      :temperature  sampling temperature (default 0.3)
-     :max-tokens   max tokens (default 80)"
+     :max-tokens   max tokens (default 80)
+     :seed         PRNG seed forwarded to generation (optional)"
   ([model-map var-name var-names] (fill-hole-chat model-map var-name var-names {}))
   ([model-map var-name var-names opts]
-   (let [{:keys [temperature max-tokens] :or {temperature 0.3 max-tokens 80}} opts
+   (let [{:keys [temperature max-tokens seed]
+          :or {temperature 0.3 max-tokens 80}} opts
          prompt (fill-prompt var-name var-names)]
      (pr/let [text (llm/generate-text-raw model-map prompt
-                                          {:max-tokens max-tokens
-                                           :system-prompt fill-system-prompt})
+                                          (cond-> {:max-tokens max-tokens
+                                                   :temperature temperature
+                                                   :system-prompt fill-system-prompt}
+                                            seed (assoc :seed seed)))
               extracted (codegen/extract-code text)
               expr (str/trim extracted)]
        (when (and (seq expr) (= :complete (codegen/prefix-status expr)))
@@ -1146,10 +1158,11 @@
 
    model-map:  {:model :tokenizer :type}
    var-names:  [:x :y]
-   opts:       passed to fill-hole-chat"
+   opts:       passed to fill-hole-chat; :priors additionally overrides the
+               scaffold's prior hyperparameters (merged over default-priors)"
   ([model-map var-names] (fill-scaffold-chat model-map var-names {}))
   ([model-map var-names opts]
-   (let [scaffold (build-scaffold var-names)]
+   (let [scaffold (build-scaffold var-names (:priors opts {}))]
      (pr/loop [current scaffold, vnames var-names]
        (if (empty? vnames)
          current
@@ -1172,7 +1185,7 @@
      :temperature  sampling temperature (default 0.5 for diversity)
      + all fill-hole-chat opts
 
-   Returns a promise of [{:source :gf :expressions [...]} ...].
+   Returns a promise of [{:source :gf} ...].
    Failed compilations included with :gf nil."
   ([model-map var-names n] (generate-candidates model-map var-names n {}))
   ([model-map var-names n opts]

@@ -63,7 +63,8 @@
 
    `:close` is intentionally INERT: this transport holds only the url, not the live
    listener, so it cannot stop the server. The server lifecycle is owned by
-   genmlx.world.net/with-server (its p/finally tears the listener down) — never by
+   genmlx.world.net/with-server (its pr/handle teardown tears the listener down,
+   on both arms — genmlx-tb5f) — never by
    the client transport."
   [url]
   {:step  (fn [action] (net/request url "/step" {:action action}))

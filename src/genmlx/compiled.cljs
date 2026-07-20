@@ -1215,16 +1215,19 @@
 ;; ===========================================================================
 ;;
 ;; Detects if/if-not where both branches trace the same address with the
-;; same distribution type. Rewrites dist args with mx/where to eliminate
-;; branching. Result compiles fully via L1-M2 infrastructure.
+;; same distribution type. Compiles BOTH branches' dist args and resolves
+;; the condition HOST-side per call (CLJS truthiness, seeded into the
+;; values map) — NOT with mx/where, which disagrees with CLJS truthiness
+;; at numeric 0 (genmlx-b210). Sites then run via L1-M2 step
+;; infrastructure.
 ;;
 ;;   Source form (with branch)
 ;;     │ analyze-rewritable-branch → detect rewritable pattern
 ;;     │ extract-rewritable-sites → all sites (standard + rewritten)
 ;;     ▼
 ;;   make-branch-rewritten-simulate
-;;     │ compile cond/args, wrap in mx/where, build step fns
-;;     │ one fused lazy graph per call (compile-fn is identity)
+;;     │ compile cond + both branches' args, seed cond per call, build step fns
+;;     │ (no mx/compile-fn — branch conditions vary per call)
 ;;     ▼
 ;;   DynamicGF.simulate (in dynamic.cljs)
 ;;     │ dispatches: compiled path (same as M2)
@@ -1450,12 +1453,15 @@
   "Build a compiled simulate for models with rewritable branches (L1-M4).
 
    Detects if/if-not where both branches trace the same address with the
-   same dist-type, and rewrites dist args using mx/where.
+   same dist-type. Both branches' dist args are compiled; the condition is
+   resolved HOST-side per call with CLJS truthiness and seeded into the
+   values map (NOT mx/where — see compile-branch-rewritten-site-specs).
 
-   Returns (fn [key args-vec] -> {:values :score :retval :key}) or nil.
+   Returns (fn [key args-vec] -> {:values :score :retval}) or nil.
 
-   Reuses M2 infrastructure: build-binding-env, compile-expr, build-site-step,
-   noise-transforms, mx/compile-fn."
+   Reuses M2 infrastructure: build-binding-env, compile-expr,
+   build-site-step, noise-transforms. No mx/compile-fn — branch conditions
+   vary per call."
   [schema source]
   (when-let [{:keys [site-specs retval-fn addrs seed-conds]}
              (prepare-branch-sites schema source)]

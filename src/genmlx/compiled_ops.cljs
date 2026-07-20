@@ -429,16 +429,9 @@
    Returns (fn [args-vec old-choices selection] -> scalar) or nil.
    No key parameter — project never samples."
   [schema source]
-  (when (and (:static? schema)
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [binding-env (compiled/build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (compiled/build-fused-site-specs static-sites binding-env)
-          step-fns (when (every? some? site-specs)
-                     (mapv build-project-site-step site-specs))]
-      (when (and step-fns (every? some? step-fns))
+  (when-let [{:keys [site-specs]} (compiled/prepare-static-sites schema source)]
+    (let [step-fns (mapv build-project-site-step site-specs)]
+      (when (every? some? step-fns)
         (fn compiled-project [args-vec old-choices selection]
           (let [mlx-args (compiled/ensure-mlx-args args-vec)
                 result
@@ -453,27 +446,20 @@
   "Build a compiled project for models with rewritable branches (L1-M4).
    Returns (fn [args-vec old-choices selection] -> scalar) or nil."
   [schema source]
-  (when (and (:has-branches? schema)
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema))
-             (not (:has-loops? schema))
-             (not (:dynamic-addresses? schema)))
-    (when-let [raw-sites (compiled/extract-rewritable-sites source)]
-      (when (seq raw-sites)
-        (when-let [{:keys [site-specs seed-conds]}
-                   (compiled/compile-branch-rewritten-site-specs schema source raw-sites)]
-          (let [step-fns (mapv build-project-site-step site-specs)]
-            (when (every? some? step-fns)
-              (fn compiled-branch-project [args-vec old-choices selection]
-                (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                      result
-                      (reduce
-                       (fn [state step-fn]
-                         (step-fn state mlx-args old-choices selection))
-                       {:values (seed-conds args-vec)
-                        :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
-                       step-fns)]
-                  (:weight result))))))))))
+  (when-let [{:keys [site-specs seed-conds]}
+             (compiled/prepare-branch-sites schema source)]
+    (let [step-fns (mapv build-project-site-step site-specs)]
+      (when (every? some? step-fns)
+        (fn compiled-branch-project [args-vec old-choices selection]
+          (let [mlx-args (compiled/ensure-mlx-args args-vec)
+                result
+                (reduce
+                 (fn [state step-fn]
+                   (step-fn state mlx-args old-choices selection))
+                 {:values (seed-conds args-vec)
+                  :score (mx/scalar 0.0) :weight (mx/scalar 0.0)}
+                 step-fns)]
+            (:weight result)))))))
 
 (defn make-compiled-prefix-project
   "Build a compiled prefix project function.
@@ -590,18 +576,10 @@
    per-site regenerate step-fns + compiled retval-fn, or nil when the model
    is not M2-compilable."
   [schema source]
-  (when (and (:static? schema)
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [binding-env (compiled/build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (compiled/build-fused-site-specs static-sites binding-env)
-          step-fns (when (every? some? site-specs)
-                     (mapv build-regenerate-site-step site-specs))
-          return-expr (compiled/extract-return-expr (:return-form schema))
-          retval-fn (compiled/compile-expr return-expr binding-env #{})]
-      (when (and step-fns (every? some? step-fns) retval-fn)
+  (when-let [{:keys [site-specs retval-fn]}
+             (compiled/prepare-static-sites schema source)]
+    (let [step-fns (mapv build-regenerate-site-step site-specs)]
+      (when (and (every? some? step-fns) retval-fn)
         {:site-specs site-specs :step-fns step-fns :retval-fn retval-fn}))))
 
 (defn make-compiled-regenerate
@@ -894,33 +872,26 @@
    Returns (fn [key args-vec old-choices selection]
              -> {:values :score :weight :retval}) or nil."
   [schema source]
-  (when (and (:has-branches? schema)
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema))
-             (not (:has-loops? schema))
-             (not (:dynamic-addresses? schema)))
-    (when-let [raw-sites (compiled/extract-rewritable-sites source)]
-      (when (seq raw-sites)
-        (when-let [{:keys [site-specs retval-fn seed-conds addrs]}
-                   (compiled/compile-branch-rewritten-site-specs schema source raw-sites)]
-          (let [step-fns (mapv build-regenerate-site-step site-specs)]
-            (when (every? some? step-fns)
-              (fn compiled-branch-regenerate [key args-vec old-choices selection]
-                (let [mlx-args (compiled/ensure-mlx-args args-vec)
-                      {:keys [values score weight]}
-                      (reduce
-                       (fn [state step-fn]
-                         (step-fn state mlx-args old-choices selection))
-                       {:values (seed-conds args-vec)
-                        :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
-                       step-fns)]
-                  ;; Strip reserved branch-cond keys from the trace choicemap (genmlx-gc4w)
-                  {:values (select-keys values addrs)
-                   :score score
-                   :weight weight
-                   ;; RAW args, matching M2 simulate + the handler: an arg-derived
-                   ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
-                   :retval (retval-fn values args-vec)})))))))))
+  (when-let [{:keys [site-specs retval-fn seed-conds addrs]}
+             (compiled/prepare-branch-sites schema source)]
+    (let [step-fns (mapv build-regenerate-site-step site-specs)]
+      (when (every? some? step-fns)
+        (fn compiled-branch-regenerate [key args-vec old-choices selection]
+          (let [mlx-args (compiled/ensure-mlx-args args-vec)
+                {:keys [values score weight]}
+                (reduce
+                 (fn [state step-fn]
+                   (step-fn state mlx-args old-choices selection))
+                 {:values (seed-conds args-vec)
+                  :score (mx/scalar 0.0) :weight (mx/scalar 0.0) :key key}
+                 step-fns)]
+            ;; Strip reserved branch-cond keys from the trace choicemap (genmlx-gc4w)
+            {:values (select-keys values addrs)
+             :score score
+             :weight weight
+             ;; RAW args, matching M2 simulate + the handler: an arg-derived
+             ;; retval keeps its caller-facing type across ALL ops (genmlx-8mih)
+             :retval (retval-fn values args-vec)}))))))
 
 (defn make-compiled-prefix-regenerate
   "Build a compiled prefix regenerate function.
@@ -1083,27 +1054,19 @@
    where outputs columns 0..K-1 are site values in addr-order, columns K..K+N-1 are
    state values (N=1 for scalar state, N=len(state-keys) for map state)."
   [schema source T extra-args]
-  (when (and (:static? schema)
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [binding-env (compiled/build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (compiled/build-fused-site-specs static-sites binding-env)
-          noise-indices (assign-noise-indices site-specs)
+  (when-let [{:keys [site-specs retval-fn addrs]}
+             (compiled/prepare-static-sites schema source)]
+    (let [noise-indices (assign-noise-indices site-specs)
           noise-site-types (extract-noise-site-types site-specs)
           noise-dim (count noise-site-types)
           fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
                             site-specs noise-indices)
-          ;; Compile return expression — detect map-valued state
+          ;; Map-valued state detection needs the RAW return expression
           return-expr (compiled/extract-return-expr (:return-form schema))
           map-state? (map? return-expr)
           state-keys (when map-state? (vec (sort (keys return-expr))))
-          n-state (if map-state? (count state-keys) 1)
-          retval-fn (compiled/compile-expr return-expr binding-env #{})
-          addr-order (mapv :addr static-sites)]
-      (when (and (every? some? site-specs)
-                 (every? some? fused-steps)
+          addr-order addrs]
+      (when (and (every? some? fused-steps)
                  retval-fn
                  (pos? noise-dim))
         (let [extra-arrs (mapv mx/ensure-array extra-args)
@@ -1164,14 +1127,9 @@
      (fn [init-carry inputs-tensor noise-2d] -> [outputs-tensor [T,K+2], step-scores [T], total-score])
    where outputs columns: 0..K-1 site values, K carry, K+1 output."
   [schema source T]
-  (when (and (:static? schema)
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [binding-env (compiled/build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (compiled/build-fused-site-specs static-sites binding-env)
-          noise-indices (assign-noise-indices site-specs)
+  (when-let [{:keys [site-specs binding-env addrs]}
+             (compiled/prepare-static-sites schema source)]
+    (let [noise-indices (assign-noise-indices site-specs)
           noise-site-types (extract-noise-site-types site-specs)
           noise-dim (count noise-site-types)
           fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
@@ -1182,9 +1140,8 @@
                      (compiled/compile-expr (first return-expr) binding-env #{}))
           output-fn (when (vector? return-expr)
                       (compiled/compile-expr (second return-expr) binding-env #{}))
-          addr-order (mapv :addr static-sites)]
-      (when (and (every? some? site-specs)
-                 (every? some? fused-steps)
+          addr-order addrs]
+      (when (and (every? some? fused-steps)
                  carry-fn output-fn
                  (pos? noise-dim))
         (let [scan-fn
@@ -1247,28 +1204,22 @@
    Stacks element args into [N]-shaped arrays, pre-generates [N] noise per site,
    runs site steps once with broadcasting.
 
-   Returns (fn [key stacked-args] -> {:values {addr -> [N]-arr} :scores [N]-arr :retval [N]-arr})
+   Returns {:fused-fn (fn [key stacked-args N] -> {:values {addr -> [N]-arr}
+                                                   :scores [N]-arr :retval [N]-arr})
+            :noise-site-types :addr-order}
    or nil if kernel can't be fused.
 
    stacked-args: vector of [N]-shaped arrays (one per kernel param)."
   [schema source]
-  (when (and (:static? schema)
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [binding-env (compiled/build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (compiled/build-fused-site-specs static-sites binding-env)
-          noise-indices (assign-noise-indices site-specs)
+  (when-let [{:keys [site-specs retval-fn addrs]}
+             (compiled/prepare-static-sites schema source)]
+    (let [noise-indices (assign-noise-indices site-specs)
           noise-site-types (extract-noise-site-types site-specs)
           noise-dim (count noise-site-types)
           fused-steps (mapv (fn [spec ni] (build-fused-site-step spec ni))
                             site-specs noise-indices)
-          return-expr (compiled/extract-return-expr (:return-form schema))
-          retval-fn (compiled/compile-expr return-expr binding-env #{})
-          addr-order (mapv :addr static-sites)]
-      (when (and (every? some? site-specs)
-                 (every? some? fused-steps)
+          addr-order addrs]
+      (when (and (every? some? fused-steps)
                  retval-fn
                  (pos? noise-dim))
         {:fused-fn
@@ -1316,61 +1267,55 @@
    args: argument vector (will be converted to MLX arrays)
    observations: ChoiceMap of observed values"
   [schema source args observations]
-  (when (and schema (:static? schema)
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [binding-env (compiled/build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (compiled/build-fused-site-specs static-sites binding-env)]
-      (when (every? some? site-specs)
-        (let [mlx-args (compiled/ensure-mlx-args (vec args))
-              ;; Separate observed vs latent using source-order static-sites
-              ;; (matches L1 compiled paths in compiled/prepare-static-sites)
-              all-addrs (mapv :addr static-sites)
-              obs-addrs (set (map first (cm/addresses observations)))
-              latent-addrs (vec (remove obs-addrs all-addrs))
-              latent-index (into {} (map-indexed (fn [i a] [a i]) latent-addrs))
-              ;; Pre-extract observed values
-              obs-values (into {} (keep (fn [addr]
-                                          (when (obs-addrs addr)
-                                            (let [sub (cm/get-submap observations addr)]
-                                              (when (cm/has-value? sub)
-                                                [addr (cm/get-value sub)]))))
-                                  all-addrs))
-              ;; Build per-site log-prob step functions
-              ;; Each returns (fn [values-map] -> log-prob-scalar) or nil
-              site-lp-fns
-              (mapv
-                (fn [site-spec]
-                  (let [{:keys [addr compiled-args dist-type]} site-spec
-                        nt (get compiled/noise-transforms-full dist-type)]
-                    (when nt
-                      (let [log-prob-fn (:log-prob nt)]
-                        (fn [values-map]
-                          (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
-                            (apply log-prob-fn (get values-map addr) eval-args)))))))
-                site-specs)]
-          (when (every? some? site-lp-fns)
-            ;; Build the tensor-score closure
-            (let [dep-order (:dep-order schema)]
-              (fn tensor-score [latent-tensor]
-                ;; Build values-map: latent from tensor, observed baked in
-                (let [values-map
-                      (reduce
-                        (fn [vm addr]
-                          (assoc vm addr
-                                 (if-let [idx (get latent-index addr)]
-                                   (mx/index latent-tensor idx)
-                                   (get obs-values addr))))
-                        {}
-                        dep-order)]
-                  ;; Sum all site log-probs
+  (when-let [{:keys [site-specs addrs]}
+             (compiled/prepare-static-sites schema source)]
+    (let [mlx-args (compiled/ensure-mlx-args (vec args))
+          ;; Separate observed vs latent using source-order static-sites
+          ;; (matches compiled/prepare-static-sites addr order)
+          all-addrs addrs
+          obs-addrs (set (map first (cm/addresses observations)))
+          latent-addrs (vec (remove obs-addrs all-addrs))
+          latent-index (into {} (map-indexed (fn [i a] [a i]) latent-addrs))
+          ;; Pre-extract observed values
+          obs-values (into {} (keep (fn [addr]
+                                      (when (obs-addrs addr)
+                                        (let [sub (cm/get-submap observations addr)]
+                                          (when (cm/has-value? sub)
+                                            [addr (cm/get-value sub)]))))
+                              all-addrs))
+          ;; Build per-site log-prob step functions
+          ;; Each returns (fn [values-map] -> log-prob-scalar) or nil
+          site-lp-fns
+          (mapv
+            (fn [site-spec]
+              (let [{:keys [addr compiled-args dist-type]} site-spec
+                    nt (get compiled/noise-transforms-full dist-type)]
+                (when nt
+                  (let [log-prob-fn (:log-prob nt)]
+                    (fn [values-map]
+                      (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
+                        (apply log-prob-fn (get values-map addr) eval-args)))))))
+            site-specs)]
+      (when (every? some? site-lp-fns)
+        ;; Build the tensor-score closure
+        (let [dep-order (:dep-order schema)]
+          (fn tensor-score [latent-tensor]
+            ;; Build values-map: latent from tensor, observed baked in
+            (let [values-map
                   (reduce
-                    (fn [score lp-fn]
-                      (mx/add score (lp-fn values-map)))
-                    (mx/scalar 0.0)
-                    site-lp-fns))))))))))
+                    (fn [vm addr]
+                      (assoc vm addr
+                             (if-let [idx (get latent-index addr)]
+                               (mx/index latent-tensor idx)
+                               (get obs-values addr))))
+                    {}
+                    dep-order)]
+              ;; Sum all site log-probs
+              (reduce
+                (fn [score lp-fn]
+                  (mx/add score (lp-fn values-map)))
+                (mx/scalar 0.0)
+                site-lp-fns))))))))
 
 (defn make-tensor-score-with-index
   "Like make-tensor-score but also returns the latent addr-index.
@@ -1406,30 +1351,24 @@
    The returned values-map maps each address to an [N]-shaped MLX array.
    log-prob is [N]-shaped total log-probability per particle."
   [schema source]
-  (when (and schema (:static? schema)
-             (seq (:trace-sites schema))
-             (empty? (:splice-sites schema))
-             (empty? (:param-sites schema)))
-    (let [binding-env (compiled/build-binding-env source)
-          static-sites (filterv :static? (:trace-sites schema))
-          site-specs (compiled/build-fused-site-specs static-sites binding-env)]
-      (when (and (every? some? site-specs)
-                 ;; Every site must be a NORMAL-noise distribution or a true
-                 ;; delta. The supplied noise slice is standard normal, so a
-                 ;; latent uniform/bernoulli/exponential/laplace/cauchy site
-                 ;; (whose :noise-fn is inverse-CDF from UNIFORM noise) would be
-                 ;; fed the wrong noise and corrupt the particle + its bootstrap
-                 ;; weight (genmlx-j22a). A latent :args-noise-fn site
-                 ;; (iid-gaussian) would silently degrade to value=first-arg
-                 ;; (genmlx-b210). Both are declined at build time, falling back
-                 ;; to the handler SMC path.
-                 (every? (fn [ss]
-                           (or (= :delta (:dist-type ss))
-                               (contains? compiled/normal-noise-dist-types
-                                          (:dist-type ss))))
-                         site-specs))
+  (when-let [{:keys [site-specs binding-env addrs]}
+             (compiled/prepare-static-sites schema source)]
+    ;; Every site must be a NORMAL-noise distribution or a true
+    ;; delta. The supplied noise slice is standard normal, so a
+    ;; latent uniform/bernoulli/exponential/laplace/cauchy site
+    ;; (whose :noise-fn is inverse-CDF from UNIFORM noise) would be
+    ;; fed the wrong noise and corrupt the particle + its bootstrap
+    ;; weight (genmlx-j22a). A latent :args-noise-fn site
+    ;; (iid-gaussian) would silently degrade to value=first-arg
+    ;; (genmlx-b210). Both are declined at build time, falling back
+    ;; to the handler SMC path.
+    (when (every? (fn [ss]
+                    (or (= :delta (:dist-type ss))
+                        (contains? compiled/normal-noise-dist-types
+                                   (:dist-type ss))))
+                  site-specs)
         (let [dep-order (:dep-order schema)
-              all-addrs (mapv :addr static-sites)
+              all-addrs addrs
               addr-index (into {} (map-indexed (fn [i a] [a i]) all-addrs))
               K (count all-addrs)
               ;; Compile the return expression for state propagation
@@ -1504,5 +1443,5 @@
                :obs-log-prob obs-log-prob
                :addr-index addr-index
                :all-addrs all-addrs
-               :retval (when retval-fn (retval-fn values-map mlx-args))})))))))
+               :retval (when retval-fn (retval-fn values-map mlx-args))}))))))
 

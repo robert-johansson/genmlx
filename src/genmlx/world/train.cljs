@@ -31,7 +31,7 @@
    GFI-score gradient flow. Fenced exactly like the two existing precedents:
    `world.net`'s `with-server` (a live Bun.serve listener) and `llm/backend.cljs`'s
    KV-cache atom (mutation inside try/finally). `with-trainer` is the blessed scope
-   (pr/finally teardown); `make-trainer!` is the low-level escape hatch.
+   (pr/handle teardown); `make-trainer!` is the low-level escape hatch.
 
    GOTCHA (load-bearing): the native `trainStepAuto` reward callback awaits a NATIVE
    `js/Promise<number[]>`. A promesa promise is NOT `instanceof js/Promise`, so the
@@ -316,7 +316,7 @@
 (defn with-trainer
   "[blessed scope] Build a trainer over `model`+`config`, call `(f trainer)` — which
    MUST return a promise — and GUARANTEE the trainer is disposed afterwards, on
-   success OR failure (the pr/finally runs even when f's promise rejects). Returns the
+   success OR failure (the pr/handle teardown runs on both arms). Returns the
    promise of `(f trainer)`'s result. This is the only place a trainer lifecycle
    should live in tests/examples."
   ([model config f] (with-trainer model config {} f))

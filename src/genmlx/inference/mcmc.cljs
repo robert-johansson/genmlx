@@ -483,8 +483,7 @@
    {:keys [collect-chain block-size-collect]}]
   (mx/with-resource-guard-gc
     (fn []
-      (let [param-shape [n-params]
-            rk (rng/ensure-key key)
+      (let [rk (rng/ensure-key key)
         ;; Phase 1: Burn-in via compiled chain blocks
             [params rk]
             (if (and burn-chain (pos? burn))
@@ -831,6 +830,35 @@
         _ (mx/materialize! new-params)]
     {:state new-params :n-accepted (int n-accepted)}))
 
+(defn- run-vectorized-chains
+  "Shared collection loop for the vectorized multi-chain samplers
+   (vectorized-compiled-mh / vectorized-mala / vectorized-hmc).
+   step-fn: (fn [state step-key] -> {:state :n-accepted}) closing over the
+   sampler-specific transition. Keeps every `thin`-th state past `burn`;
+   returns a vector of [N-chains, D] JS arrays with :acceptance-rate meta.
+   Denominator: steps actually run (i at exit) × chains — the loop stops at
+   the last kept sample, burn+(samples-1)*thin+1 steps, not
+   burn+samples*thin (genmlx-7ca0, see collect-samples)."
+  [{:keys [samples burn thin callback key n-chains]} init-params step-fn]
+  (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
+    (if (>= n samples)
+      (with-meta (persistent! acc)
+        {:acceptance-rate (if (pos? i)
+                            (/ total-accepted (* i n-chains))
+                            0)})
+      (let [[step-key next-key] (rng/split-or-nils rk)
+            {:keys [state n-accepted]} (step-fn state step-key)
+            _ (when (zero? (mod i sweep-cadence)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
+            past-burn? (>= i burn)
+            keep? (and past-burn? (zero? (mod (- i burn) thin)))]
+        (when (and callback keep?)
+          (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
+        (recur (inc i) state
+               (if keep? (conj! acc (mx/->clj state)) acc)
+               (if keep? (inc n) n)
+               (+ total-accepted n-accepted)
+               next-key)))))
+
 (defn vectorized-compiled-mh
   "Vectorized compiled MH: N independent chains running in parallel.
    MLX broadcasting executes the model ONCE per step for all N chains.
@@ -860,28 +888,12 @@
                                                (u/extract-params trace addresses))))))
              param-shape (mx/shape init-params)
              std (mx/scalar proposal-std)]
-         ;; Denominator: steps actually run (i at exit) × chains — the loop
-         ;; stops at the last kept sample, burn+(samples-1)*thin+1 steps,
-         ;; not burn+samples*thin (genmlx-7ca0).
-         (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
-           (if (>= n samples)
-             (with-meta (persistent! acc)
-               {:acceptance-rate (if (pos? i)
-                                   (/ total-accepted (* i n-chains))
-                                   0)})
-             (let [[step-key next-key] (rng/split-or-nils rk)
-                   {:keys [state n-accepted]} (vectorized-mh-step
-                                               state score-fn std param-shape n-chains step-key)
-                   _ (when (zero? (mod i sweep-cadence)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
-                   past-burn? (>= i burn)
-                   keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-               (when (and callback keep?)
-                 (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
-               (recur (inc i) state
-                      (if keep? (conj! acc (mx/->clj state)) acc)
-                      (if keep? (inc n) n)
-                      (+ total-accepted n-accepted)
-                      next-key))))))))
+         (run-vectorized-chains
+          {:samples samples :burn burn :thin thin :callback callback
+           :key key :n-chains n-chains}
+          init-params
+          (fn [state step-key]
+            (vectorized-mh-step state score-fn std param-shape n-chains step-key)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized Compiled Trajectory MH (N chains × K steps per dispatch)
@@ -1240,7 +1252,8 @@
   (let [key (rng/ensure-key key)
         [noise-key accept-key] (rng/split key)
         ;; MALA proposal: q' = q + eps^2/2 * grad + eps * noise
-        [_ g] (val-grad-compiled q)
+        ;; One val-grad call per point: score-q rides along with g
+        [score-q g] (val-grad-compiled q)
         noise (rng/normal noise-key q-shape)
         q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise))
         ;; Break lazy graph — proposal and gradient needed for correction
@@ -1254,8 +1267,6 @@
         bwd-mean (mx/add q' (mx/multiply half-eps2 g'))
         log-fwd (log-proposal-density q' fwd-mean two-eps-sq)
         log-bwd (log-proposal-density q bwd-mean two-eps-sq)
-        ;; Score at q — reuse val-grad
-        [score-q _] (val-grad-compiled q)
         ;; Break lazy graph — all terms needed as JS numbers for accept
         _ (mx/materialize! log-fwd log-bwd score-q)
         log-accept (+ (- (mx/item score-q') (mx/item score-q))
@@ -1269,7 +1280,7 @@
    Returns compiled fn: (q [D], score scalar, grad [D], noise [K,D], uniforms [K])
      → #js [q', score', grad'].
    Score and gradient are threaded through iterations — only 1 val-grad call per
-   step (at the proposal), compared to 3 in the eager mala-step."
+   step (at the proposal), compared to 2 in the eager mala-step."
   [k-steps val-grad-fn eps half-eps2 two-eps-sq n-params]
   (let [chain-fn
         (fn [q score-q grad-q noise-2d uniforms-1d]
@@ -1787,28 +1798,13 @@
              eps (mx/scalar step-size)
              half-eps2 (mx/scalar (* 0.5 step-size step-size))
              two-eps-sq (mx/scalar (* 2.0 step-size step-size))]
-         ;; Denominator: steps actually run (i at exit), not burn+samples*thin
-         ;; (genmlx-7ca0, see collect-samples).
-         (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
-           (if (>= n samples)
-             (with-meta (persistent! acc)
-               {:acceptance-rate (if (pos? i)
-                                   (/ total-accepted (* i n-chains))
-                                   0)})
-             (let [[step-key next-key] (rng/split-or-nils rk)
-                   {:keys [state n-accepted]}
-                   (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
-                                         n-chains step-key)
-                   _ (when (zero? (mod i sweep-cadence)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
-                   past-burn? (>= i burn)
-                   keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-               (when (and callback keep?)
-                 (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
-               (recur (inc i) state
-                      (if keep? (conj! acc (mx/->clj state)) acc)
-                      (if keep? (inc n) n)
-                      (+ total-accepted n-accepted)
-                      next-key))))))))
+         (run-vectorized-chains
+          {:samples samples :burn burn :thin thin :callback callback
+           :key key :n-chains n-chains}
+          init-params
+          (fn [state step-key]
+            (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
+                                  n-chains step-key)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Mass matrix helpers for HMC / NUTS
@@ -2416,28 +2412,13 @@
              eps (mx/scalar step-size)
              half-eps (mx/scalar (* 0.5 step-size))
              half (mx/scalar 0.5)]
-         ;; Denominator: steps actually run (i at exit), not burn+samples*thin
-         ;; (genmlx-7ca0, see collect-samples).
-         (loop [i 0, state init-params, acc (transient []), n 0, total-accepted 0, rk key]
-           (if (>= n samples)
-             (with-meta (persistent! acc)
-               {:acceptance-rate (if (pos? i)
-                                   (/ total-accepted (* i n-chains))
-                                   0)})
-             (let [[step-key next-key] (rng/split-or-nils rk)
-                   {:keys [state n-accepted]}
-                   (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
-                                        n-chains leapfrog-steps step-key)
-                   _ (when (zero? (mod i sweep-cadence)) (mx/sweep-dead-arrays!) (mx/clear-cache!))
-                   past-burn? (>= i burn)
-                   keep? (and past-burn? (zero? (mod (- i burn) thin)))]
-               (when (and callback keep?)
-                 (callback {:iter n :value (mx/->clj state) :n-accepted n-accepted}))
-               (recur (inc i) state
-                      (if keep? (conj! acc (mx/->clj state)) acc)
-                      (if keep? (inc n) n)
-                      (+ total-accepted n-accepted)
-                      next-key))))))))
+         (run-vectorized-chains
+          {:samples samples :burn burn :thin thin :callback callback
+           :key key :n-chains n-chains}
+          init-params
+          (fn [state step-key]
+            (vectorized-hmc-step state neg-U-fn grad-fn eps half-eps half
+                                 n-chains leapfrog-steps step-key)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; NUTS (No-U-Turn Sampler)
@@ -2747,7 +2728,7 @@
       #(mx/with-resource-guard
          (fn []
            (let [{:keys [trace]} (p/generate model args observations)
-                 {:keys [score-fn init-params n-params latent-index]}
+                 {:keys [score-fn init-params latent-index]}
                  (u/prepare-mcmc-score model args observations addresses trace)
                  layout (u/compute-param-layout trace addresses)
                  val-grad-fn (mx/value-and-grad score-fn)

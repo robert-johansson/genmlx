@@ -9,7 +9,9 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
+            [genmlx.llm.backend :as llm]
             [genmlx.test-helpers :as h]
+            [promesa.core :as pr]
             [clojure.string :as str]))
 
 ;; ============================================================
@@ -559,6 +561,37 @@
                (< (js/Math.abs (- an is)) 3.0)))
 
 ;; ============================================================
+;; 19c. build-scaffold integrates against the same priors (genmlx-vbxd)
+;; ============================================================
+
+(println "\n== scaffold priors match the transition-source priors (genmlx-vbxd) ==")
+
+;; build-scaffold was the THIRD prior emitter and kept the pre-b4z9 hardcoded
+;; (dist/gaussian 0.5 0.3) AR / (dist/gaussian 0 0.3) cross priors — exactly
+;; the 0.3-vs-3.0 mismatch b4z9 was closed for, live on the LLM-synthesis
+;; path. All emitters must agree per address, sourced from default-priors.
+(let [scaffold (prog/build-scaffold [:x :y])
+      edges {["x" "y"] true ["y" "x"] true}
+      src (prog/build-transition-source [:x :y] edges {})
+      prior-of (fn [s addr]
+                 (second (re-find (re-pattern (str addr "\\s+\\(dist/gaussian ([^)]+)\\)"))
+                                  s)))]
+  (doseq [addr [":ar-x" ":ar-y" ":beta-x->y" ":beta-y->x"]]
+    (assert-equal (str "scaffold and transition-source agree on " addr " prior")
+                  (prior-of src addr) (prior-of scaffold addr))
+    (assert-true (str addr " prior present in both emitters")
+                 (some? (prior-of scaffold addr))))
+  (assert-true "scaffold AR prior comes from default-priors (0.5 0.15)"
+               (str/includes? scaffold "(dist/gaussian 0.5 0.15)"))
+  (assert-true "scaffold cross prior comes from default-priors (0 3)"
+               (str/includes? scaffold "(dist/gaussian 0 3)"))
+  (assert-true "scaffold no longer hardcodes the pre-b4z9 0.3 cross std"
+               (not (str/includes? scaffold "(dist/gaussian 0 0.3)")))
+  (assert-true "scaffold priors overridable from opts"
+               (str/includes? (prog/build-scaffold [:x :y] {:beta-prior-std 0.3})
+                              "(dist/gaussian 0 0.3)")))
+
+;; ============================================================
 ;; 20. K-variable data generation and transition extraction
 ;; ============================================================
 
@@ -723,6 +756,57 @@
   (assert-true "elapsed under 200ms x time-scale" (< (:elapsed-ms result) (* 200 h/time-scale)))
   (println (str "    elapsed: " (:elapsed-ms result) "ms, "
                 (count trans) " transitions")))
+
+;; ============================================================
+;; 27. chat-fill temperature plumbing (genmlx-sjns)
+;; ============================================================
+;;
+;; generate-candidates exists to produce DIVERSE candidates and sets
+;; :temperature 0.5 for that purpose; fill-hole-chat used to destructure
+;; :temperature and then DROP it — greedy argmax made every candidate
+;; byte-identical. The backend is stubbed (alter-var-root, restored below —
+;; with-redefs would restore before the promise chain finishes) to capture
+;; the opts that actually reach generation and to return a distinct
+;; expression per sampling call: this pins the PLUMBING; sampled diversity
+;; itself rides on the real-model path.
+
+(println "\n== chat-fill temperature plumbing (genmlx-sjns) ==")
+
+(def ^:private captured-gen-opts (atom []))
+(def ^:private real-generate-text-raw llm/generate-text-raw)
+
+(defn- stub-generate-text-raw
+  [_model-map _prompt opts]
+  (swap! captured-gen-opts conj opts)
+  (let [i (count @captured-gen-opts)]
+    (pr/resolved (if (pos? (:temperature opts 0))
+                   (str "(mx/multiply ar-x (mx/scalar " i "))")
+                   "(mx/multiply ar-x x-prev)"))))
+
+(alter-var-root #'llm/generate-text-raw (constantly stub-generate-text-raw))
+
+(-> (pr/let [expr-default (prog/fill-hole-chat nil :x [:x :y])
+             expr-hot     (prog/fill-hole-chat nil :x [:x :y] {:temperature 0.9 :seed 7})
+             candidates   (prog/generate-candidates nil [:x :y] 3 {})]
+      (assert-true "fill-hole-chat returns a validated expression"
+                   (string? expr-default))
+      (assert-true "single-hole default temperature 0.3 reaches the backend"
+                   (= 0.3 (:temperature (first @captured-gen-opts))))
+      (assert-true "explicit temperature 0.9 reaches the backend"
+                   (= 0.9 (:temperature (second @captured-gen-opts))))
+      (assert-true "explicit :seed is forwarded" (= 7 (:seed (second @captured-gen-opts))))
+      (assert-true "hot fill still validates" (string? expr-hot))
+      (assert-true "generate-candidates defaults to temperature 0.5 for diversity"
+                   (and (= 6 (count (drop 2 @captured-gen-opts)))
+                        (every? #(= 0.5 (:temperature %)) (drop 2 @captured-gen-opts))))
+      (assert-equal "generate-candidates yields 3 candidates" 3 (count candidates))
+      (assert-true "all candidates carry :source" (every? :source candidates))
+      (assert-true "candidate sources are pairwise DISTINCT (the point of genmlx-sjns)"
+                   (= 3 (count (distinct (map :source candidates))))))
+    (pr/handle (fn [r e]
+                 (alter-var-root #'llm/generate-text-raw (constantly real-generate-text-raw))
+                 (when e (assert-true (str "sjns plumbing test threw: " (ex-message e)) false))
+                 r)))
 
 ;; ============================================================
 ;; Summary
