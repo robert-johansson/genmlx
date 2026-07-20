@@ -328,6 +328,18 @@
   (let [r (.gatedDeltaStep c q k v g-log beta state)]
     [(aget r 0) (aget r 1)]))
 
+(defn fused-gdn-gating
+  "Fused GDN gating in ONE kernel dispatch (genmlx-krma) — the same kernel
+   the native qwen3.5 forward uses: beta = sigmoid(b), g-log =
+   -exp(A-log)·softplus(a + dt-bias). b/a [B T Hv] (model dtype);
+   a-log/dt-bias [Hv] f32 (per-head). Returns [beta g-log], both [B T Hv]
+   — beta in b's dtype, g-log f32 (the log-space gate contract of
+   gated-delta-scan/-step). NOT differentiable (like the recurrence
+   kernels) — decode/scoring paths only. Pure graph op."
+  [b a a-log dt-bias]
+  (let [r (.fusedGdnGating c b a a-log dt-bias)]
+    [(aget r 0) (aget r 1)]))
+
 (defn slice-nd
   "Contiguous n-d slice with per-axis [start stop) bounds — ONE membrane
    call over the native slice export, a VIEW at eval (no gather kernel;

@@ -99,23 +99,55 @@
 
 (def ^:private wp "language_model.model.")
 
+(defn- fused-gating-available?
+  "Load-time capability probe for the fused GDN gating kernel
+   (genmlx-krma). OPT-IN via GENMLX_FUSED_GATING=1: measured on Thor/CUDA
+   (0.8b, 2026-07-20), the fused kernel makes decode ~25 -> ~32 ms/token
+   DESPITE replacing ~8 ops — custom kernels mark their CUDA graph
+   segments non-updatable, so every per-layer kernel adds a per-eval
+   re-instantiation that costs more than the ops it removes (the ps8a
+   scan wins because prefill is few dispatches of huge work; per-token
+   custom kernels lose). Kept for Metal measurement and as plumbing for
+   future native primitives. On opt-in, the probe FORCES EVAL so a JIT
+   failure surfaces at load; verdict is a load-time derived VALUE (no
+   runtime mutable state)."
+  []
+  (and (= "1" (aget (.-env js/process) "GENMLX_FUSED_GATING"))
+       (try
+    ;; Force EVAL, not just graph build — custom-kernel JIT (NVRTC on CUDA)
+    ;; happens at evaluation, so a build-only probe would pass and then die
+    ;; at the first decode step.
+    (let [[beta g-log] (mx/fused-gdn-gating (mx/zeros [1 1 2]) (mx/zeros [1 1 2])
+                                            (mx/zeros [2] mx/float32)
+                                            (mx/zeros [2] mx/float32))]
+      (mx/materialize! beta g-log))
+    true
+    (catch :default e
+      (js/console.warn "[gdn] fused gating kernel unavailable — composed"
+                       "fallback:" (or (ex-message e) (str e)))
+      false))))
+
 (defn- gdn-derived
   "Load-time derived per-GDN-layer constants (genmlx-t2cz L4): for each
    linear_attention layer prefix, :neg-a = -exp(f32 A_log) and :dt-f32 =
    f32 dt_bias — the weight-derived g-log inputs that otherwise rebuild 4
-   lazy nodes per layer per decode step — plus a shared :ones-dk for the
-   weightless q/k RMSNorm. Pure load-time value derivation (lazy views over
-   immutable weights, built outside any tidy scope)."
+   lazy nodes per layer per decode step — plus :a-log-f32 (the RAW f32
+   A_log the fused gating kernel consumes, genmlx-krma), a shared
+   :ones-dk for the weightless q/k RMSNorm, and :fused-gating? (the
+   load-time kernel capability probe). Pure load-time value derivation
+   (lazy views over immutable weights, built outside any tidy scope)."
   [cfg weights]
   (let [{:keys [lin-k-heads lin-v-heads lin-k-dim lin-v-dim conv-k]} cfg
         conv-dim (+ (* 2 lin-k-heads lin-k-dim) (* lin-v-heads lin-v-dim))]
-    (into {:ones-dk (mx/ones [lin-k-dim])}
+    (into {:ones-dk (mx/ones [lin-k-dim])
+           :fused-gating? (fused-gating-available?)}
           (for [i     (range (:n-layers cfg))
                 :when (= "linear_attention" (nth (:layer-types cfg) i))
                 :let  [p (str wp "layers." i ".linear_attn.")]]
             [p {:neg-a   (mx/multiply (mx/exp (mx/astype (get weights (str p "A_log"))
                                                          mx/float32))
                                       -1.0)
+                :a-log-f32 (mx/astype (get weights (str p "A_log")) mx/float32)
                 :dt-f32  (mx/astype (get weights (str p "dt_bias")) mx/float32)
                 ;; [K conv-dim] layout of conv1d.weight for the T=1 decode
                 ;; conv fast path (broadcast-multiply + K-axis sum)
@@ -454,15 +486,23 @@
         ;; the residual stream remains bf16. -exp(A_log) and f32 dt_bias are
         ;; load-time derived constants (genmlx-t2cz L4; per-call fallback for
         ;; models loaded without :derived, e.g. hand-built test models).
-        beta   (mx/astype (mx/sigmoid bb) mx/float32)  ; [B T Hv]
-        neg-a  (or (:neg-a der)
-                   (mx/multiply (mx/exp (mx/astype (g "A_log") mx/float32)) -1.0)) ; [Hv]
-        dt-bias (or (:dt-f32 der) (mx/astype (g "dt_bias") mx/float32))            ; [Hv]
-        ;; Log-space decay gate, computed DIRECTLY — never (mx/log gg): strong
+        ;; When the load-time probe says the fused gating kernel is available
+        ;; (genmlx-krma; the native forward's same kernel), BOTH gates come
+        ;; from ONE dispatch; else the composed chain below. The log-space
+        ;; g-log is computed DIRECTLY either way — never (mx/log gg): strong
         ;; decay underflows exp-space gg to 0 and log(0) = -inf would NaN the
         ;; fused scan's in-chunk decay-diff (genmlx-ps8a).
-        g-log  (mx/multiply neg-a
-                            (softplus (mx/add (mx/astype aa mx/float32) dt-bias)))  ; [B T Hv]
+        [beta g-log]
+        (if (and (:fused-gating? derived) der)
+          (let [[b* g*] (mx/fused-gdn-gating bb aa (:a-log-f32 der) (:dt-f32 der))]
+            [(mx/astype b* mx/float32) g*])
+          (let [beta   (mx/astype (mx/sigmoid bb) mx/float32)  ; [B T Hv]
+                neg-a  (or (:neg-a der)
+                           (mx/multiply (mx/exp (mx/astype (g "A_log") mx/float32)) -1.0)) ; [Hv]
+                dt-bias (or (:dt-f32 der) (mx/astype (g "dt_bias") mx/float32))            ; [Hv]
+                g-log  (mx/multiply neg-a
+                                    (softplus (mx/add (mx/astype aa mx/float32) dt-bias)))] ; [B T Hv]
+            [beta g-log]))
         ;; --- GQA: repeat q,k from Hk to Hv heads (np.repeat along head axis) ---
         rep (quot Hv Hk)
         q   (mx/astype (if (> rep 1) (mx/repeat-arr q rep 2) q) mx/float32)

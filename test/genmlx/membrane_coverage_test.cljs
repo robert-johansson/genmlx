@@ -258,9 +258,10 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 226 (count exported-fns))
+      (is (= 227 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 226) — the partition test above pinpoints what moved."))
+               " fns (pinned at 227; 2026-07-20 genmlx-krma added fusedGdnGating) "
+               "— the partition test above pinpoints what moved."))
       (is (= 49 (count omitted))
           (str "intentional-omissions size changed: " (count omitted) " (pinned at 49)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
