@@ -50,14 +50,15 @@
                       ["THREE" c/THREE] ["HALF" c/HALF] ["NEG-INF" c/NEG-INF]
                       ["LOG-2" c/LOG-2] ["LOG-2PI-HALF" c/LOG-2PI-HALF]
                       ["LOG-PI" c/LOG-PI] ["MLX-PI" c/MLX-PI]
+                      ["TWO-PI" c/TWO-PI]
                       ["SQRT-TWO" c/SQRT-TWO] ["TINY" c/TINY]]]
       (is (= [] (mx/shape arr)) (str nm " is a scalar")))))
 
 (deftest constants-surface-pin
   (testing "the exact public surface (add/remove a constant -> update this file)"
     (is (= #{"LOG-2PI" "ZERO" "ONE" "TWO" "THREE" "HALF" "NEG-INF" "LOG-2"
-             "LOG-2PI-HALF" "LOG-PI" "MLX-PI" "SQRT-TWO" "TINY"}
+             "LOG-2PI-HALF" "LOG-PI" "MLX-PI" "TWO-PI" "SQRT-TWO" "TINY"}
            (set (map name (keys (ns-publics 'genmlx.mlx.constants)))))
-        "13 public defs, no silent additions or removals")))
+        "14 public defs, no silent additions or removals")))
 
 (cljs.test/run-tests)
