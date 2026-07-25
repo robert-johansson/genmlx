@@ -277,7 +277,11 @@ do_one() {
   # exit code is the reliable signal (cljs.test AND legacy files exit non-zero on
   # failure). For a clean exit, only the machine-stable cljs.test summary can still
   # indicate failure; do NOT loosely grep 'FAIL' (legacy prints 'FAILED: 0' on pass).
-  elif grep -qE '[1-9][0-9]* (failures|errors)' "$log"; then status="FAIL(asserts)"
+  # Anchor to the cljs.test summary line ("N failures, M errors." at line start).
+  # An unanchored match also fires on a PASSING assertion whose MESSAGE mentions
+  # failures — e.g. llm/codegen_test prints "PASS: bad fn: 2 failures (expected 2,
+  # got 2)" and was reported FAIL(asserts) while genuinely 91/91.
+  elif grep -qE '^[[:space:]]*([1-9][0-9]* failures?,|[0-9]+ failures?, [1-9][0-9]* errors)' "$log"; then status="FAIL(asserts)"
   elif grep -qE 'Ran 0 tests' "$log";                    then status="FAIL(0 tests)"
   else status="PASS"; fi
   # bench files have no assertions: a clean exit is success regardless of FAIL-word noise
