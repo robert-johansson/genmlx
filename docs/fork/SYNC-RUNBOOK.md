@@ -175,8 +175,26 @@ caused four days of runs against a five-day-old addon (`genmlx-s8ij`):
 ```bash
 realpath $GENMLX/node_modules/@genmlx/core          # must point into mlx-node/packages/genmlx-core
 ls -l $MN/packages/genmlx-core/index.node           # mtime must post-date the build
-node -e "console.log(Object.keys(require('$MN/packages/genmlx-core')).length)"   # expect 227
+node -e "const m=require('$MN/packages/genmlx-core');
+         const k=Object.keys(m);
+         console.log('functions:', k.filter(x=>typeof m[x]==='function').length,
+                     'objects:',   k.filter(x=>typeof m[x]!=='function').length)"
+# expect: functions: 227  objects: 6
 ```
+
+> The membrane matrix pins **function** exports. `Object.keys(...).length` is **233**, not 227 —
+> the extra 6 are `__internal__` plus the enum objects `BuiltinRewardType`, `DType`, `ChatRole`,
+> `ElementType`, `OutputFormat`. Counting raw keys and comparing against 227 produces a false
+> alarm; that mistake was made and corrected during the v0.0.8 sync.
+>
+> The sharper drift check, when a previous addon is available, is a direct surface diff:
+> ```bash
+> node -e "console.log(Object.keys(require('<old>/index.node')).sort().join('\n'))" > /tmp/old.txt
+> node -e "console.log(Object.keys(require('<new>/index.node')).sort().join('\n'))" > /tmp/new.txt
+> comm -13 /tmp/old.txt /tmp/new.txt   # added
+> comm -23 /tmp/old.txt /tmp/new.txt   # removed
+> ```
+> This is why §3 says to back the old addon up before building.
 
 Do **not** run `git clean` inside the submodule — it deletes the 139 MB untracked `index.node`.
 

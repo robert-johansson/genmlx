@@ -64,16 +64,28 @@ weeks. Re-verify the dequantize path explicitly; a clean compile proves nothing.
 +110). These merge cleanly *by construction*, but the genmlx-x76x dequantize-at-InitTraining
 hook can easily end up at the wrong point in the new load order.
 
-### 1d. Generated file — our edits vanish with no marker
+### 1d. Generated file — CORRECTED 2026-07-26, the original entry was wrong
 
-`packages/core/index.d.cts` carries **119 hand-added lines** of ours. It is a *generated* file:
-upstream regenerates it wholesale in its `preversion` script (`oxnode ./build.ts && git add .`).
-Our edits will be deleted silently at some future release.
+`packages/core/index.d.cts` carries 119 lines covering our genmlx surface (`forward`,
+`forwardWithCache`, `initCaches`, `branchCache`, `forwardBranch`, `vlmPrefillFlat`, …).
 
-**Resolution: delete them pre-merge.** Verified safe — the only TS declarations for
-`branchCache` / `forwardBranch` / `vlmPrefillFlat` / `initCaches` that anything consumes live in
-our own generated `packages/genmlx-core/index.d.ts`. Nothing in `packages/**` reads the
-`index.d.cts` copies.
+**The original entry called these "hand-added" and had them deleted pre-merge (commit
+`f5dc863e`). That premise was wrong.** They are not hand edits — they are the *generated* output
+of the `#[napi]` doc comments on our own forked Rust (`crates/mlx-core/src/models/qwen3_5*/model.rs`).
+Running `yarn build:native` regenerated the file and restored all 119 lines verbatim, **plus**
+upstream v0.0.8's new `supportsImages()` / `contextLimits()` declarations. The regenerated file is
+therefore strictly more correct than either side of the merge, and is what gets committed.
+
+The amputation did no harm (the generator undoes it) but it bought nothing, and it did **not**
+remove 2 files from the both-touched set as claimed.
+
+What survives from the original reasoning: **never hand-edit `index.d.cts`.** Edits not backed by
+a Rust doc comment genuinely would vanish at the next regeneration. Our lines were backed, which
+is exactly why they came back.
+
+**Lesson for the next sync:** before "amputating" anything from a generated file, run the
+generator and diff. A file being generated is an argument for regenerating it, not for deleting
+content from it.
 
 ### 1e. Roll call
 
@@ -252,11 +264,26 @@ Carried deliberately; every sync re-litigates them. Keep this list short.
 | divergence | why | re-check each sync |
 |---|---|---|
 | `.gitmodules` → `robert-johansson/mlx` | our MLX fork | `git diff up/main...HEAD -- .gitmodules` is exactly the 1-line hunk |
-| `requirePagedCache` gated on Metal availability | paged is Metal-only; ungated it bricks `mlx agent` on CUDA | grep the gate survives |
-| lazy `loadNativeHost()` latch in `model-host.ts` | keeps the agent import graph free of static native chains | `__test__/native-import-graph.test.ts` |
-| registry allowlist widened to include genmlx models | otherwise they silently vanish from the UI | assert in `llm/pi_provider_test.cljs` |
+| `agentPagedCacheSupported()` gating `requirePagedCache` **and** the paged config overlay | paged is Metal-only; ungated it throws on every `mlx agent` model load on CUDA | `agentPagedCacheSupported` unit test in `run-agent.test.ts` |
+| lazy `loadNativeHost()` latch in `model-host.ts`, plus `createPagedConfigOverrides()` replacing upstream's **value** import of `PagedConfigOverrideManager` | keeps the agent import graph free of static native chains | `__test__/native-import-graph.test.ts` |
+| registry allowlist widened to the union of `opts.models` + `opts.genmlxModels`, and `model-registry-filter.ts` widened via `LOCAL_PROVIDER_BASE_URLS` | upstream's predicate hard-requires `provider === 'mlx' && baseUrl === 'mlx://local'`, so genmlx models silently vanish from Tab / `/models` / RPC enumeration / session restore | the allowlist test in `run-agent.test.ts` |
+| `MLX_AGENT_DUMP_SYSTEM` prompt dump (genmlx-qick) | clean-room persona verification | grep it survives in `stream-adapter.ts` |
 
 Each one is a candidate for deletion via upstreaming — see `README.md`'s shrink program.
+`agentPagedCacheSupported` and the `LOCAL_PROVIDER_BASE_URLS` widening are both good upstream PRs:
+neither is genmlx-specific (any CUDA/Linux user hits the first; any second local provider hits
+the second).
+
+### Divergences RETIRED by the v0.0.8 sync
+
+Deleting a divergence is the point of the exercise — record them so they are not re-introduced.
+
+| retired | how |
+|---|---|
+| the `sessionId` third arg to `startFromHistoryStream` | migrated onto upstream's sibling field: `buildChatConfig` sets `config.cacheOwnerId = options.sessionId`, byte-identical to what our third argument carried. **Not** `rootCacheOwnerId` — that carries the *root* session id, which would collapse every subagent session onto the root's engine session and misalign its delta prefill. `StreamableSession` is back to upstream's 2-parameter shape. |
+| our 119 hand-edited `packages/core/index.d.cts` lines | deleted pre-merge; the file is generated |
+| our `vision_features_cached` second vision cache | continuation path migrated onto upstream's per-image cache, inheriting its budget and eviction policy |
+| our `splitParts` / `TOOL_IMAGE_HOIST_TEXT` rendering | adopted upstream — but the property it guaranteed is **weakened**, tracked in `genmlx-8hod` |
 
 ---
 
