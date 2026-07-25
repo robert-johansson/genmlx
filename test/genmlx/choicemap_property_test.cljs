@@ -33,6 +33,39 @@
   "Generator for a [path value] pair."
   (gen/tuple gen-path gen-value))
 
+(defn- strict-prefix?
+  "True when path `a` is a proper prefix of path `b`."
+  [a b]
+  (and (< (count a) (count b))
+       (= (vec a) (subvec (vec b) 0 (count a)))))
+
+(defn- settable-pairs
+  "Drop the path-value pairs that `set-choice` would reject, modelling its
+   collision policy exactly (genmlx-a6o5): descending THROUGH an existing Value
+   leaf throws, while overwriting a Node with a Value is legal.
+
+   Tracks the leaf paths the reduction would create. A pair is dropped when an
+   existing leaf sits on its path; otherwise it is kept, and any leaves beneath
+   it are forgotten because setting a Value there replaces that whole subtree.
+
+   Without this the generator emits e.g. [:c] then [:c :x] and the properties
+   die on the guard instead of exercising the algebra — they were testing
+   set-choice's error path by accident.
+
+   The surviving leaf set is PREFIX-FREE by construction (no leaf is added
+   below an existing one, and any leaves under a new leaf are dropped), which
+   is the same invariant the merge-associativity section below relies on and
+   the one real GFI trace addresses satisfy."
+  [pvs]
+  (first
+    (reduce (fn [[kept leaves] [path _ :as pv]]
+              (if (some #(strict-prefix? % path) leaves)
+                [kept leaves]
+                [(conj kept pv)
+                 (conj (into #{} (remove #(strict-prefix? path %)) leaves) path)]))
+            [[] #{}]
+            pvs)))
+
 (defn gen-choicemap-from-paths
   "Generator for a choicemap built from 1-5 random path-value pairs."
   []
@@ -40,7 +73,7 @@
     (fn [pvs]
       (reduce (fn [cm [path val]]
                 (cm/set-choice cm path val))
-              cm/EMPTY pvs))
+              cm/EMPTY (settable-pairs pvs)))
     (gen/not-empty (gen/vector gen-path-value 1 5))))
 
 (def gen-flat-map
@@ -173,5 +206,28 @@
                  c (gen-choicemap2)]
     (= (cm/to-map (cm/merge-cm (cm/merge-cm a b) c))
        (cm/to-map (cm/merge-cm a (cm/merge-cm b c))))))
+
+;; ---------------------------------------------------------------------------
+;; The a6o5 collision policy itself (positive test)
+;;
+;; set-choice THROWS when a path descends through an existing Value leaf, rather
+;; than silently rebuilding from it and dropping the leaf. The generators above
+;; deliberately avoid producing such inputs, so without this test nothing would
+;; pin the policy — and a regression that restored the silent-drop behaviour
+;; would make the whole file greener, not redder.
+;; ---------------------------------------------------------------------------
+
+(t/deftest set-choice-descending-through-a-leaf-throws
+  (let [cm (cm/set-choice cm/EMPTY [:a] 1.0)]
+    (t/is (thrown? js/Error (cm/set-choice cm [:a :b] 2.0))
+          "descending through a Value leaf throws")
+    (t/is (thrown? js/Error (cm/set-choice cm [:a :b :c] 2.0))
+          "throws at any depth below the leaf")))
+
+(t/deftest set-choice-overwriting-a-node-with-a-value-is-legal
+  (let [cm (cm/set-choice cm/EMPTY [:a :b] 1.0)
+        overwritten (cm/set-choice cm [:a] 2.0)]
+    (t/is (= {:a 2.0} (cm/to-map overwritten))
+          "replacing a subtree with a leaf is allowed — only the reverse throws")))
 
 (t/run-tests)
