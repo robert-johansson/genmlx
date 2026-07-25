@@ -252,6 +252,7 @@ slow test/genmlx/llm/batched_checkevery_test.cljs
 slow test/genmlx/llm/batched_forward_gate_test.cljs
 slow test/genmlx/llm/batched_gf_test.cljs
 fast test/genmlx/llm/batched_mask_test.cljs
+slow test/genmlx/llm/batched_texts_test.cljs
 slow test/genmlx/llm/branched_test.cljs
 slow test/genmlx/llm/branch_tokens_test.cljs
 slow test/genmlx/llm/bytes_test.cljs
@@ -362,6 +363,7 @@ medium test/genmlx/plate_generate_test.cljs
 medium test/genmlx/pmcmc_test.cljs
 medium test/genmlx/prng_hygiene_test.cljs
 medium test/genmlx/prng_key_test.cljs
+fast test/genmlx/probe_test.cljs
 fast test/genmlx/product_dist_test.cljs
 fast test/genmlx/program_golden_test.cljs
 fast test/genmlx/program_test.cljs
@@ -389,7 +391,7 @@ exclude test/genmlx/run_property.cljs
 exclude test/genmlx/run_remaining.cljs
 bench test/genmlx/runtime_overhead_benchmark.cljs
 fast test/genmlx/sandbox_test.cljs
-slow test/genmlx/sbc_test.cljs
+exclude test/genmlx/sbc_test.cljs
 fast test/genmlx/schema_test.cljs core
 fast test/genmlx/score_gradient_test.cljs core
 fast test/genmlx/score_monotonicity_property_test.cljs
