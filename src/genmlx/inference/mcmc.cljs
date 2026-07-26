@@ -708,7 +708,13 @@
   [{:keys [samples burn thin addresses proposal-std key device chain-fn]
     :or {burn 500 samples 1000 thin 1 proposal-std 0.1 device :cpu}}
    model args observations]
-  (let [model (dyn/auto-key model)
+  (let [;; Initial-trace key split off first; the chain noise below derives from
+        ;; the other half, so the start is disjoint from the sampling stream
+        ;; (genmlx-l0e3). Previously the model was auto-keyed, so a supplied :key
+        ;; did not pin where the chain STARTED — only its steps, which made the
+        ;; seeded posterior-mean bands in fused_mcmc_test a coin flip.
+        [init-key stream-key] (rng/split-or-nils (when key (rng/ensure-key key)))
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))
         total-steps (+ burn (* thin samples))]
     (with-device device
       (fn []
@@ -721,13 +727,13 @@
             (do (println "Note: chain too large for single Metal graph — using block-compiled path.")
                 (block-result->fused-format
                  (compiled-mh {:samples samples :burn burn :thin thin :addresses addresses
-                               :proposal-std proposal-std :key key :device device :compile? true}
+                               :proposal-std proposal-std :key stream-key :device device :compile? true}
                               model args observations)))
             ;; Fused path (with validation)
             (let [_ (when (and (not tensor-native?) (nil? chain-fn))
                       (println "Warning: fused-mh using GFI score (slow). Consider a static model."))
                   std (mx/scalar proposal-std)
-                  rk (rng/ensure-key key)
+                  rk (rng/ensure-key stream-key)
                   {:keys [noise uniforms]} (pre-generate-chain-noise rk total-steps n-params)
                   cfn (or chain-fn
                           (safe-compile-chain
@@ -1073,7 +1079,13 @@
   [{:keys [samples burn thin addresses proposal-std n-chains key device chain-fn]
     :or {burn 500 samples 1000 thin 1 proposal-std 0.1 n-chains 8 device :gpu}}
    model args observations]
-  (let [model (dyn/auto-key model)
+  (let [;; Split off the initial-trace key FIRST; the noise/uniform streams below
+        ;; are then derived from the remaining half, so the starting trace is
+        ;; disjoint from both (genmlx-l0e3). Without this the model was
+        ;; auto-keyed and the chains started somewhere different every run,
+        ;; making the seeded posterior-mean band a coin flip.
+        [init-key stream-key] (rng/split-or-nils (when key (rng/ensure-key key)))
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))
         addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))
         total-steps (+ burn (* thin samples))]
     ;; Auto-fallback: vectorized graphs are larger (N chains), so check before work
@@ -1096,7 +1108,7 @@
               init-params (mx/broadcast-to (mx/expand-dims seed-params 0)
                                            [n-chains n-params])
               std (mx/scalar proposal-std)
-              rk (rng/ensure-key key)
+              rk (rng/ensure-key stream-key)
               [k1 k2] (rng/split rk)
               noise (rng/normal k1 [total-steps n-chains n-params])
               uniforms (rng/uniform k2 [total-steps n-chains])
@@ -1691,7 +1703,13 @@
     :or {burn 500 samples 1000 thin 1 step-size 0.01 device :cpu
          adapt-step-size false target-accept 0.574 warmup-steps 200}}
    model args observations]
-  (let [model (dyn/auto-key model)
+  (let [;; Initial-trace key split off first; the chain noise below derives from
+        ;; the other half, so the start is disjoint from the sampling stream
+        ;; (genmlx-l0e3). Previously the model was auto-keyed, so a supplied :key
+        ;; did not pin where the chain STARTED — only its steps, which made the
+        ;; seeded posterior-mean bands in fused_mcmc_test a coin flip.
+        [init-key stream-key] (rng/split-or-nils (when key (rng/ensure-key key)))
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))
         total-steps (+ burn (* thin samples))]
     (with-device device
       (fn []
@@ -1704,7 +1722,7 @@
             (do (println "Note: chain too large for single Metal graph — using block-compiled MALA.")
                 (block-result->fused-format
                  (mala {:samples samples :burn burn :thin thin :addresses addresses
-                        :step-size step-size :key key :device device :compile? true
+                        :step-size step-size :key stream-key :device device :compile? true
                         :adapt-step-size adapt-step-size :target-accept target-accept}
                        model args observations)))
             ;; Fused path (with validation)
@@ -1726,7 +1744,7 @@
                   eps (mx/scalar final-step-size)
                   half-eps2 (mx/scalar (* 0.5 final-step-size final-step-size))
                   two-eps-sq (mx/scalar (* 2.0 final-step-size final-step-size))
-                  rk (rng/ensure-key key)
+                  rk (rng/ensure-key stream-key)
                   {:keys [noise uniforms]} (pre-generate-chain-noise rk remaining-total n-params)
                   [init-score init-grad] (val-grad-fn start-q)
                   _ (mx/materialize! init-score init-grad)
@@ -2266,7 +2284,13 @@
     :or {burn 500 samples 1000 thin 1 step-size 0.01 leapfrog-steps 20 device :cpu
          adapt-step-size false target-accept 0.65 warmup-steps 200}}
    model args observations]
-  (let [model (dyn/auto-key model)
+  (let [;; Initial-trace key split off first; the chain noise below derives from
+        ;; the other half, so the start is disjoint from the sampling stream
+        ;; (genmlx-l0e3). Previously the model was auto-keyed, so a supplied :key
+        ;; did not pin where the chain STARTED — only its steps, which made the
+        ;; seeded posterior-mean bands in fused_mcmc_test a coin flip.
+        [init-key stream-key] (rng/split-or-nils (when key (rng/ensure-key key)))
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))
         total-steps (+ burn (* thin samples))]
     (with-device device
       (fn []
@@ -2282,7 +2306,7 @@
                 (block-result->fused-format
                  (hmc {:samples samples :burn burn :thin thin :addresses addresses
                        :step-size step-size :leapfrog-steps leapfrog-steps
-                       :key key :device device :compile? true
+                       :key stream-key :device device :compile? true
                        :adapt-step-size adapt-step-size :target-accept target-accept}
                       model args observations)))
             ;; Fused path (with validation)
@@ -2318,7 +2342,7 @@
                   eps (mx/scalar final-step-size)
                   half-eps (mx/scalar (* 0.5 final-step-size))
                   half (mx/scalar 0.5)
-                  rk (rng/ensure-key key)
+                  rk (rng/ensure-key stream-key)
                   [k1 k2] (rng/split rk)
                   momentum (rng/normal k1 [remaining-total n-params])
                   uniforms (rng/uniform k2 [remaining-total])
