@@ -402,9 +402,34 @@
     ;; sd 0.43 with only 20/30 inside the ±0.5 band on a fresh key — a
     ;; 1-in-3 flake by construction. Key 1015 lands at 2.003.
     (let [result (mcmc/fused-mala
+                   ;; step-size 0.25, not 0.1. Two stacked problems.
+                   ;; (1) fused-mala auto-keyed its initial trace, so :key never
+                   ;;     pinned where the chain STARTED — fixed in mcmc.cljs.
+                   ;; (2) At eps 0.1 the chain mixes too slowly to converge in
+                   ;;     the 700 steps available, so the band depended on where
+                   ;;     the (previously random) start happened to land.
+                   ;;
+                   ;; Burn is NOT the lever: MALA's :gfi fusion limit is 1500
+                   ;; ops = 750 total steps and this test already uses 700, so
+                   ;; ANY burn increase drops it into the block-compiled
+                   ;; fallback — which returns chain-fn nil and
+                   ;; acceptance-rate nil and breaks the assertions below.
+                   ;; Verified: burn 2000 turns 1 failure into 4.
+                   ;;
+                   ;; So mixing is the honest lever. Measured over 10 seeds,
+                   ;; all staying on the fused path:
+                   ;;   eps 0.15 -> ar 0.85-0.90, 1/10 fail (over-accepting)
+                   ;;   eps 0.22 -> ar 0.62-0.68, 0/10, worst |err| 0.385
+                   ;;   eps 0.25 -> ar 0.52-0.59, 0/10, worst |err| 0.305
+                   ;;   eps 0.30+ -> ar EXACTLY 0.0: past MALA's stability
+                   ;;                limit every proposal diverges and is
+                   ;;                rejected, so the chain freezes at its start
+                   ;; 0.25 both maximises the margin and brackets MALA's
+                   ;; theoretical optimum acceptance of 0.574. The 2.0 +/- 0.5
+                   ;; tolerance is UNCHANGED.
                    {:samples 400 :burn 300 :thin 1
                     :addresses [:slope :intercept]
-                    :step-size 0.1 :key (rng/fresh-key 1015)}
+                    :step-size 0.25 :key (rng/fresh-key 1015)}
                    linreg-model [xs] obs)]
       (is (= [400 2] (mx/shape (:samples result))) "fused-mala samples shape=[400 2]")
       (is (= [2] (mx/shape (:final-params result))) "fused-mala final-params shape=[2]")
