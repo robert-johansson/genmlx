@@ -68,9 +68,21 @@
                         (cm/set-choice cm [(keyword (str "y" j))]
                                       (mx/scalar (+ (* 2.0 x) 1.0))))
                       cm/EMPTY (map-indexed vector xs))
-          {:keys [trace]} (p/generate model2 [xs] obs)
+          ;; Seed BOTH ends. model2 is auto-keyed at its definition, so the
+          ;; starting trace was a fresh prior draw, and run-kernel got no :key
+          ;; either — so both the start AND the chain varied per run and these
+          ;; bands were a coin flip (genmlx-c2x9). run-kernel already accepts
+          ;; :key; the same pattern is used by mh-kernel-key-reproducibility-test
+          ;; below.
+          ;;
+          ;; The BUDGET is deliberately unchanged: measured over 10 seeds at
+          ;; this 200/300 budget, 0 fail, worst |err| 0.4 against the +/-1.5
+          ;; slope tolerance (600/2000 gives 0/10 too, so the extra cost buys
+          ;; nothing). No seed is load-bearing here — unlike the compiled_
+          ;; optimizer case, seeding alone is sufficient and hides nothing.
+          {:keys [trace]} (p/generate (dyn/with-key model2 (rng/fresh-key 20260726)) [xs] obs)
           k (kern/random-walk {:slope 0.3 :intercept 0.3})
-          traces (kern/run-kernel {:samples 200 :burn 300} k trace)
+          traces (kern/run-kernel {:samples 200 :burn 300 :key (rng/fresh-key 20260727)} k trace)
           slope-vals (mapv (fn [t] (mx/realize (cm/get-value (cm/get-submap (:choices t) :slope)))) traces)
           intercept-vals (mapv (fn [t] (mx/realize (cm/get-value (cm/get-submap (:choices t) :intercept)))) traces)
           slope-mean (/ (reduce + slope-vals) (count slope-vals))
