@@ -304,6 +304,10 @@
    addresses: vector of latent addresses to optimize
    opts (optional):
      :fd-h — finite-diff step for the handler path's :loss-grad-fn (default 1e-4)
+     :key  — PRNG key for the initial-trace draw that seeds :init-params.
+             Omitted, the draw is auto-keyed and the starting point is random,
+             so an optimization run is not reproducible — pass a key when a
+             caller (notably a test) needs a deterministic start.
 
    Returns:
      {:loss-grad-fn       (fn [params-tensor] -> [loss grad])
@@ -314,8 +318,8 @@
       :latent-index       {addr -> int}}"
   ([model args observations addresses]
    (make-compiled-loss-grad model args observations addresses {}))
-  ([model args observations addresses {:keys [fd-h] :or {fd-h 1e-4}}]
-   (let [model-keyed (dyn/auto-key model)
+  ([model args observations addresses {:keys [fd-h key] :or {fd-h 1e-4}}]
+   (let [model-keyed (if key (dyn/with-key model key) (dyn/auto-key model))
          ;; L3.5: filter out analytically eliminated addresses
          eliminated (u/get-eliminated-addresses model)
          addresses (u/filter-addresses addresses eliminated)

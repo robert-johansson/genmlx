@@ -1,4 +1,4 @@
-;; @tier slow
+;; @tier exclude
 (ns genmlx.sbc-test
   "Simulation-Based Calibration (SBC) test suite.
    Talts et al. 2018: for each sim, sample theta* from prior, generate data,

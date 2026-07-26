@@ -360,8 +360,21 @@
 
 (deftest learn-compiled-generate-test
   (testing "learn via compiled-generate"
+    ;; Adam starts from the initial trace's mu ~ Uniform(-10,10), so the run has
+    ;; to cross up to 15 units to reach the MAP at 5.0. At lr 0.05 that needs
+    ;; more than the 500 steps this test used to allow: measured over 15 seeds,
+    ;; 500 iterations converge for only 12 — the other 3 land short (4.667,
+    ;; 4.442, 4.050) and fail the 0.3 tolerance. That is what made this test
+    ;; flaky (observed 4.6137 in a battery run while 4/4 standalone runs passed).
+    ;;
+    ;; 1500 iterations converge for ALL 15 seeds with worst |err| = 1.1e-5, i.e.
+    ;; four orders of magnitude inside the tolerance. The tolerance is unchanged;
+    ;; the optimizer is simply given enough budget to do what the test asserts.
+    ;; :key makes the start reproducible — seeding ALONE would not have been a
+    ;; fix, it would just have picked a lucky draw and hidden the real problem.
     (let [result (co/learn cg-model [true] cg-obs [:mu]
-                   {:iterations 500 :lr 0.05 :log-every 100})]
+                   {:iterations 1500 :lr 0.05 :log-every 100
+                    :key (rng/fresh-key 4242)})]
       (mx/materialize! (:params result))
       (is (= :compiled-generate (:compilation-level result)) "learn: compilation-level is :compiled-generate")
       (is (vector? (:loss-history result)) "learn: has loss-history")
@@ -392,8 +405,16 @@
       (is (= 2 (:n-params result)) "multi-site: n-params = 2")))
 
   (testing "multi-site learn convergence"
+    ;; Seeded for reproducibility. Unlike the single-site case above, the 1000-
+    ;; iteration budget here IS adequate: measured over 15 seeds, all converge
+    ;; with worst |err| = 8.8e-5, i.e. four orders of magnitude inside the 1.0
+    ;; tolerance. So the budget is not the problem — the only residual variance
+    ;; was the auto-keyed random start, which is what made this assertion fail
+    ;; intermittently in the battery. Pinning the start removes that variance
+    ;; without hiding an under-powered run.
     (let [result (co/learn cg-multi [true] cg-multi-obs [:slope :intercept]
-                   {:iterations 1000 :lr 0.05 :log-every 200})]
+                   {:iterations 1000 :lr 0.05 :log-every 200
+                    :key (rng/fresh-key 4242)})]
       (mx/materialize! (:params result))
       (let [final (mx/->clj (:params result))
             total (+ (nth final 0) (nth final 1))]
