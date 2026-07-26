@@ -220,7 +220,16 @@
 
 (deftest hmc-5d-adaptive-acceptance
   (testing "HMC with dual averaging on 5D model"
-    (let [samples (mcmc/hmc {:samples 200 :burn 200 :step-size 0.5 :leapfrog-steps 10
+    ;; burn 600, not 200: dual averaging needs the longer warmup to reach
+    ;; target-accept on this 5D target. Measured over 8 seeds once the chain was
+    ;; actually reproducible (the :key used to leave the initial trace
+    ;; auto-keyed, so every run started somewhere different and this band was a
+    ;; coin flip): at burn 200, acceptance still sits at 0.69-0.98 (step size
+    ;; too small, chain barely mixing) and 4 of 8 seeds miss the x0-mean band.
+    ;; At burn 600, acceptance lands 0.57-0.82 around the 0.65 target and 0 of 8
+    ;; miss, with means tightly clustered 2.31-2.60. Both tolerances below are
+    ;; UNCHANGED — the warmup was under-powered, the assertions were not wrong.
+    (let [samples (mcmc/hmc {:samples 200 :burn 600 :step-size 0.5 :leapfrog-steps 10
                                :addresses addrs-5d :compile? false :device :cpu
                                :adapt-step-size true :target-accept 0.65
                                :key (rng/fresh-key 555)}

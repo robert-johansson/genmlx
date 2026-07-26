@@ -1395,6 +1395,33 @@
   (let [[warmup-key _sample-key] (rng/split-or-nils (rng/ensure-key key))]
     (rng/split-or-nils warmup-key)))
 
+(defn- sampler-keys
+  "Split the caller's :key into [init-key warmup-key sample-key] — three
+   DISJOINT streams for the initial trace, the adaptive warmup, and the
+   sampling loop. nil-tolerant: [nil nil nil] in no-key mode.
+
+   `mh` (:90-91) already derives an init-key this way; the gradient samplers
+   did not, and two defects followed:
+
+   1. They wrapped the model in `dyn/auto-key`, so the INITIAL TRACE was drawn
+      with fresh entropy even when a :key was supplied. The chain therefore
+      started somewhere different on every run and the sampler was not
+      reproducible at all — :key silently covered only the steps. Measured on
+      the 5D HMC with a fixed key: three in-process runs gave first samples
+      3.1976 / 3.2604 / … and x0 means 2.07 / 3.51 / 2.37 (genmlx-9n5f).
+   2. `warmup-keys` split `key` into [warmup-key _sample-key], DISCARDED the
+      sample half, and the caller then handed the RAW key to the sampling loop
+      — whose own first split reproduces warmup-key. Warmup and sampling were
+      drawing from overlapping stream material, which is exactly what the
+      genmlx-vv3t docstring claims they do not."
+  [key]
+  (if key
+    (let [k (rng/ensure-key key)
+          [init-key rest-key] (rng/split-or-nils k)
+          [warmup-key sample-key] (rng/split-or-nils rest-key)]
+      [init-key warmup-key sample-key])
+    [nil nil nil]))
+
 (defn- dual-averaging-warmup
   "Run n-warmup steps adapting step-size via dual averaging.
    step-fn: (fn [q eps-val metric key] -> {:state q' :accept-stat alpha})
@@ -2096,7 +2123,8 @@
          device :cpu block-size 20 adapt-step-size false target-accept 0.65
          adapt-metric false}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  (let [[init-key warmup-key sample-key] (sampler-keys key)
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
              {:keys [score-fn init-params n-params]}
@@ -2110,7 +2138,7 @@
            ;; Adaptive warmup: dual averaging + optional metric estimation
              {:keys [adapted-eps warmup-q adapted-metric]}
              (if (and (or adapt-step-size adapt-metric) (pos? burn))
-               (let [[eps-key wloop-key] (warmup-keys key)
+               (let [[eps-key wloop-key] (rng/split-or-nils warmup-key)
                      hmc-step-fn (make-hmc-step-fn neg-U-compiled grad-neg-U
                                                    q-shape leapfrog-steps)
                      init-eps (if adapt-step-size
@@ -2144,12 +2172,12 @@
                                thin neg-U grad-neg-U-raw
                                eps half-eps half n-params leapfrog-steps))]
              (run-loop-compiled-hmc
-              {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+              {:samples samples :burn remaining-burn :thin thin :callback callback :key sample-key}
               start-q n-params neg-U-compiled grad-neg-U eps half-eps half q-shape
               leapfrog-steps final-metric burn-chain burn-block thin-chain))
          ;; Fallback: per-step eager path (or non-identity metric)
            (kern/collect-samples
-            {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+            {:samples samples :burn remaining-burn :thin thin :callback callback :key sample-key}
             (fn [q step-key]
               (hmc-step q neg-U-compiled grad-neg-U eps half-eps half q-shape
                         leapfrog-steps final-metric step-key))
