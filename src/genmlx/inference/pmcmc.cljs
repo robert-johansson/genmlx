@@ -92,9 +92,15 @@
                (repeat (count param-addrs) proposal-std)
                proposal-std)
         ;; Initialize
-        [_init-key loop-key] (rng/split (rng/ensure-key key))
+        [init-key loop-key] (rng/split (rng/ensure-key key))
+        ;; The initial trace MUST use init-key. The split above always
+        ;; existed but its first half was discarded (`_init-key`), so the
+        ;; auto-keyed model drew the starting point with fresh entropy and
+        ;; :key never made the sampler reproducible — only its chain steps.
+        ;; Same defect as hmc/fused-* (genmlx-9n5f, genmlx-l0e3).
+        keyed-model (dyn/with-key model init-key)
         init-vals (or init-params
-                      (let [trace (:trace (p/generate model args observations))]
+                      (let [trace (:trace (p/generate keyed-model args observations))]
                         (extract-param-vals trace param-addrs)))
         _ (apply mx/materialize! init-vals)
         [est-key loop-key] (rng/split loop-key)
@@ -186,11 +192,17 @@
                    (zipmap param-addrs proposal-std))
         param-kernel (kern/random-walk stds-map)
         ;; Initialize
-        [_init-key loop-key] (rng/split (rng/ensure-key key))
+        [init-key loop-key] (rng/split (rng/ensure-key key))
+        ;; The initial trace MUST use init-key. The split above always
+        ;; existed but its first half was discarded (`_init-key`), so the
+        ;; auto-keyed model drew the starting point with fresh entropy and
+        ;; :key never made the sampler reproducible — only its chain steps.
+        ;; Same defect as hmc/fused-* (genmlx-9n5f, genmlx-l0e3).
+        keyed-model (dyn/with-key model init-key)
         init-trace (reduce
                      (fn [trace obs-t]
                        (:trace (p/update (:gen-fn trace) trace obs-t)))
-                     (:trace (p/generate model args (first obs-seq)))
+                     (:trace (p/generate keyed-model args (first obs-seq)))
                      (rest obs-seq))
         ;; Collect samples via kern/collect-samples
         raw (kern/collect-samples
