@@ -115,3 +115,4 @@ pre-sync result freeze lives in `results/pre-sync-*` tags.
 | date | mlx-node pin | mlx pin | upstream taken | validated |
 |---|---|---|---|---|
 | 2026-07-27 | `pin/mlx-node/2026-07-27-kquants` (`3c579e4`) | `pin/mlx/2026-07-27-kquants` (`70f1c1b6c`) | `b89b84c` (v0.0.8 + K-quants PR #101) | RTX sm_120: full battery 431/431, contract guards + membrane 227∪49 green, addon surface identical (bean `genmlx-an7d`) |
+| 2026-07-27 | `pin/mlx-node/2026-07-27-ny70` (`6f9a13e`) | `pin/mlx/2026-07-27-ny70` (`a27ddcaef`) | — (fork patch: e8m0 round-up, genmlx-ny70) | RTX sm_120: cargo convert 164/164 + full contract-guard block; battery deliberately skipped (no nbb test exercises mx-mode quantize; same-day 431/431 on the prior pin) |
