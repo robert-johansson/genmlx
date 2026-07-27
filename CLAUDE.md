@@ -125,9 +125,12 @@ TEST_TIME_SCALE=6 test/run.sh all   # RTX PRO 6000 (x86_64, sm_120; measured 202
 # the battery there — the serial-slow policy exists for Metal wedge history,
 # not CUDA; slow files measured ~600 MiB VRAM each under 4 lanes on sm_120):
 TEST_TIME_SCALE=6 TEST_JOBS_SLOW=4 test/run.sh all   # RTX; Thor: scale 8
-# Mac stays TEST_JOBS_SLOW unset (serial) until validated there. Full timing
-# validation of the parallel tiers is tracked in the beans (interrupted
-# mid-measurement 2026-07-27; mechanism validated, walls pending).
+# Mac stays TEST_JOBS_SLOW unset (serial) until validated there. Thor VALIDATED
+# 2026-07-27 (fresh boot): 110 min vs 175 serial (slow tier ~51 min at 4-way,
+# ~2.3x), 428/3 with all 3 misses re-passing solo (band flakes, none
+# parallel-only); min MemAvailable grazed 26 GB vs the 20 GB h3p5 floor —
+# run batteries under the floor-guard wrapper on Thor. RTX walls pending
+# (genmlx-ehni).
 ```
 
 No build step for the ClojureScript — nbb interprets it directly. The **native
