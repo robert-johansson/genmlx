@@ -7,7 +7,7 @@
 > **Companions:** [`SYNC-RUNBOOK.md`](SYNC-RUNBOOK.md) (the ritual),
 > [`CONFLICT-LEDGER.md`](CONFLICT-LEDGER.md) (per-file resolution doctrine).
 
-> **2026-07-27 restructure (bean `genmlx-llj0`):** each fork's patched line was renamed to
+> **2026-07-27 restructure (bean `genmlx-atnb`):** each fork's patched line was renamed to
 > `main` and all other branches deleted; only the `mirror/*` upstream trackers persist as
 > second branches. Name mapping: mlx-node `genmlx/integration` → `main`, mlx
 > `thor/stack-mlx-latest` → `main`. Deleted branches that carried historical gitlink pins

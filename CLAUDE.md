@@ -156,7 +156,7 @@ sm_120; bring-up record: bean `genmlx-1aea`, handoff
 `docs/fork/RTX-PRO-6000-HANDOFF.md`). Rules that keep three boxes coherent:
 
 - **Sync topology.** genmlx `main` → mlx-node `main` → mlx `main`, tied by
-  gitlinks (2026-07-27 restructure, bean `genmlx-llj0`: each fork's patched
+  gitlinks (2026-07-27 restructure, bean `genmlx-atnb`: each fork's patched
   line now lives on `main`; the old `genmlx/integration` /
   `thor/stack-mlx-latest` names are retired). Each fork keeps exactly one
   other persistent branch — the pristine upstream tracker (`mirror/upstream`

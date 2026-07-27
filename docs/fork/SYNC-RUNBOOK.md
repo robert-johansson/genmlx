@@ -5,7 +5,7 @@
 > [`CONFLICT-LEDGER.md`](CONFLICT-LEDGER.md) (what to do with each conflicted file).
 > Every test path and command below was verified to exist against the live tree on 2026-07-25.
 
-> **2026-07-27 (bean `genmlx-llj0`):** fork branches restructured — both patched lines are now
+> **2026-07-27 (bean `genmlx-atnb`):** fork branches restructured — both patched lines are now
 > `main` (`genmlx/integration` and `thor/stack-mlx-latest` are retired names); commands below
 > updated. `mirror/nax` / `nax-on-ml-explore` are recreated locally in §1 per sync and no
 > longer pushed; the conservative-base fallback stack survives as the `archive/thor/stack` tag.
