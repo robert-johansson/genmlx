@@ -42,22 +42,52 @@
 (def expected-prompt-ids [760 6511 314 9338 369])
 (def model-root (str (.-HOME js/process.env) "/.cache/models"))
 
-;; Golden values RE-captured 2026-07-27 on Metal/M4 at mlx pin fd21ea68c
-;; (genmlx-lr9c; originally captured 2026-06-14 pre-resync). The 973e27f82
-;; upstream kernel bump shifted every bf16 logprob by cross-kernel noise
-;; (0.02-0.11) while ALL argmax/top-5 token ids and rankings held; parity
-;; suites + the mlx-lm oracle argmax pin (11751 ' Paris') verified the
-;; forward before re-pinning. Tight tol (0.01) because the same build is
-;; bit-reproducible; a forward rewrite must reproduce these within bf16
-;; noise (~1e-2). An MLX-pin bump that shifts values is EXPECTED to re-pin
-;; here after independent verification — that is this pin's lifecycle.
+
+;; ---------------------------------------------------------------------------
+;; Goldens are BACKEND-CONDITIONAL (genmlx-z4hy / genmlx-nhvg).
+;;
+;; The invariants that hold on every backend — tokenizer ids, argmax token,
+;; its decoded word, cached==uncached agreement — are pinned ONCE below.
+;; The bf16 logprob VALUES and the top-5 membership are not portable and are
+;; pinned per backend:
+;;
+;;   Metal (M4)  top-5 ids: 11751 279 7172  25 198
+;;   CUDA (Thor) top-5 ids: 11751 303 279 7172 220
+;;
+;; Only three of five ids are common, so this is not merely tolerance noise —
+;; several candidates sit within ~0.5 nats and the backends order them
+;; differently. One golden set at tol 0.01 CANNOT hold on both: the measured
+;; cross-kernel shift is 0.02-0.11, an order of magnitude above the tolerance.
+;;
+;; Metal values: captured 2026-07-27 on M4 at mlx fd21ea68c (genmlx-lr9c),
+;; verified against the parity suites + the mlx-lm oracle argmax pin.
+;; CUDA values:  captured 2026-07-27 on Thor sm_110 at mlx 135c5945e, same
+;; prompt and load options (:cljs-forward? false :paged? false).
+;;
+;; Tight tol (0.01) is kept deliberately: WITHIN one backend the build is
+;; bit-reproducible, so a forward rewrite must still reproduce its own
+;; backend's values. An MLX-pin bump that shifts values is EXPECTED to re-pin
+;; the AFFECTED backend after independent verification — that is this pin's
+;; lifecycle. Re-pin one backend at a time; a change that moves BOTH is far
+;; more likely a real forward regression than two coincident kernel bumps.
+;; ---------------------------------------------------------------------------
 (def golden
   [{:name "qwen3.5-0.8b" :dir "qwen3.5-0.8b-mlx-bf16"
-    :argmax 11751 :argmax-decoded " Paris" :argmax-logprob -2.125
-    :top5 [[11751 -2.125] [279 -2.3125] [7172 -2.5625] [25 -2.875] [198 -2.875]]}
+    :argmax 11751 :argmax-decoded " Paris"
+    :metal {:argmax-logprob -2.125
+            :top5 [[11751 -2.125] [279 -2.3125] [7172 -2.5625] [25 -2.875] [198 -2.875]]}
+    :cuda  {:argmax-logprob -1.8828125
+            :top5 [[11751 -1.8828125] [303 -2.0625] [279 -2.5625] [7172 -2.5625] [220 -3.25]]}}
    {:name "qwen3.5-4b" :dir "qwen3.5-4b-mlx-bf16"
-    :argmax 11751 :argmax-decoded " Paris" :argmax-logprob -0.62109375
-    :top5 [[11751 -0.62109375] [7172 -2.75] [264 -3.125] [3750 -3.4375] [279 -3.625]]}])
+    :argmax 11751 :argmax-decoded " Paris"
+    :metal {:argmax-logprob -0.62109375
+            :top5 [[11751 -0.62109375] [7172 -2.75] [264 -3.125] [3750 -3.4375] [279 -3.625]]}
+    ;; Absent on Thor, so never captured on CUDA. The model-presence check
+    ;; below skips this entry there; if the checkpoint ever lands on a CUDA
+    ;; box, capture rather than reuse the Metal numbers.
+    :cuda  nil}])
+
+(defn- backend-key [] (if (mx/metal-is-available?) :metal :cuda))
 
 (defn- topk-from [lp k]
   (mx/eval! lp)
@@ -70,10 +100,17 @@
 (defn- log-softmax [logits]
   (mx/subtract logits (mx/logsumexp logits)))
 
-(defn check-model [{:keys [name dir argmax argmax-decoded argmax-logprob top5]}]
-  (let [path (str model-root "/" dir)]
-    (if-not (.existsSync fs path)
+(defn check-model [{:keys [name dir argmax argmax-decoded] :as entry}]
+  (let [path (str model-root "/" dir)
+        bk   (backend-key)
+        {:keys [argmax-logprob top5]} (get entry bk)]
+    (cond
+      (not (.existsSync fs path))
       (do (println (str "\n== " name " — SKIP (absent: " path ") ==")) (pr/resolved nil))
+      (nil? top5)
+      (do (println (str "\n== " name " — SKIP (no " (clj->js bk)
+                        " goldens captured; capture, do not reuse the other backend's) =="))
+          (pr/resolved nil))
       ;; Explicitly pins the UPSTREAM/borrowed forward — its captured golden
       ;; values are upstream's, tol 0.01. The owned forward (now the default for
       ;; qwen3/qwen3_5) differs by bf16 cross-kernel noise (~0.12) and is guarded
@@ -81,6 +118,7 @@
       ;; :paged? false — this suite pins the FLAT (Tier-1) forwardWithCache
       ;; seam; on Metal, v0.0.8 defaults VLM checkpoints to the block-paged
       ;; adapter, which refuses it (genmlx-lr9c; load policy: genmlx-eacv).
+      :else
       (pr/let [m (llm/load-model path {:cljs-forward? false :paged? false})
                tok (:tokenizer m)
                ids-raw (llm/encode tok prompt false)
