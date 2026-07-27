@@ -74,3 +74,14 @@
   passes, 2026-07-27) — bucket F of the CUDA ledger; the sound fix
   (across-seed measurement + seed-pin + measured band) is specced in
   `genmlx-5hhd`.
+- `genjax_compat_test` `s7-diagnostics` flakes under 4-way GPU contention
+  (2 of 3 batteries, 2026-07-27; 73/73 solo) — a statistical diagnostics
+  section, same bucket-F class.
+- `sandbox_test` hang-detection asserts are timing-sensitive under 4-way
+  CPU load (1 of 3 batteries; 31/31 solo).
+- `mcmc_stationary_test` `multi-algorithm-agreement` fails ~2-of-5 runs
+  (measured 2026-07-27; 1 assert, serial tier, contention-free) — the
+  handoff's known-red `auto-key` class: this file's samplers are in the
+  deliberately-unswept tail of the ~20 `auto-key` sites in `mcmc.cljs`,
+  so every run draws a fresh initial-trace seed against a statistical
+  band. Sound fix specced in `genmlx-5hhd` + the auto-key sweep.
