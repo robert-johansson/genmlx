@@ -93,7 +93,7 @@ bun run --bun nbb -e '(require (quote [genmlx.mlx :as mx])) (prn (mx/native-core
 > compatibility, which `1.4.208` makes unnecessary):
 >
 > - [`mlx-node`](https://github.com/robert-johansson/mlx-node) — adds a custom
->   `genmlx.rs` Rust module with 220 module-level NAPI function exports (pinned
+>   `genmlx.rs` Rust module with 227 module-level NAPI function exports (pinned
 >   by the membrane coverage matrix, `docs/membrane-coverage.md`) tuned for
 >   ClojureScript (`Either<MxArray, number>` inputs, `number[]` shapes, CPU-stream
 >   PRNG, fused scalar extraction). It vendors the MLX C++ source as a further
