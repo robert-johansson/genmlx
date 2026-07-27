@@ -5,6 +5,11 @@
 > [`CONFLICT-LEDGER.md`](CONFLICT-LEDGER.md) (what to do with each conflicted file).
 > Every test path and command below was verified to exist against the live tree on 2026-07-25.
 
+> **2026-07-27 (bean `genmlx-llj0`):** fork branches restructured — both patched lines are now
+> `main` (`genmlx/integration` and `thor/stack-mlx-latest` are retired names); commands below
+> updated. `mirror/nax` / `nax-on-ml-explore` are recreated locally in §1 per sync and no
+> longer pushed; the conservative-base fallback stack survives as the `archive/thor/stack` tag.
+
 Paths used throughout:
 
 ```bash
@@ -41,8 +46,8 @@ git -C $MN merge-tree --write-tree HEAD up/main | grep '^CONFLICT'
 git -C $MN diff up/main...HEAD -- .gitmodules
 
 # Standing audit: has upstream taken any of our patches? A leading '-' means DROP it.
-git -C $MLX cherry -v mirror/ml-explore thor/stack-mlx-latest | grep '^-' || echo "none taken yet"
-git -C $MN  cherry -v mirror/upstream   genmlx/integration    | grep '^-' || echo "none taken yet"
+git -C $MLX cherry -v mirror/ml-explore main | grep '^-' || echo "none taken yet"
+git -C $MN  cherry -v mirror/upstream   main | grep '^-' || echo "none taken yet"
 ```
 
 **Gate:** if the both-touched list is empty, the sync is mechanical — skip straight to §3.
@@ -74,7 +79,7 @@ git -C $MLX rebase --onto mirror/ml-explore <their-base>^ mirror/nax
 git -C $MLX branch -f nax-on-ml-explore HEAD
 
 # Our stack on top.
-git -C $MLX rebase --update-refs --onto nax-on-ml-explore <prev-base> thor/stack-mlx-latest
+git -C $MLX rebase --update-refs --onto nax-on-ml-explore <prev-base> main
 ```
 
 Do the rebases in a **detached worktree under a scratch directory**, never in the live
@@ -106,14 +111,16 @@ git -C $MLX log  --oneline   <old-base>..up/main -- mlx/backend/cuda/
 Then push **before anything pins it**, and tag:
 
 ```bash
-MLXSHA=$(git -C $MLX rev-parse thor/stack-mlx-latest)
-git -C $MLX push origin mirror/ml-explore mirror/nax nax-on-ml-explore thor/stack thor/stack-mlx-latest
+MLXSHA=$(git -C $MLX rev-parse main)
+git -C $MLX push origin mirror/ml-explore
+git -C $MLX push --force-with-lease origin main    # main is the rebased stack; pins live in tags
 git -C $MLX tag -a "pin/mlx/$(date +%F)" -m "pinned by mlx-node sync" $MLXSHA
 git -C $MLX push origin "pin/mlx/$(date +%F)"
 ```
 
-> Cut the `pin/*` tag only once a build has validated the SHA. Keep `thor/stack` (same patches,
-> mlx-node's exact base) as the instant fallback if the newer base misbehaves.
+> Cut the `pin/*` tag only once a build has validated the SHA. The instant fallback if the
+> newer base misbehaves is the previous `pin/mlx/*` tag (or `archive/thor/stack` — same
+> patches on mlx-node's exact base, frozen 2026-07-27).
 
 ---
 
@@ -121,8 +128,8 @@ git -C $MLX push origin "pin/mlx/$(date +%F)"
 
 ```bash
 git -C $MN branch -f mirror/upstream up/main
-git -C $MN checkout -b sync/up-vNEXT genmlx/integration
-git -C $MN merge --no-ff vNEXT -m "merge mlx-node vNEXT into genmlx/integration"
+git -C $MN checkout -b sync/up-vNEXT main
+git -C $MN merge --no-ff vNEXT -m "merge mlx-node vNEXT into main"
 
 # The gitlink. NEVER checkout --ours/--theirs here.
 git -C $MN update-index --cacheinfo "160000,$MLXSHA,crates/mlx-sys/mlx"
@@ -257,10 +264,10 @@ posterior bands on Thor/CUDA with fixed seeds.
 ## 5. Land and pin — breadth-last
 
 ```bash
-git -C $MN checkout genmlx/integration
+git -C $MN checkout main
 git -C $MN merge --ff-only sync/up-vNEXT
 git -C $MN tag -a "pin/mlx-node/$(date +%F)" -m "genmlx pin for mlx-node vNEXT"
-git -C $MN push origin genmlx/integration mirror/upstream "pin/mlx-node/$(date +%F)"
+git -C $MN push origin main mirror/upstream "pin/mlx-node/$(date +%F)"
 
 cd $GENMLX && git checkout -b sync/mlx-node-vNEXT
 

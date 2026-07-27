@@ -7,6 +7,15 @@
 > **Companions:** [`SYNC-RUNBOOK.md`](SYNC-RUNBOOK.md) (the ritual),
 > [`CONFLICT-LEDGER.md`](CONFLICT-LEDGER.md) (per-file resolution doctrine).
 
+> **2026-07-27 restructure (bean `genmlx-llj0`):** each fork's patched line was renamed to
+> `main` and all other branches deleted; only the `mirror/*` upstream trackers persist as
+> second branches. Name mapping: mlx-node `genmlx/integration` → `main`, mlx
+> `thor/stack-mlx-latest` → `main`. Deleted branches that carried historical gitlink pins
+> survive as `archive/<old-branch-name>` tags (never deleted). The measured strategies and
+> both laws below are unchanged; sync-time intermediates (`mirror/nax`, `nax-on-ml-explore`,
+> `sync/up-vNEXT`) are now recreated locally per sync rather than persisted on the remote.
+> Historical branch names in the measurement prose below are kept as written.
+
 ## The three repos
 
 ```
@@ -57,27 +66,25 @@ keeps steady state cheap.
 
 ### `robert-johansson/mlx` — rebase
 
-| branch | contents |
+| branch / tag | contents |
 |---|---|
+| `main` | our patch stack (17 commits as of 2026-07-27) on nax-on-ml-explore, current with true upstream. **The patched line.** Rebased per sync; pins are immortalized as tags *before* any rewrite. |
 | `mirror/ml-explore` | mirror of `ml-explore/main`. Zero own commits, ever. |
-| `mirror/nax` | mirror of `mlx-node/mlx` `perf/qwen-d256-sdpa`. Force-updated, **not** FF-only — mlx-node rebases this branch. |
-| `nax-on-ml-explore` | mlx-node's 4 commits replayed onto `mirror/ml-explore`. Rebased replay; rewriting expected. |
-| `thor/stack` | our 15 patches on `mirror/nax` — conservative, identical base to what mlx-node tests against. |
-| `thor/stack-mlx-latest` | our 15 patches on `nax-on-ml-explore` — current with true upstream. **Pin candidate.** |
+| *(local, per sync)* `mirror/nax`, `nax-on-ml-explore` | recreated in runbook §1 from `mlx-node/mlx` `perf/qwen-d256-sdpa`; not persisted on the remote. |
 | `pin/mlx/<date>` | annotated tag. **The gitlink points here, never at a branch tip.** |
 | `pr/*` | one topic per branch off `mirror/ml-explore`. Rewriting allowed; never pinned. |
-| `archive/pre-resync-<date>` | frozen former tip. Never deleted. |
+| `archive/*` | frozen tips of retired branches (2026-07-27) — carriers of historical gitlink pins, incl. `archive/thor/stack` (the conservative-base fallback stack) and `archive/fix-compiled-library-leak` (unlanded Metal fix, upstream-PR candidate). Never deleted. |
 
 ### `robert-johansson/mlx-node` — merge-forward
 
-| branch | contents |
+| branch / tag | contents |
 |---|---|
+| `main` | **never rewound.** One `merge --no-ff` per upstream release. The pinned line. |
 | `mirror/upstream` | FF-only mirror of `mlx-node/main`. |
-| `genmlx/integration` | **never rewound.** One `merge --no-ff` per upstream release. The pinned line. |
-| `sync/up-vNEXT` | per-release scratch. Merge, resolve, and build here; land `--ff-only` when green. Abortable without touching the pinned line. |
+| *(local, per sync)* `sync/up-vNEXT` | per-release scratch. Merge, resolve, and build here; land `--ff-only` when green. Abortable without touching the pinned line. |
 | `pin/mlx-node/<date>` | annotated tag; genmlx's gitlink points here. |
 | `pr/*` | topic branches for upstreaming. |
-| `archive/pre-resync-<date>` | frozen former tip. |
+| `archive/*` | frozen tips of retired branches (2026-07-27) — carriers of historical gitlink pins. Never deleted. |
 
 ### `genmlx` — consumer
 

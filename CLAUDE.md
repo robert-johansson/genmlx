@@ -155,9 +155,18 @@ Three validated dev hosts share these repos via GitHub: the Apple Silicon Mac
 sm_120; bring-up record: bean `genmlx-1aea`, handoff
 `docs/fork/RTX-PRO-6000-HANDOFF.md`). Rules that keep three boxes coherent:
 
-- **Sync topology.** genmlx `main` → mlx-node `genmlx/integration` → mlx
-  `thor/stack-mlx-latest`, tied by gitlinks. Trust the gitlink, bump it
-  deliberately. The beans repo (`.beans/`, a nested gitignored clone) is the
+- **Sync topology.** genmlx `main` → mlx-node `main` → mlx `main`, tied by
+  gitlinks (2026-07-27 restructure, bean `genmlx-llj0`: each fork's patched
+  line now lives on `main`; the old `genmlx/integration` /
+  `thor/stack-mlx-latest` names are retired). Each fork keeps exactly one
+  other persistent branch — the pristine upstream tracker (`mirror/upstream`
+  ← mlx-node/mlx-node on mlx-node, `mirror/ml-explore` ← ml-explore/mlx on
+  mlx) — so our patch set vs upstream is always
+  `git log --no-merges mirror/<upstream>..main`. Per-fork sync strategy is
+  unchanged (mlx-node merge-forward, never rewound; mlx rebased patch stack
+  with `pin/*` tags — see `docs/fork/`). Deleted branches that carried
+  historical gitlink pins survive as `archive/*` tags. Trust the gitlink,
+  bump it deliberately. The beans repo (`.beans/`, a nested gitignored clone) is the
   cross-agent coordination channel — hooks pull at SessionStart and push at
   Stop; **never leave a machine with unpushed bean edits** (second pusher
   rebases: `git -C .beans pull --rebase && git -C .beans push`).
