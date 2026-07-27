@@ -14,9 +14,11 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
+            [genmlx.dispatch :as dispatch]
             [genmlx.dynamic :as dyn]
             [genmlx.llm.backend :as llm]
             [genmlx.choicemap :as cm]
+            [genmlx.protocols :as p]
             [promesa.core :as pr])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -122,6 +124,75 @@
                                  (recur (inc i) (conj context tok-id) next-logits))))))))
                  (finally
                    (llm/reset-cache! model))))))))))
+
+(defn with-slab-assess
+  "Wrap an LLM GF (make-llm-gf) so p/assess scores all constrained tokens
+   in ONE teacher-forcing forward over prompt++tokens
+   (backend/forward-branch-scores) instead of replaying the body's
+   per-token step recurrence.
+
+   Assess with a fully-constrained choicemap needs no sampling: the slab
+   computes the identical Σ log p(t_i | prompt, t_0..t_{i-1}) in one
+   forward. Same compiled-vs-handler discipline as Layer 7 — the handler
+   body stays ground truth, the slab is the optimization; they agree
+   exactly in exact arithmetic and differ only by the documented bf16
+   graph-shape drift (GDN chunk scan vs step recurrence — the ≤1.0/token
+   bound measured by pi_assess_test law B). It is also the graph shape of
+   pi-assess/session-scores, so walk == assess becomes tight instead of
+   drift-bounded (genmlx-3n7b: on sm_120 the step-vs-slab drift exceeded
+   the old 0.1 D law on a 2-token span).
+
+   Semantics mirror the body's assess exactly: sites :t0.. consumed in
+   order, stopping after an EOS token or at max-tokens; every consumed
+   site must be constrained; retval = prompt ++ consumed tokens. Requires
+   the OWNED forward (CljsForwardModel) — other model types fall back to
+   the handler path, and all other GFI ops delegate to the base GF
+   unchanged. Scoring runs on a fresh owned branch (disposed in finally),
+   NOT the model-internal cache. Do not stack under grammar middleware:
+   ::custom-dispatch outranks with-handler, so a grammar-masked assess
+   must stay on the unwrapped GF."
+  [gf model-map]
+  (let [{:keys [model tokenizer]} model-map
+        eos (llm/eos-token-id tokenizer)
+        slab-assess
+        (fn [args constraints]
+          (let [[prompt-ids max-tokens] args
+                prompt (vec prompt-ids)
+                toks (loop [i 0, acc []]
+                       (if (>= i max-tokens)
+                         acc
+                         (let [v (cm/get-value (cm/get-submap constraints (t-addr i)))]
+                           (when (nil? v)
+                             (throw (ex-info (str "with-slab-assess: site " (t-addr i)
+                                                  " unconstrained — assess requires every visited site")
+                                             {:genmlx/error :assess-missing-constraint
+                                              :addr (t-addr i)})))
+                           (let [id (if (number? v) v (mx/item v))
+                                 acc' (conj acc id)]
+                             (if (== id eos) acc' (recur (inc i) acc'))))))]
+            (if (empty? toks)
+              {:weight (mx/scalar 0.0) :retval prompt}
+              (let [b (llm/owned-branch! model {:cache nil :offset 0})]
+                (try
+                  (let [scores (llm/forward-branch-scores model b (into prompt toks))
+                        host   (vec (mx/->clj scores))
+                        s      (count prompt)
+                        span   (subvec host (dec s) (+ (dec s) (count toks)))]
+                    {:weight (mx/scalar (reduce + 0.0 span))
+                     :retval (into prompt toks)})
+                  (finally (llm/dispose-branch! model b)))))))]
+    (dispatch/with-dispatch gf
+      (fn [op _gf2 args key opts]
+        (if (and (= op :assess) (llm/cljs-forward-model? model))
+          (slab-assess args (:constraints opts))
+          (case op
+            :simulate   (p/simulate   (dyn/with-key gf key) args)
+            :generate   (p/generate   (dyn/with-key gf key) args (:constraints opts))
+            :assess     (p/assess     (dyn/with-key gf key) args (:constraints opts))
+            :update     (p/update     (dyn/with-key gf key) (:trace opts) (:constraints opts))
+            :regenerate (p/regenerate (dyn/with-key gf key) (:trace opts) (:selection opts))
+            :project    (p/project    (dyn/with-key gf key) (:trace opts) (:selection opts))
+            :propose    (p/propose    (dyn/with-key gf key) args)))))))
 
 (defn make-llm-gf-uncached
   "Like make-llm-gf but without KV cache. Recomputes full context at

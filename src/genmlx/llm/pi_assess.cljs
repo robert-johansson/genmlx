@@ -174,8 +174,15 @@
    conditioning context (F[0..s), which equals the generation prompt when
    :parity?) becomes the LLM GF's prompt args and its span tokens the
    :t0.. choicemap. Resolves to {:weight <MLX scalar> :retval :tokens
-   :span :parity?}. Uses the model-internal cache (make-llm-gf), not the
-   branch ledger — do not interleave with a live provider turn.
+   :span :parity?}.
+
+   Scores via lcore/with-slab-assess — ONE teacher-forcing forward on a
+   fresh owned branch, the SAME graph shape as session-scores — so the law
+   below is tight, not bf16-graph-drift-bounded (genmlx-3n7b). Pass
+   {:handler-path? true} to force the body's step-recurrence assess (the
+   model-internal cache; do not interleave with a live provider turn) —
+   that path equals the slab only within the documented ≤1.0/token
+   graph-shape bound (law B / D2 of pi_assess_test).
    LAW: (mx/item :weight) == the session-scores :logprob for turn k."
   ([model-map messages k] (turn-assess model-map messages k {}))
   ([model-map messages k opts]
@@ -184,7 +191,9 @@
      (let [[s e]  span
            prompt (subvec full 0 s)
            toks   (subvec full s e)
-           gf     (lcore/make-llm-gf model-map)
+           gf     (cond-> (lcore/make-llm-gf model-map)
+                    (not (:handler-path? opts))
+                    (lcore/with-slab-assess model-map))
            res    (p/assess gf [prompt (count toks)] (turn-choicemap toks))]
        {:weight  (:weight res)
         :retval  (:retval res)

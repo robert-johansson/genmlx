@@ -214,14 +214,36 @@
                        (assert-true "C: scored span decodes to the administered reply"
                                     (str/includes? span-text text1))
                        ;; ---- D: the GFI law --------------------------------
+                       ;; turn-assess slab-scores on the walk's own graph shape
+                       ;; (with-slab-assess), so the law is TIGHT — 1e-3 like E,
+                       ;; not the old 0.1 that silently rode on step-vs-slab
+                       ;; bf16 drift and broke on sm_120 (genmlx-3n7b).
                        (pr/let [ta1 (pa/turn-assess mm msgs 2 {})
-                                ta2 (pa/turn-assess mm msgs 4 {})]
+                                ta2 (pa/turn-assess mm msgs 4 {})
+                                th1 (pa/turn-assess mm msgs 2 {:handler-path? true})]
+                         ;; turn-1: BOTH sides are a fresh slab from position 0
+                         ;; — identical graph, exact (same class as law E).
                          (assert-close "D: turn-1 assess weight == walked logprob"
-                                       (:logprob t1) (mx/item (:weight ta1)) 0.1)
+                                       (:logprob t1) (mx/item (:weight ta1)) 1e-3)
+                         ;; turn-2: the walk scores on a CACHED suffix scan, the
+                         ;; assess on a fresh slab — chunk-boundary drift only
+                         ;; (no scan-vs-step recurrence): measured 8e-4 on
+                         ;; sm_120; 0.05 bounds the class with margin while
+                         ;; staying 2x under the old miscalibrated 0.1.
                          (assert-close "D: turn-2 assess weight == walked logprob"
-                                       (:logprob t2) (mx/item (:weight ta2)) 0.1)
+                                       (:logprob t2) (mx/item (:weight ta2)) 0.05)
                          (assert-true "D: assess scored the same tokens"
                                       (= (:tokens ta1) (:tokens t1)))
+                         ;; D2: the handler (step-recurrence) assess equals the
+                         ;; slab within law B's measured graph-shape bound
+                         ;; (≤1.0/token, GDN chunk scan vs step recurrence) —
+                         ;; keeps step-path coverage now that D is slab-vs-slab.
+                         (let [d2 (js/Math.abs (- (mx/item (:weight th1))
+                                                  (mx/item (:weight ta1))))]
+                           (println "    D2 |handler - slab| =" (.toFixed d2 6)
+                                    "over" (:n-tokens t1) "tokens")
+                           (assert-true "D2: handler assess within ≤1.0/token of slab (graph-shape bound)"
+                                        (<= d2 (* 1.0 (:n-tokens t1)))))
                          ;; ---- E: walk == independent single-turn slice ----
                          (pr/let [solo (pa/session-scores
                                         mm (subvec msgs 0 3) {})]
