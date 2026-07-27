@@ -28,7 +28,10 @@
 (println "\n== 1.1 load-model ==")
 
 (p/let
- [m (llm/load-model (str model-dir "/qwen3.5-0.8b-mlx-bf16") {:cljs-forward? false})
+ ;; :paged? false — this suite drives the FLAT (Tier-1) forwardWithCache seam;
+ ;; on Metal, v0.0.8 defaults VLM checkpoints to the block-paged adapter,
+ ;; which refuses it (genmlx-lr9c; load policy design: bean genmlx-eacv).
+ [m (llm/load-model (str model-dir "/qwen3.5-0.8b-mlx-bf16") {:cljs-forward? false :paged? false})
   _ (assert-true "returns map" (map? m))
   _ (assert-true "has :model" (some? (:model m)))
   _ (assert-true "has :tokenizer" (some? (:tokenizer m)))

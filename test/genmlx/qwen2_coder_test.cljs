@@ -24,6 +24,17 @@
   (println "SKIP qwen2-coder-test: Qwen2.5-Coder checkpoint absent at" model-path)
   (js/process.exit 0))
 
+;; Capability skip: @genmlx/core has no qwen2 model class, and the owned CLJS
+;; forward does not implement the family either — so this test cannot run on
+;; ANY host regardless of checkpoint presence. Hosts without the checkpoint
+;; skipped on ENOENT above (a vacuous green); a host WITH the checkpoint (the
+;; Mac) surfaced the real state (genmlx-lr9c). qwen2.5-coder is not in the
+;; model roster; scrap-or-support decision tracked in bean genmlx-r70f.
+(println "SKIP qwen2-coder-test: model_type \"qwen2\" has no native class in"
+         "@genmlx/core and no owned-forward support — family not planned"
+         "(see bean genmlx-r70f)")
+(js/process.exit 0)
+
 (println "\n== Qwen2.5-Coder-0.5B via qwen2→qwen3 path ==\n")
 
 (pr/let [;; Test 1: Model loads successfully

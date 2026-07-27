@@ -64,7 +64,7 @@
    forward-prefill / forward-step) and .chatSessionStart (generate-text), so the
    downstream backend fns are unchanged. Returns a promise of the instance, or
    throws if @genmlx/core has no model class for this family."
-  [model-type model-path]
+  [model-type model-path {:keys [paged?] :as _opts}]
   (if-let [cls (case model-type
                  "qwen3"       (.-Qwen3Model mlx-core)
                  "qwen3_5"     (.-Qwen35Model mlx-core)
@@ -76,7 +76,15 @@
                  "harrier"     (.-HarrierModel mlx-core)
                  "lfm2"        (.-Lfm2Model mlx-core)
                  nil)]
-    (.load cls model-path)
+    ;; :paged? (qwen3_5 only): force the block-paged KV adapter on/off for
+    ;; this load, overriding the config/VLM-checkpoint default. v0.0.8
+    ;; defaults VLM checkpoints to paged on Metal, which refuses the flat
+    ;; Tier-1 forwardWithCache seam; Bun cannot set the real-environ
+    ;; MLX_QWEN35_PAGED_OVERRIDE gate from JS, so the native load takes it
+    ;; as a trailing option (genmlx-lr9c; load policy design: genmlx-eacv).
+    (if (and (some? paged?) (= "qwen3_5" model-type))
+      (.load cls model-path paged?)
+      (.load cls model-path))
     (throw (ex-info (str "genmlx.llm.backend: @genmlx/core has no native model "
                          "class for model_type " (pr-str model-type)
                          " — load a supported family (qwen3 / qwen3_5 / gemma4 / "
@@ -278,7 +286,8 @@
                       (atom {:next-id 1 :branches {}}))
               :tokenizer tokenizer
               :type (keyword model-type)})
-           (pr/let [model (load-upstream-model model-type model-path)]
+           (pr/let [model (load-upstream-model model-type model-path
+                                               (select-keys opts [:paged?]))]
              ;; Tier-B (upstream path): assert the loaded instance exposes the
              ;; native forward methods — catches the genmlx-7siy stale prebuilt.
              (assert-upstream-forward! model)

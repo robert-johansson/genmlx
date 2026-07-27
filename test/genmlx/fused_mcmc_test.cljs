@@ -238,8 +238,14 @@
           {:keys [score-fn init-params n-params]}
           (u/prepare-mcmc-score model [xs] obs [:slope :intercept] trace)
           std (mx/scalar 0.3)
-          chain-fn (mfbc 1000 2000 1 score-fn std n-params)
-          {:keys [noise uniforms]} (pgcn (rng/fresh-key 5010) 3000 n-params)
+          ;; 700+1300 = 2000 steps (was 1000+2000): a single fused eval on the
+          ;; current pin retains ~166-205 live buffers/step with no mid-eval
+          ;; release, so 3000 steps sits exactly on the ~499000 Metal buffer
+          ;; wall (genmlx-lr9c measurement; see fused-ops-limits in mcmc.cljs).
+          ;; Statistically harmless: tau~20 => ESS~65, SE(slope)~0.012 vs the
+          ;; 0.5 tolerance (~40 sigma).
+          chain-fn (mfbc 700 1300 1 score-fn std n-params)
+          {:keys [noise uniforms]} (pgcn (rng/fresh-key 5010) 2000 n-params)
           result (chain-fn init-params noise uniforms)
           _ (mx/materialize! (aget result 0) (aget result 1))
           samples-js (mx/->clj (aget result 1))
@@ -247,7 +253,7 @@
           intercepts (mapv second samples-js)
           mean-slope (/ (reduce + slopes) (count slopes))
           mean-int (/ (reduce + intercepts) (count intercepts))]
-      (is (= [2000 2] (mx/shape (aget result 1))) "linreg samples shape=[2000 2]")
+      (is (= [1300 2] (mx/shape (aget result 1))) "linreg samples shape=[1300 2]")
       (is (h/close? 2.0 mean-slope 0.5) "posterior slope ~ 2")
       (is (h/close? 1.0 mean-int 1.5) "posterior intercept ~ 1"))))
 
@@ -659,7 +665,13 @@
       (do
         (is (cf :mh 500 {}) "small GFI MH fuseable")
         (is (not (cf :mh 10000 {})) "large GFI MH not fuseable")
-        (is (cf :mh 10000 {:tensor-native? true}) "large tensor-native MH fuseable"))
+        ;; The current pin retains every per-step temporary live for the whole
+        ;; fused eval (~166-205 buffers/step, genmlx-rsgr), so the single-graph
+        ;; budget is buffer-bound and tensor-native no longer buys larger
+        ;; fusions: the wall sits at ~2400 steps for BOTH tiers.
+        (is (cf :mh 2000 {:tensor-native? true}) "2000-step tensor-native MH fuseable")
+        (is (not (cf :mh 10000 {:tensor-native? true}))
+            "10000-step tensor-native MH exceeds the buffer wall (genmlx-rsgr)"))
       (is false "can-fuse? exists"))))
 
 (deftest fused-mh-auto-fallback-test

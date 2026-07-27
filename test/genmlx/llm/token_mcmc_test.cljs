@@ -1,4 +1,4 @@
-;; @tier fast
+;; @tier medium
 (ns genmlx.llm.token-mcmc-test
   "genmlx-3ob2 / fayo: full 7-op GFI over token traces validated by TV-to-exact
    on a TINY synthetic categorical 'token' model (MODEL-FREE — no LLM/GPU). The

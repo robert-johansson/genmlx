@@ -42,16 +42,22 @@
 (def expected-prompt-ids [760 6511 314 9338 369])
 (def model-root (str (.-HOME js/process.env) "/.cache/models"))
 
-;; Golden values captured 2026-06-14 from the working forward (bf16 build).
-;; Tight tol (0.01) because the same build is bit-reproducible; a forward
-;; rewrite must reproduce these within bf16 noise (~1e-2).
+;; Golden values RE-captured 2026-07-27 on Metal/M4 at mlx pin fd21ea68c
+;; (genmlx-lr9c; originally captured 2026-06-14 pre-resync). The 973e27f82
+;; upstream kernel bump shifted every bf16 logprob by cross-kernel noise
+;; (0.02-0.11) while ALL argmax/top-5 token ids and rankings held; parity
+;; suites + the mlx-lm oracle argmax pin (11751 ' Paris') verified the
+;; forward before re-pinning. Tight tol (0.01) because the same build is
+;; bit-reproducible; a forward rewrite must reproduce these within bf16
+;; noise (~1e-2). An MLX-pin bump that shifts values is EXPECTED to re-pin
+;; here after independent verification — that is this pin's lifecycle.
 (def golden
   [{:name "qwen3.5-0.8b" :dir "qwen3.5-0.8b-mlx-bf16"
-    :argmax 11751 :argmax-decoded " Paris" :argmax-logprob -2.171875
-    :top5 [[11751 -2.171875] [279 -2.234375] [7172 -2.609375] [25 -2.984375] [198 -2.984375]]}
+    :argmax 11751 :argmax-decoded " Paris" :argmax-logprob -2.125
+    :top5 [[11751 -2.125] [279 -2.3125] [7172 -2.5625] [25 -2.875] [198 -2.875]]}
    {:name "qwen3.5-4b" :dir "qwen3.5-4b-mlx-bf16"
-    :argmax 11751 :argmax-decoded " Paris" :argmax-logprob -0.601563
-    :top5 [[11751 -0.601563] [7172 -2.843750] [264 -3.031250] [3750 -3.468750] [279 -3.593750]]}])
+    :argmax 11751 :argmax-decoded " Paris" :argmax-logprob -0.62109375
+    :top5 [[11751 -0.62109375] [7172 -2.75] [264 -3.125] [3750 -3.4375] [279 -3.625]]}])
 
 (defn- topk-from [lp k]
   (mx/eval! lp)
@@ -72,7 +78,10 @@
       ;; values are upstream's, tol 0.01. The owned forward (now the default for
       ;; qwen3/qwen3_5) differs by bf16 cross-kernel noise (~0.12) and is guarded
       ;; separately by the parity tests + scripts/llm_forward_xval_mlxlm.py.
-      (pr/let [m (llm/load-model path {:cljs-forward? false})
+      ;; :paged? false — this suite pins the FLAT (Tier-1) forwardWithCache
+      ;; seam; on Metal, v0.0.8 defaults VLM checkpoints to the block-paged
+      ;; adapter, which refuses it (genmlx-lr9c; load policy: genmlx-eacv).
+      (pr/let [m (llm/load-model path {:cljs-forward? false :paged? false})
                tok (:tokenizer m)
                ids-raw (llm/encode tok prompt false)
                ids (vec ids-raw)]

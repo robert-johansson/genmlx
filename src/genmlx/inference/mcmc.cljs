@@ -649,14 +649,22 @@
 ;; ---------------------------------------------------------------------------
 ;; Fused chain graph size estimation and auto-fallback
 ;; ---------------------------------------------------------------------------
-;; Empirical limits from Metal graph analysis (FUSED_MCMC_ANALYSIS.md):
-;; - GFI score functions: ~15K ops per score eval → graphs exceed 499K buffer quickly
-;; - Tensor-native scores: ~50 ops per score eval → much higher step budgets
-;; Conservative limits leave headroom below measured failure points.
+;; Empirical limits from Metal graph analysis (FUSED_MCMC_ANALYSIS.md),
+;; RE-MEASURED 2026-07-27 on the 973e27f82-based pin (genmlx-lr9c): a fused
+;; eval now retains EVERY per-step temporary live until the single command
+;; buffer completes — get-num-resources grows perfectly linearly at ~204.5
+;; buffers/step (GFI linreg, 7 sites) with zero mid-eval release, so the
+;; ~499000 Metal buffer wall lands at ~2400 steps regardless of score size.
+;; The pre-resync pin released intermediates during eval, which is what the
+;; old :native tier limits (80000/50000/200000) were calibrated against —
+;; they are 25x past the wall on the current pin. Until upstream restores
+;; incremental release (tracked in bean genmlx-rsgr), the single-graph
+;; budget is buffer-bound, not op-bound, so both tiers share the same
+;; step-denominated wall with ~20% headroom.
 
 (def ^:private fused-ops-limits
-  {:gfi    {:mh 2500 :mala 1500 :hmc 8000}
-   :native {:mh 80000 :mala 50000 :hmc 200000}})
+  {:gfi    {:mh 2000 :mala 1500 :hmc 2000}
+   :native {:mh 2000 :mala 1500 :hmc 2000}})
 
 (defn- estimate-fused-ops
   "Estimate Metal graph operations for a fused chain.

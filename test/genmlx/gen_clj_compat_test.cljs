@@ -21,11 +21,12 @@
 
 ;; Decision-1 (bean genmlx-ste5): MLX 0.32.0 (frozen) has no Cholesky/Inverse
 ;; VJP; the robert-fork g/h patches are not in this build. Differentiating
-;; Wishart log-prob throws [Primitive::vjp] Not implemented for Cholesky. With
-;; the mlx_compute_gradients try/catch (mlx-node) this surfaces as a catchable
-;; CLJS error; before it, an uncatchable std::terminate. Either way we SKIP the
-;; one Wishart-gradient assertion until the patched MLX lands. Flip to true then.
-(def ^:private cholesky-vjp? false)
+;; The fork's Cholesky::vjp / Inverse::vjp patches (5edece428 / 0a880eeca,
+;; backend-agnostic primitives.cpp) are in the vendored MLX pin, so the
+;; Wishart value gradient is exercisable again. Re-flipped 2026-07-26 during
+;; the Mac/Metal bring-up (genmlx-lr9c) after the pre-patch skip note told us
+;; to; verified analytical == numerical on Metal before enabling.
+(def ^:private cholesky-vjp? true)
 
 ;; ---------------------------------------------------------------------------
 ;; Helpers

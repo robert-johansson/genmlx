@@ -28,8 +28,11 @@
 
 (if-not (.existsSync fs (str dir "/model.safetensors"))
   (println "SKIP llm-cljs-forward-qwen35-test: qwen3.5-0.8b checkpoint absent")
+  ;; :paged? false — the upstream comparator drives the FLAT (Tier-1)
+  ;; forwardWithCache seam; on Metal, v0.0.8 defaults VLM checkpoints to the
+  ;; block-paged adapter, which refuses it (genmlx-lr9c; policy: genmlx-eacv).
   (pr/let [cljs-m  (llm/load-model dir {:cljs-forward? true})
-           up-m    (llm/load-model dir {:cljs-forward? false})
+           up-m    (llm/load-model dir {:cljs-forward? false :paged? false})
            ids-raw (llm/encode (:tokenizer cljs-m) "The capital of France is" false)
            prompt  (vec ids-raw)
            cljs-gf (core/make-llm-gf cljs-m)

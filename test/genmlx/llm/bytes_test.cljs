@@ -156,7 +156,11 @@
 
 (def home-dir (.-HOME (.-env js/process)))
 
-(pr/let [model-map (llm/load-model (str home-dir "/.cache/models/qwen3.5-0.8b"))]
+;; -mlx-bf16 = the converted (language_model.model.*) key layout every other
+;; llm/ suite loads; the bare qwen3.5-0.8b dir is an unconverted original
+;; export on some hosts (model.language_model.* + mtp.*) that load-weights
+;; cannot read (genmlx-lr9c Mac bring-up).
+(pr/let [model-map (llm/load-model (str home-dir "/.cache/models/qwen3.5-0.8b-mlx-bf16"))]
   (let [tokenizer (:tokenizer model-map)
         model (:model model-map)
         token-index (gram/build-token-index tokenizer)

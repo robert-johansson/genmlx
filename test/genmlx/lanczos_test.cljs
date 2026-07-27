@@ -19,6 +19,19 @@
 ;; Test 1: mlx-log-gamma accuracy via Gamma distribution
 ;; ---------------------------------------------------------------------------
 
+(def ^:private f32-eps 1.1920929e-7)
+
+(defn- f32-tol
+  "Sound accuracy bar for a float32 GPU result: 1e-5 absolute OR 4 ulp at the
+   expected magnitude, whichever is larger. A flat 1e-5 on log-gamma(50) =
+   144.5657 demands 6.9e-8 RELATIVE accuracy — below one float32 eps, i.e.
+   unsatisfiable except by rounding luck (the pre-resync Metal kernel landed
+   exactly on the double; the resynced one is 1.6 ulp off = 2.4e-5, both
+   correctly rounded computations). 4 ulp still catches any real Lanczos
+   regression, whose errors start ~1e-3 (genmlx-lr9c)."
+  [expected]
+  (max 1e-5 (* 4 f32-eps (js/Math.abs expected))))
+
 (deftest log-gamma-via-gamma-dist
   (testing "log-gamma via Gamma(a,1) at x=1"
     (doseq [[x-val expected-lg] reference-values]
@@ -27,7 +40,7 @@
             _  (mx/eval! lp)
             lp-val (mx/item lp)
             inferred-lg (- (- lp-val) 1.0)]
-        (is (h/close? expected-lg inferred-lg 1e-5)
+        (is (h/close? expected-lg inferred-lg (f32-tol expected-lg))
             (str "log-gamma(" x-val ") ~ " expected-lg))))))
 
 ;; ---------------------------------------------------------------------------
