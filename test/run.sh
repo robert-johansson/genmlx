@@ -30,7 +30,13 @@
 # validated 2026-06-10 on the full medium tier: per-file process isolation +
 # the genmlx-5ucd buffer-count mitigation make concurrent GPU load safe, and
 # do_one retries once on the known parallel-bunx launcher race; genmlx-q69j).
-# Slow/bench stay strictly serial. TEST_JOBS=1 restores fully-serial runs.
+# TEST_JOBS=1 restores fully-serial runs. Bench stays strictly serial
+# (perf numbers under contention are noise). Slow defaults to serial but is
+# opt-in parallel via TEST_JOBS_SLOW (e.g. 4): its long files are mostly
+# small-model convergence tests that barely load the GPU, and the CUDA boxes
+# have the VRAM for the few that do (35B resident = 31.5 GiB in 96 GiB on
+# sm_120). Keep the Mac serial until validated there — the serial policy
+# exists because of Metal wedge history, not CUDA.
 #
 # TEST_TIME_SCALE — host-speed scale (positive integer, default 1) multiplying
 # every per-tier wall-clock cap, so slower-than-Apple hosts don't need retagged
@@ -60,6 +66,7 @@ MANIFEST="test/tiers.txt"
 NBB_CMD="bun run --bun nbb"
 export NBB_CMD
 JOBS="${TEST_JOBS:-4}"
+JOBS_SLOW="${TEST_JOBS_SLOW:-1}"
 
 [ -f "$MANIFEST" ] || { echo "FATAL: $MANIFEST not found"; exit 2; }
 
@@ -84,9 +91,10 @@ tier_timeout() {            # per-tier per-file wall-clock cap (seconds), x host
   esac
   echo $(( base * ${TEST_TIME_SCALE:-1} ))
 }
-tier_jobs() {               # fast/medium parallel; slow/bench serial (GPU/RAM contention)
+tier_jobs() {               # fast/medium parallel; slow opt-in via TEST_JOBS_SLOW; bench always serial
   case "$1" in
     core|fast|medium) echo "$JOBS" ;;
+    slow)             echo "$JOBS_SLOW" ;;
     *)                echo 1 ;;
   esac
 }
@@ -304,9 +312,9 @@ run_tiers() {
   trap on_signal INT TERM
   trap cleanup EXIT
   export -f do_one tier_timeout tier_jobs
-  export JOBS
+  export JOBS JOBS_SLOW
 
-  echo "nbb: '$NBB_CMD'  jobs(fast/medium): $JOBS  time-scale: ${TEST_TIME_SCALE}x"
+  echo "nbb: '$NBB_CMD'  jobs(fast/medium): $JOBS  jobs(slow): $JOBS_SLOW  time-scale: ${TEST_TIME_SCALE}x"
   # Pre-warm the bunx nbb environment ONCE before any parallel fan-out: the
   # first J workers of a tier otherwise race the shared bunx cache (EEXIST /
   # "could not determine executable" / instant SIGKILL on its lockfile write),

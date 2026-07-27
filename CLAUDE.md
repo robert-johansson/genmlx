@@ -120,6 +120,14 @@ TEST_TIME_SCALE=1 test/run.sh all   # Apple Silicon (the calibration host)
 TEST_TIME_SCALE=8 test/run.sh all   # Jetson AGX Thor (aarch64, sm_110)
 TEST_TIME_SCALE=6 test/run.sh all   # RTX PRO 6000 (x86_64, sm_120; measured 2026-07-26,
                                     # binding ratio llm/token_mcmc 206s vs 45s fast cap)
+
+# On the CUDA boxes, ALSO parallelize the slow tier (the standing way to run
+# the battery there — the serial-slow policy exists for Metal wedge history,
+# not CUDA; slow files measured ~600 MiB VRAM each under 4 lanes on sm_120):
+TEST_TIME_SCALE=6 TEST_JOBS_SLOW=4 test/run.sh all   # RTX; Thor: scale 8
+# Mac stays TEST_JOBS_SLOW unset (serial) until validated there. Full timing
+# validation of the parallel tiers is tracked in the beans (interrupted
+# mid-measurement 2026-07-27; mechanism validated, walls pending).
 ```
 
 No build step for the ClojureScript — nbb interprets it directly. The **native
