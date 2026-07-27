@@ -115,8 +115,11 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 # Tiered runner (per-file process isolation; see the test/run.sh header).
 # Per-tier wall-clock caps and the absolute-ms perf assertions (fused_mcmc_test)
 # are tuned on Apple Silicon. Slower hosts scale BOTH with the host-speed knob
-# instead of retagging tiers (genmlx-9ox0) — on Thor/CUDA (aarch64 Tegra):
-TEST_TIME_SCALE=8 test/run.sh all
+# instead of retagging tiers (genmlx-9ox0). Measured per-host values:
+TEST_TIME_SCALE=1 test/run.sh all   # Apple Silicon (the calibration host)
+TEST_TIME_SCALE=8 test/run.sh all   # Jetson AGX Thor (aarch64, sm_110)
+TEST_TIME_SCALE=6 test/run.sh all   # RTX PRO 6000 (x86_64, sm_120; measured 2026-07-26,
+                                    # binding ratio llm/token_mcmc 206s vs 45s fast cap)
 ```
 
 No build step for the ClojureScript — nbb interprets it directly. The **native
@@ -129,12 +132,52 @@ skip it and every `nbb` run fails at `(js/require "@genmlx/core")`.
 
 **Requirements:** macOS with Apple Silicon (Metal backend) *or* Linux with an
 NVIDIA GPU (CUDA backend — `mlx-node`'s build selects it automatically on
-Linux; developed and tested on an aarch64 Jetson AGX Thor), Bun (or Node.js 18+), the native build
+Linux; validated on an aarch64 Jetson AGX Thor sm_110 and an x86_64 RTX PRO
+6000 Blackwell sm_120), Bun (or Node.js 18+), the native build
 above (`@genmlx/core` via `build.mjs`, plus `@mlx-node/core`/`@mlx-node/lm`), and
 nbb `1.4.208` (pinned via the `nbb` script in `package.json`). Malli is a git submodule tracking **official upstream
 `metosin/malli`** on the nbb classpath — the earlier robert-johansson/malli fork
 existed only for nbb 1.4.206 compatibility, which 1.4.208 made unnecessary (its
 SCI exposes `IPrintWithWriter`).
+
+## Multi-host development (Metal / sm_110 / sm_120)
+
+Three validated dev hosts share these repos via GitHub: the Apple Silicon Mac
+(Metal), the Jetson AGX Thor (CUDA sm_110), and the RTX PRO 6000 box (CUDA
+sm_120; bring-up record: bean `genmlx-1aea`, handoff
+`docs/fork/RTX-PRO-6000-HANDOFF.md`). Rules that keep three boxes coherent:
+
+- **Sync topology.** genmlx `main` → mlx-node `genmlx/integration` → mlx
+  `thor/stack-mlx-latest`, tied by gitlinks. Trust the gitlink, bump it
+  deliberately. The beans repo (`.beans/`, a nested gitignored clone) is the
+  cross-agent coordination channel — hooks pull at SessionStart and push at
+  Stop; **never leave a machine with unpushed bean edits** (second pusher
+  rebases: `git -C .beans pull --rebase && git -C .beans push`).
+- **Change discipline.** A CLJS-only change needs no build: verify with the
+  impact-set method (reverse-transitive ns-`:require` closure of the changed
+  namespaces → run just those test files + the contract guards; bean
+  `genmlx-emms` — measured 21 files/3m20s vs a 2h battery). Any **native**
+  change or submodule bump invalidates that shortcut: rebuild, then the
+  contract-guard block (`exact`/`gradient_fd`/`score_gradient`/
+  `clip_contract`/`membrane_coverage` + `qmm_determinism`/`gather_qmm_oracle`)
+  is mandatory, and run the full battery before calling it green.
+- **Per-arch numerics.** Tolerances are per-ARCH, not per-backend: the same
+  law measured Metal ~0 / sm_110 0.003 / sm_120 0.199 (GDN scan-vs-step,
+  `genmlx-nhvg`). A red on one box that is green on another is DATA for the
+  numeric-bounds table, not a bug to re-fix or a tolerance to widen — check
+  the beans before chasing it, record measured values per arch.
+- **RTX box specifics** (needed in any non-fish shell; the login shell gets
+  them from the conda/fish profile): native builds want
+  `CMAKE_PREFIX_PATH=$HOME/miniforge3 LIBRARY_PATH=$HOME/miniforge3/lib`
+  (BLAS/LAPACK live only in miniforge3),
+  `RUSTFLAGS` rpath for the pip-cu13 CUDA libs + miniforge3 (see
+  `genmlx-1aea`), and `MLX_CUDA_ARCHITECTURES=120a`; **every** run
+  (build, test, nbb) needs
+  `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=8192` (static-TLS dlopen
+  failure otherwise — same as Thor). `build.mjs` runs its own cargo build and
+  needs the same env. Model fixtures are symlinks in `~/.cache/models` into
+  the HF hub cache; coherence/moe_guard tests SKIP silently when checkpoints
+  are missing, so a green battery has not necessarily exercised them.
 
 ## Project structure
 
