@@ -291,4 +291,5 @@ Deleting a divergence is the point of the exercise — record them so they are n
 
 | date | upstream | conflicts | notes |
 |---|---|---|---|
-| *(pending)* | `v0.0.8` `0ebeaa57` | 14 paths / 26 hunks | first sync under this ledger; measured 2026-07-25, not yet executed |
+| 2026-07-26 | `v0.0.8` `0ebeaa57` | 14 paths / 26 hunks | first sync under this ledger; measured 2026-07-25, executed 2026-07-26 (`pin/mlx-node/2026-07-26`); §1d corrected from its outcome |
+| 2026-07-27 | K-quants `b89b84c` (PR #101) | 3 paths / 6 hunks (+ gitlink) | metallib-select.ts+test → THEIRS (upstream independently wrote our genmlx-lr9c fix — divergence erased); build.rs → their switch-exhaustiveness comment + our `110a;120a;121a` arch default (their hunk reverted to the `121a` arch-locked-cubin bug). MLX side: 14 theirs + 17 ours replayed, zero conflicts, range-diff all `=`. Follow-up commit: `__fp16`→`_Float16` portability fix in vendored ggml (x86_64-GCC build break; upstream-PR candidate). Validated RTX sm_120: battery 431/431. Bean `genmlx-an7d`. |

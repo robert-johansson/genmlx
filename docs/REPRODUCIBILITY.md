@@ -104,3 +104,14 @@ draws fresh entropy. Bit-for-bit replay of a full run is therefore not
 expected; statistical agreement of the rank tests is. (Known caveat:
 `csmc` consumes unkeyed entropy even under an explicit `:key` —
 tracked as genmlx-g5ys.)
+
+## Pin pairs (native sync history)
+
+A sync moves the mlx-node submodule **and** the MLX numerics floor.
+Each row records a validated `(mlx-node, mlx)` pin pair; the genmlx
+commit carrying the row is the consumer-side half of the pair. The
+pre-sync result freeze lives in `results/pre-sync-*` tags.
+
+| date | mlx-node pin | mlx pin | upstream taken | validated |
+|---|---|---|---|---|
+| 2026-07-27 | `pin/mlx-node/2026-07-27-kquants` (`3c579e4`) | `pin/mlx/2026-07-27-kquants` (`70f1c1b6c`) | `b89b84c` (v0.0.8 + K-quants PR #101) | RTX sm_120: full battery 431/431, contract guards + membrane 227∪49 green, addon surface identical (bean `genmlx-an7d`) |
