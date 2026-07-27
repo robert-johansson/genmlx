@@ -247,7 +247,7 @@ do_one() {
   # rather than hanging the worker forever.
   set -m
   local attempt
-  for attempt in 1 2; do
+  for attempt in 1 2 3; do
     timeout -k 10 "$to" $NBB_CMD "$file" > "$log" 2>&1 &
     pid=$!
     trap 'kill -KILL -'"$pid"' 2>/dev/null' TERM INT
@@ -262,9 +262,14 @@ do_one() {
     # error always leaves output, so the retry cannot mask one.
     # Test-output markers ONLY (not generic 'error' — the launcher failures
     # themselves print 'error:'). A deterministic load error lacks these too
-    # and gets one harmless identical retry; it still reports as FAIL.
-    if [ "$code" -ne 0 ] && [ "$attempt" -eq 1 ] && \
+    # and gets harmless identical retries; it still reports as FAIL.
+    # Up to TWO retries with a jittered pause: at a tier start the whole
+    # first J-wave races the shared bunx state at once, so an immediate
+    # identical retry often re-collides with the same cohort (2-9 casualties
+    # per battery measured on 2026-07-27; genmlx-lr9c).
+    if [ "$code" -ne 0 ] && [ "$attempt" -lt 3 ] && \
        ! grep -qE 'Testing |Ran [0-9]+ tests|[0-9]+ failures|PASS|FAIL' "$log"; then
+      sleep $(( (RANDOM % 3) + attempt ))
       continue
     fi
     break
@@ -302,6 +307,12 @@ run_tiers() {
   export JOBS
 
   echo "nbb: '$NBB_CMD'  jobs(fast/medium): $JOBS  time-scale: ${TEST_TIME_SCALE}x"
+  # Pre-warm the bunx nbb environment ONCE before any parallel fan-out: the
+  # first J workers of a tier otherwise race the shared bunx cache (EEXIST /
+  # "could not determine executable" / instant SIGKILL on its lockfile write),
+  # costing 2-9 alphabetically-first files per battery even with do_one's
+  # retry (measured across three 2026-07-27 Metal batteries; genmlx-lr9c).
+  $NBB_CMD -e nil >/dev/null 2>&1 || true
   local grand_pass=0 grand_fail=0
   for tier in "${tiers[@]}"; do
     local files; files="$(manifest_files_for_tier "$tier")"
