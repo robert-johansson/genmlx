@@ -10,6 +10,7 @@
             [genmlx.dynamic :as dyn]
             [genmlx.dist :as dist]
             [genmlx.gen :refer [gen]]
+            [genmlx.mlx.random :as rng]
             [genmlx.inference.mcmc :as mcmc]))
 
 ;; ---------------------------------------------------------------------------
@@ -87,10 +88,17 @@
 
 (deftest hmc-adapt-metric-test
   (testing "HMC adapt-metric"
+    ;; Seeded + budgeted from a MEASURED sweep (2026-07-27, RTX sm_120), per the
+    ;; compiled_optimizer discipline: at burn 300, 2 of 15 seeds land OUTSIDE the
+    ;; ±0.7 band (0.75, 0.88 — slow-mixing adaptation, ~13% flake rate; the
+    ;; battery red of 2026-07-27). At burn 600 all 15 seeds are in band (worst
+    ;; |err| 0.43, median 0.028). Seed 3 is the MEDIAN-error seed (0.028), not a
+    ;; lucky one; the band is unchanged. hmc honors :key for init AND chain
+    ;; since 2026-07-26 — reproducibility verified bit-identical in the sweep.
     (let [samples (mcmc/hmc
-                    {:samples 400 :burn 300 :step-size 0.01 :leapfrog-steps 10
+                    {:samples 400 :burn 600 :step-size 0.01 :leapfrog-steps 10
                      :addresses [:mu] :adapt-step-size true :adapt-metric true
-                     :compile? false :device :cpu}
+                     :compile? false :device :cpu :key (rng/fresh-key 3)}
                     model [3] obs)
           vals (mapv first samples)
           m (mean vals)]
