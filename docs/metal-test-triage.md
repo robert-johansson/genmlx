@@ -16,10 +16,17 @@
 | file | cause | status |
 |---|---|---|
 | `llm/gemma4_test` | v0.0.8 upstream dropped `forward`/`forwardWithCache` from the native `Gemma4Model` (chat-session-only surface); genmlx token-level GF needs the seam | RED — real regression, bean `genmlx-lge5` (high). Only reproducible on hosts with the gemma4 checkpoint (both Linux boxes skip on ENOENT). |
-| `pi_assess_test` | section D turn-1 assess-vs-walked internal-consistency margin: Δ 0.111 vs tol 0.1 on Metal (turn-2 passes at 0.083); tolerance calibrated on CUDA | RED (18/19) — needs a measured band, bean `genmlx-9y1c`. Deterministic, not a flake. |
 | `fused_mcmc_test` | `cached vectorized < 500ms` perf budget: measured 618–637 ms across 5 runs at scale 1 (~24% over the pre-resync-tuned budget). Real perf regression of the resynced pin, consistent with the fused-eval buffer-retention change | RED (1 assert) — reported per the bring-up handoff §4; root cause tracked in bean `genmlx-rsgr`. Do NOT bump the budget; fix upstream or re-tune deliberately. |
 
 ## Resolved during the 2026-07-27 bring-up (for the record)
+
+- **pi_assess D margin** (was in the residual): RESOLVED by Thor's slab-graph
+  assess fix (`f37d2b1`, genmlx-3n7b) — the D law is tight again and the
+  step-vs-slab drift is reclassified to D2. Validated 20/20 on Metal
+  2026-07-27. Bean `genmlx-9y1c` superseded.
+- **forward_golden cross-backend pins**: now BACKEND-CONDITIONAL
+  (`9595918`, genmlx-z4hy) — Metal + CUDA golden maps, capture-don't-reuse
+  skips. Metal branch validated 26/26.
 
 - **GRPO training SIGTRAP** (`world_train_test` CRASH@0s): upstream made
   Metal command encoders thread_local; cross-thread eval threw and the
