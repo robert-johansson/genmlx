@@ -92,3 +92,9 @@
   deliberately-unswept tail of the ~20 `auto-key` sites in `mcmc.cljs`,
   so every run draws a fresh initial-trace seed against a statistical
   band. Sound fix specced in `genmlx-5hhd` + the auto-key sweep.
+- `compiled_loss_grad_test` `learn-api-handler-test` fails ~1-in-10 runs
+  (measured 2026-07-27: 9/10 solo + 1 battery miss; first appearance after
+  four clean batteries) — unseeded `co/learn` init draws `:mu` from the
+  prior each run, and a far-tail start misses the ±0.5 convergence band in
+  the 1000-iteration budget. Same `auto-key`/bucket-F class; sound fix via
+  `genmlx-5hhd` (seed-pin + measured band or a measured budget increase).
