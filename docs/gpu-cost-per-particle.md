@@ -115,6 +115,87 @@ direction: the discrete card evaluates the graph faster while CLJS-side graph
 construction costs the same. This sharpens rather than softens the `compile-fn`
 verdict: making the GPU faster moves the ratio further toward the host.
 
+## Metal (Apple M2 Max 64GB, 2026-07-28, genmlx c1543f8 / mlx-node 722bf55e / mlx a27ddcaef, bun 1.3.14)
+
+Run strictly serial, GPU otherwise idle. `c1543f8` is **two docs-only commits**
+past the sm_110/sm_120 columns' `6e2fc61` — the bench code and the mlx-node/mlx
+pins are identical — so this column is directly comparable with no code confound.
+
+Mind the box: this is the **M2 Max**, not the **M4 mini** that
+`docs/metal-test-triage.md` tracks. Host-bound paths follow the host, so the two
+Macs are separate columns; the M4 mini can get its own later.
+
+### Anchors (harness credibility)
+
+| anchor | im8n reference | measured here | verdict |
+|---|---|---|---|
+| membrane micro-latency | ~1 ms/eval | 0.188 ms/eval (tiny add+eval!) | credible — but the HIGHEST of the three arches (sm_110 0.105, sm_120 0.0169). Metal's per-dispatch command-buffer latency is genuinely larger than either CUDA card |
+| vgenerate N=3000 | ~21 ms (metareasoner world model) | 1.9 ms (5-site model) | reproduces — smaller model, right order |
+
+### Scalar paths — ALL host-bound (ms/particle does not fall in N)
+
+| path | N sweep | ms/particle(-step) | verdict |
+|---|---|---|---|
+| `p/generate` ×N loop | 1→3000 | 1.51 → **1.86** | host-bound; the FASTEST scalar generate of the three arches |
+| `importance-sampling` | 1→1000 | 1.69 → **2.55** | host-bound (slight climb, no amortization) |
+| `mh` (per chain-step, S=10) | 1→20 chains | 4.96 → **4.96 flat** | host-bound; comparable to sm_120's ~5.0 |
+| `smc` (per particle-step) | 1→500 | 24.5 (N=1 warmup) → **2.43 flat** | host-bound (2.4 flat past the fixed first-call cost) |
+| `smcp3` (per particle-step) | 1→150 | 3.55 → **1.77 flat** | host-bound |
+
+### Batched paths — all amortizing; total is CONSTANT out to N=3000
+
+| path | total ms, N=1→3000 | ms/particle at N=3000 |
+|---|---|---|
+| `vgenerate` | 1.9 → 1.9 (flat total) | 0.0006 |
+| `vectorized-importance` | 1.7 → 1.9 | 0.0006 |
+| `vmh` (10 sweeps) | 23.9 → 23.7 | 0.0008 /chain-step |
+| `vsmc` (5 steps) | 10.9 → 12.5 | 0.0008 /particle-step |
+| `vsmcp3` (3 steps) | 6.2 → 9.8 | 0.0011 /particle-step |
+| spliced-Map plate (M=5) | 2.2 → 2.1 | 0.0007 |
+
+Same shape as both CUDA arches — every batched total is flat to N=3000, so
+particle count is free on this model. The sm_120 multiplier caveat applies MORE
+strongly here: the batched totals (1.9 ms) sit far below the membrane anchor
+(37.7 ms for 200 evals), so timer noise is a large fraction. Read the speedups
+as order-of-magnitude; the robust claim is the shape (total does not grow in N).
+
+### GPU-vs-host split of the batched floor (vgenerate, N=3000)
+
+| phase | ms |
+|---|---|
+| graph build (host) | 0.9 |
+| force eval (GPU) | 0.6 |
+
+**~60% host** — the LEAST host-dominated of the three (sm_110 74%, sm_120 86%),
+in the expected direction: Metal's GPU eval is the slowest of the three, so it
+takes relatively more of the (sub-ms, noisy) total. Same `compile-fn` verdict —
+the split is noise-dominated at this scale, read as a band, not a point.
+
+### mcmc-family buffer-wall check (genmlx-sv3z's Metal-specific obligation)
+
+The k1z7/ugq9 tidy cadences (mod-5 on NUTS paths, mod-25 elsewhere) were SIZED
+against Metal's ~499K buffer-count wall from **Thor-side reasoning**, so Metal
+had to confirm them directly. Re-ran the family solo on this box —
+`mcmc_defaults`, `mcmc_detailed_balance`, `adaptive_hmc`, `adaptive_nuts`,
+`loop_compiled_hmc`, `loop_compiled_mala`, `inference_hmc`,
+`nuts_noncentered_funnel`, `fused_mcmc`, `mcmc_diagnostics`,
+`inference_convergence`:
+
+**10/11 green, with zero resource exhaustion / SIGTRAP / crash on any file** —
+the cadences hold. The 3000-step fused linreg chain, sized "exactly on the
+~499000 wall" (`fused_mcmc_test:241`), passes. **The buffer wall is confirmed
+comfortable on Metal.**
+
+The lone red is `fused_mcmc_test`, and it is **not a buffer breach and not
+introduced by this run** — two absolute wall-**clock** perf budgets:
+`fused < 200 ms` (measured **300 ms**) and `cached vectorized < 500 ms`
+(measured **977 ms**). This is the known resynced-pin fused-eval buffer-
+**retention** regression tracked in **`genmlx-rsgr`** and logged for the M4 mini
+in `docs/metal-test-triage.md` (the mini measured 618–637 ms on the 500 ms
+budget). The M2 Max is slower than the mini, so it trips **both** budgets where
+the mini tripped only one. Per the triage ledger: **do NOT bump the budget** —
+the fix is the buffer-retention root cause (`genmlx-rsgr`), not the tolerance.
+
 ## Findings beyond the curves
 
 1. **Scalar MH's 61.6 ms/step was NOT inherent — root-caused and FIXED
@@ -233,30 +314,45 @@ sm_120 caveats live there — its batched totals are timer-noise-scale, read
 those speedups as order-of-magnitude). This table is the current state.
 `bun run --bun nbb cost_per_particle.cljs` from bench/, strictly serial.
 
-| measurement | sm_110 (Thor) | Metal (M4) | sm_120 (RTX) |
+| measurement | sm_110 (Thor) | Metal (M2 Max) | sm_120 (RTX) |
 |---|---|---|---|
-| provenance | 2026-07-28, 6e2fc61 | — | 2026-07-28, 6e2fc61 |
-| membrane eval (tiny add+eval!) | 0.105 ms (0.05–0.11 across runs) | | 0.0169 ms |
-| scalar `p/generate` loop | 1.8–2.7 ms/p flat | | ~4.9 ms/p flat |
-| scalar `importance-sampling` | 3.8–3.9 ms/p flat | | ~4.1 ms/p flat |
-| scalar `mh` (post-k1z7, S=10) | 11.1 ms/chain-step; 5.66 long-chain | | ~5.0 ms/chain-step |
-| scalar `smc` | 4.2 ms/p-step flat | | ~3.6 ms/p-step flat |
-| scalar `smcp3` | 2.1–2.2 ms/p-step flat | | ~6.0 ms/p-step flat |
-| `vgenerate` N=3000 | 6.8 ms total → 0.0023 ms/p | | 1.6 ms → 0.0005 |
-| — build/eval split at N=3000 | 4.4 host / 1.4 GPU (76% host) | | 1.2 / 0.2 (86% host) |
-| `vectorized-importance` N=3000 | 5.7 ms → 0.0019 | | 1.8 ms → 0.0006 |
-| `vmh` N=3000 (10 sweeps) | 70.9 ms → 0.0024 /chain-step | | 35.7 ms → 0.0012 |
-| `vsmc` N=3000 (5 steps) | 34.0 ms → 0.0023 /p-step | | 18.6 ms → 0.0012 |
-| `vsmcp3` N=3000 (3 steps) | 21.7 ms → 0.0024 /p-step | | 8.2 ms → 0.0009 |
-| spliced-Map plate N=3000 | 5.7 ms → 0.0019 /p | | 9.3 ms → 0.0031 |
+| provenance | 2026-07-28, 6e2fc61 | 2026-07-28, c1543f8¹ | 2026-07-28, 6e2fc61 |
+| membrane eval (tiny add+eval!) | 0.105 ms (0.05–0.11 across runs) | 0.188 ms | 0.0169 ms |
+| scalar `p/generate` loop | 1.8–2.7 ms/p flat | 1.5–1.9 ms/p flat | ~4.9 ms/p flat |
+| scalar `importance-sampling` | 3.8–3.9 ms/p flat | 1.7–2.5 ms/p flat | ~4.1 ms/p flat |
+| scalar `mh` (post-k1z7, S=10) | 11.1 ms/chain-step; 5.66 long-chain | ~5.0 ms/chain-step flat | ~5.0 ms/chain-step |
+| scalar `smc` | 4.2 ms/p-step flat | 2.4 ms/p-step flat | ~3.6 ms/p-step flat |
+| scalar `smcp3` | 2.1–2.2 ms/p-step flat | 1.8 ms/p-step flat | ~6.0 ms/p-step flat |
+| `vgenerate` N=3000 | 6.8 ms total → 0.0023 ms/p | 1.9 ms → 0.0006 | 1.6 ms → 0.0005 |
+| — build/eval split at N=3000 | 4.4 host / 1.4 GPU (76% host) | 0.9 / 0.6 (~60% host) | 1.2 / 0.2 (86% host) |
+| `vectorized-importance` N=3000 | 5.7 ms → 0.0019 | 1.9 ms → 0.0006 | 1.8 ms → 0.0006 |
+| `vmh` N=3000 (10 sweeps) | 70.9 ms → 0.0024 /chain-step | 23.7 ms → 0.0008 | 35.7 ms → 0.0012 |
+| `vsmc` N=3000 (5 steps) | 34.0 ms → 0.0023 /p-step | 12.5 ms → 0.0008 | 18.6 ms → 0.0012 |
+| `vsmcp3` N=3000 (3 steps) | 21.7 ms → 0.0024 /p-step | 9.8 ms → 0.0011 | 8.2 ms → 0.0009 |
+| spliced-Map plate N=3000 | 5.7 ms → 0.0019 /p | 2.1 ms → 0.0007 | 9.3 ms → 0.0031 |
 
-Both measured columns are now at the SAME pin, so the sm_120 section's
-"confounded until Thor re-runs at this pin" caveat is resolved: the remaining
-scalar-row differences (e.g. generate 2.4 vs 4.9, smcp3 2.2 vs 6.0 — Thor
-FASTER despite the slower GPU; mh 5.66 vs 5.0) are host-side arch/toolchain
-effects, consistent with these paths being host-bound.
+¹ Metal's `c1543f8` is two DOCS-ONLY commits past the CUDA columns' `6e2fc61`
+(the sm_110/sm_120 doc-column writes themselves); bench code + mlx-node/mlx pins
+are identical, so all three columns are code-comparable.
 
-Metal is the remaining gap, and it carries an extra obligation the CUDA boxes
-do not (genmlx-sv3z): the k1z7/ugq9 tidy cadences were sized against Metal's
-~499K buffer-count wall from Thor-side reasoning, so Metal must also re-run the
-mcmc family once and confirm the counts stay comfortable.
+All three columns are now at effectively the same pin (Metal's c1543f8 is two
+docs-only commits past the CUDA columns' 6e2fc61), so cross-arch scalar-row
+differences are host-side arch/toolchain effects, not code confounds —
+consistent with these paths being host-bound. Notable reads: Thor's scalar
+generate/smcp3 are FASTER than RTX (2.4 vs 4.9, 2.2 vs 6.0 ms/p) despite the
+slower GPU; Metal's scalar generate is the FASTEST of the three (1.5–1.9 ms/p)
+even though its membrane per-eval latency is the HIGHEST (0.188 vs 0.105 vs
+0.0169 ms) — not a contradiction, because scalar generate is dominated by host
+GFI dispatch, not by the single eval. The batched host-fraction ranks with GPU
+speed exactly as predicted: Metal 60% < sm_110 74% < sm_120 86% (faster card ⇒
+more host-dominated). No cross-arch reds in the numeric sense — nothing for the
+numeric-bounds table.
+
+Metal's extra obligation (genmlx-sv3z) is **discharged**: the mcmc family
+re-ran 10/11 green with zero resource exhaustion, so the k1z7/ugq9 tidy cadences
+hold under Metal's ~499K buffer wall (the 3000-step fused chain sized on that
+wall passes). The lone red is `fused_mcmc_test`'s two wall-CLOCK perf budgets
+(300 vs 200 ms; 977 vs 500 ms) — the known resynced-pin buffer-RETENTION
+regression tracked in `genmlx-rsgr` (M4 mini logged at 618–637 ms in
+`docs/metal-test-triage.md`; the M2 Max is slower and trips both). Not a buffer
+breach; do not bump the budget. See the Metal section above for the full run.
