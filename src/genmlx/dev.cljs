@@ -10,14 +10,17 @@
      (dev/start!)        ;; validates all GFI inputs/outputs
      (dev/stop!)         ;; back to zero-cost dispatch
 
-   All validation is off by default. Calling start! swaps two atoms:
+   All validation is off by default. Calling start! swaps three atoms:
    - genmlx.dynamic/dispatch-fn  (wraps GFI dispatch with output validation)
-   - genmlx.runtime/validate-fn  (wraps handler init-state and sub-result checks)"
+   - genmlx.runtime/validate-fn  (wraps handler init-state and sub-result checks)
+   - genmlx.handler/fallback-notice-fn (once-per-gf-type notice when a batched
+     splice drops to the scalar-per-particle fallback loop — genmlx-y3ls)"
   (:require [clojure.string :as str]
             [malli.core :as m]
             [malli.error :as me]
             [genmlx.schemas :as schemas]
             [genmlx.dynamic :as dyn]
+            [genmlx.handler :as h]
             [genmlx.runtime :as rt]))
 
 ;; ---------------------------------------------------------------------------
@@ -94,6 +97,23 @@
                  {:schema-key schema-key :entry entry
                   :value value :context context}))))))
 
+     ;; Batched-splice fallback notice: once per gf TYPE per start! (the seen
+     ;; set is dev-owned state, reset on every start!/stop!). genmlx-y3ls.
+     ;; Deliberately NOT routed through `report`: the default reporter THROWS,
+     ;; and a scalar fallback is legal behavior (Recurse is inherently scalar)
+     ;; — this is a performance notice, not a validation error.
+     (let [seen (atom #{})]
+       (reset! h/fallback-notice-fn
+         (fn [gf addr n]
+           (let [t (pr-str (type gf))]
+             (when-not (@seen t)
+               (swap! seen conj t)
+               (js/console.warn
+                 (str "genmlx.dev: spliced " t " at " (pr-str addr)
+                      " has no IBatchedSplice fast path — running an N-fold "
+                      "scalar host loop (N=" n "). Once per type; see "
+                      "docs/gpu-cost-per-particle.md finding 3.")))))))
+
      (println "genmlx.dev: schema validation enabled"
               (str "(" (str/join ", " (map name scope)) ")"))
      :started)))
@@ -103,5 +123,6 @@
   []
   (reset! dyn/dispatch-fn dyn/run-dispatched*)
   (reset! rt/validate-fn (fn [_ _ _]))
+  (reset! h/fallback-notice-fn (fn [_ _ _]))
   (println "genmlx.dev: schema validation disabled")
   :stopped)

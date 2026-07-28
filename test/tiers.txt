@@ -47,6 +47,7 @@ medium test/genmlx/bandit_test.cljs
 fast test/genmlx/batched_mix_test.cljs
 fast test/genmlx/batched_scan_test.cljs
 medium test/genmlx/batched_smc_map_test.cljs
+medium test/genmlx/batched_splice_test.cljs
 fast test/genmlx/batched_switch_test.cljs
 fast test/genmlx/batched_unfold_test.cljs
 fast test/genmlx/batch_sample_n_test.cljs

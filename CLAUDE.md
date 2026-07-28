@@ -326,9 +326,9 @@ direct import of dynamic.cljs).
      telemetry; `buffer-count-threshold` hysteresis) and four `^:mutable`
      counters (`ops-since-check`, `allocs-since-count-check`, `proactive-armed?`,
      `gfi-ops-count`) — cleanup heuristics only, never affect computation results
-   - Two atoms for dev mode extension (`dispatch-fn` in `dynamic.cljs`,
-     `validate-fn` in `runtime.cljs` — only swapped by `dev.cljs` start!/stop!,
-     no-ops in production)
+   - Three atoms for dev mode extension (`dispatch-fn` in `dynamic.cljs`,
+     `validate-fn` in `runtime.cljs`, `fallback-notice-fn` in `handler.cljs` —
+     only swapped by `dev.cljs` start!/stop!, no-ops in production)
    - Memoization caches of deterministic values: `fused-cache` atoms on
      Unfold/Scan combinator records (`combinators.cljs`), `with-cache` in
      `inference/exact.cljs`, the construction-scoped expected-utility

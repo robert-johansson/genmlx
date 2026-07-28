@@ -2,7 +2,25 @@
   "Model introspection — reports compilation, conjugacy, and dispatch
    resolution for any generative function. Pure read, no execution.
    Uses the actual dispatcher stack via dyn/resolve-dispatch."
-  (:require [genmlx.dynamic :as dyn]))
+  (:require [genmlx.dynamic :as dyn]
+            [genmlx.protocols :as p]))
+
+(defn batched-splice-eligibility
+  "How gf executes when SPLICED under a batched handler (genmlx-y3ls):
+   :dynamic          — DynamicGF, runs the batched sub-handler
+   :native           — implements IBatchedSplice (fast path: Map/Unfold/
+                       Switch/Scan/Mix, and the Mask/contramap/map-retval
+                       wrappers, which delegate to their inner)
+   :scalar-fallback  — GFI value with neither: the N-fold scalar host loop
+                       (handler/combinator-batched-fallback, ~2-4 ms/particle
+                       on Thor sm_110 — Recurse is deliberately here)
+   nil               — not a generative function."
+  [gf]
+  (cond
+    (:body-fn gf) :dynamic
+    (satisfies? p/IBatchedSplice gf) :native
+    (satisfies? p/IGenerativeFunction gf) :scalar-fallback
+    :else nil))
 
 (def ^:private ops
   [:simulate :generate :update :regenerate :assess :project :propose])
@@ -35,13 +53,18 @@
    state, conjugacy, and dispatch resolution. Pure read — no execution."
   [gf]
   (let [schema (:schema gf)]
-    (when schema
+    (if-not schema
+      ;; Combinators / wrappers carry no schema, but their batched-splice
+      ;; eligibility is still the question worth asking (genmlx-y3ls).
+      (when-let [e (batched-splice-eligibility gf)]
+        {:type (pr-str (type gf)) :batched-splice e})
       (cond->
         {:trace-sites    (mapv #(select-keys % [:addr :dist-type :deps :static?])
                                (:trace-sites schema))
          :classification (select-keys schema [:static? :has-branches? :has-loops?
                                               :dynamic-addresses?])
          :compilation    (compilation-level schema)
+         :batched-splice (batched-splice-eligibility gf)
          :dispatch       (resolve-dispatch gf)}
 
         (:has-conjugate? schema)

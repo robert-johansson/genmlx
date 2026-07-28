@@ -22,6 +22,7 @@
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
             [genmlx.vectorized :as vect]
+            [genmlx.combinators :as comb]
             [genmlx.inference.importance :as is]
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.smc :as smc]
@@ -206,5 +207,28 @@
                                      (smcp3/vsmcp3 {:particles n :key (rng/fresh-key 41)}
                                                    hmodel [ys] obs3)))))]
       (row "batched vsmcp3       " n (* n 3) ms))))
+
+;; ---------------------------------------------------------------------------
+;; Spliced Map plate under vgenerate (genmlx-y3ls). Before the Map
+;; IBatchedSplice landed this took handler/combinator-batched-fallback — an
+;; N-fold scalar host loop measured FLAT 2.0-3.5 ms/particle on this model
+;; (stash A/B on Thor sm_110, 2026-07-28: 1007.9 ms at N=500 before vs 3.9 ms
+;; after — ~255x). With the fast path it amortizes like vgenerate.
+;; ---------------------------------------------------------------------------
+
+(println "\n== Spliced Map plate (M=5) under vgenerate — genmlx-y3ls fast path ==")
+(let [mkern (dyn/auto-key (gen [x] (trace :y (dist/gaussian x 1))))
+      plate (comb/map-combinator mkern)
+      pmodel (dyn/auto-key (gen [xs] (splice :plate plate xs)))
+      pobs (reduce (fn [acc [i v]]
+                     (cm/set-choice acc [:plate i] (cm/choicemap :y (mx/scalar v))))
+                   cm/EMPTY
+                   (map-indexed vector ys))]
+  (doseq [n [1 10 100 1000 3000]]
+    (let [ms (bench 3
+                    (fn []
+                      (let [vt (dyn/vgenerate pmodel [ys] pobs n (rng/fresh-key 51))]
+                        (mx/eval! (:weight vt)))))]
+      (row "spliced-Map plate    " n n ms))))
 
 (println "\n== cost_per_particle done ==")

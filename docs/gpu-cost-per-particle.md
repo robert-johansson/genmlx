@@ -95,7 +95,7 @@ node-by-node from CLJS on every call.
 | 1 | ~~scalar `mh` step overhead~~ **FIXED** | 61.6 → 5.66–11.1 ms/step | was a full JSC GC per step in `collect-samples`; `:tidy-every 25` cadence (genmlx-k1z7) |
 | 1b | ~~per-iteration depth-0 tidy exits in other drivers~~ **FIXED** | see table below | light tidy variants + per-loop cadences (genmlx-ugq9) |
 | 2 | SMCP3 particle loop | 2.2 ms/p-step flat | vectorize (im8n option d); vsmc equivalent is 0.0022 (genmlx-ke97) |
-| 3 | silent batched-splice fallback | N-fold host loop, no signal | emit signal + implement IBatchedSplice for Map first (genmlx-y3ls) |
+| 3 | ~~silent batched-splice fallback~~ **FIXED** | spliced Map: 1007.9 ms → 3.9 ms at N=500 (~255×) | Map/Mask IBatchedSplice + contramap/map-retval delegation + dev-mode notice + inspect eligibility (genmlx-y3ls); Recurse documented inherently scalar |
 | 4 | batched host floor | 74% of vgenerate wall is graph build | per-call graph rebuild; L4/fused territory — document, don't chase per-op |
 
 ## The tidy-exit GC purge (genmlx-k1z7 + genmlx-ugq9, 2026-07-28)

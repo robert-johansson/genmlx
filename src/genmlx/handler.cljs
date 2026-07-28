@@ -555,10 +555,20 @@
    :retval (let [rvs (mapv :retval results)]
              (if (every? mx/array? rvs) (mx/stack rvs) (vec rvs)))})
 
+;; Dev-mode notice hook for the scalar-per-particle fallback below (genmlx-y3ls).
+;; No-op by default — production stays silent-and-working. genmlx.dev/start!
+;; swaps in a once-per-gf-type printer; stop! resets. Same sanctioned pattern
+;; as genmlx.dynamic/dispatch-fn and genmlx.runtime/validate-fn.
+(defonce fallback-notice-fn (atom (fn [_gf _addr _n])))
+
 (defn combinator-batched-fallback
   "Fallback for splicing a non-DynamicGF (e.g. VmapCombinator) in batched mode.
-   Unstacks [N]-particle state, runs combinator GFI N times, stacks results."
+   Unstacks [N]-particle state, runs combinator GFI N times, stacks results.
+   This is an N-fold HOST loop — measured ~2-4 ms/particle on Thor sm_110
+   (genmlx-2gu2) — so reaching it from a hot path deserves a look: the
+   dev-mode notice hook above names the gf type when validation is on."
   [state addr gf args]
+  (@fallback-notice-fn gf addr (:batch-size state))
   (let [n (:batch-size state)
         ;; Per-particle keys + one carry key. Attaching each particle's key to
         ;; the spliced combinator (via :genmlx.dynamic/key metadata, read by

@@ -858,6 +858,74 @@
   (->UnfoldCombinator kernel (atom {})))
 
 ;; ---------------------------------------------------------------------------
+;; Batched Map — IBatchedSplice (genmlx-y3ls)
+;; ---------------------------------------------------------------------------
+;; When spliced inside a batched handler, loops over the M elements running
+;; the kernel body-fn ONCE per element with all N particles via the batched
+;; handler: O(M) kernel executions instead of O(N*M). Same structure as
+;; Batched Unfold below, minus the carry.
+
+(defn- batched-dynamic-splice
+  "Run a DynamicGF once inside a batched parent handler and merge its
+   sub-result under addr — the single-sub analogue of one Batched-Unfold
+   step. Used by the wrapper/Mask fast paths (genmlx-y3ls). Caller must
+   already have ruled out update/regenerate mode (:old-choices)."
+  [state addr gf args]
+  (let [batch-size (:batch-size state)
+        sub-constraints (cm/get-submap (:constraints state) addr)
+        [k1 sk] (rng/split (:key state))
+        [transition init-sub] (batched-sub state sub-constraints sk batch-size ZERO)
+        sub-result (rt/run-handler transition init-sub
+                                   (fn [rt] (apply (:body-fn gf) rt (vec args))))
+        state' (-> state
+                   (assoc :key k1)
+                   (h/merge-sub-result addr sub-result))]
+    [state' (:retval sub-result)]))
+
+(extend-type MapCombinator
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [kern (:kernel this)]
+      ;; Same fallback gates as Batched Unfold (genmlx-llpt): non-DynamicGF
+      ;; kernel, or update/regenerate mode (:old-choices present).
+      (if (or (not (:body-fn kern)) (contains? state :old-choices))
+        (h/combinator-batched-fallback state addr this (vec args))
+        (let [m (count (first args))
+              batch-size (:batch-size state)
+              sub-constraints (cm/get-submap (:constraints state) addr)
+              [k1 k2] (rng/split (:key state))
+              batch-zero (mx/zeros [batch-size])]
+          (loop [i 0
+                 retvals (transient [])
+                 acc-choices cm/EMPTY
+                 acc-score batch-zero
+                 acc-weight batch-zero
+                 key k2]
+            (if (>= i m)
+              (let [sub-result {:choices acc-choices
+                                :score acc-score
+                                :weight (when (contains? state :weight) acc-weight)}
+                    state' (-> state
+                               (assoc :key k1)
+                               (h/merge-sub-result addr sub-result))]
+                ;; Scalar Map returns a vector of per-element retvals; batched,
+                ;; each element's retval is [N]-shaped.
+                [state' (persistent! retvals)])
+              (let [[sk nk] (rng/split key)
+                    elem-args (mapv #(nth % i) args)
+                    [transition init-sub]
+                    (batched-sub state (cm/get-submap sub-constraints i)
+                                 sk batch-size ZERO)
+                    r (rt/run-handler transition init-sub
+                                      (fn [rt] (apply (:body-fn kern) rt elem-args)))]
+                (recur (inc i)
+                       (conj! retvals (:retval r))
+                       (cm/set-submap acc-choices i (:choices r))
+                       (mx/add acc-score (:score r))
+                       (mx/add acc-weight (or (:weight r) ZERO))
+                       nk)))))))))
+
+;; ---------------------------------------------------------------------------
 ;; Batched Unfold — IBatchedSplice for vectorized inference
 ;; ---------------------------------------------------------------------------
 ;; When spliced inside a batched handler (vsimulate/vgenerate), loops T times
@@ -1388,6 +1456,13 @@
 ;; Fixed-point combinator for recursive generative functions.
 ;; Enables models that call themselves (random trees, linked lists, grammars).
 ;; maker: (fn [self] -> GF) — receives the combinator itself for recursion.
+;;
+;; Batched splice: INHERENTLY SCALAR (genmlx-y3ls verdict). The recursion
+;; depth is decided by sampled values, so under shape-based batching each of
+;; the N particles would need its own tree shape — there is no single batched
+;; body to run once. Recurse therefore deliberately does NOT implement
+;; IBatchedSplice; splicing it under vsimulate/vgenerate takes the N-fold
+;; scalar fallback, which the dev-mode notice names (handler.cljs).
 
 (defrecord RecurseCombinator [maker]
   p/IGenerativeFunction
@@ -2058,6 +2133,72 @@
                                 :score (:score trace)})
                 (tr/score-type trace))
        :weight weight})))
+
+;; Batched Mask — IBatchedSplice (genmlx-y3ls). The active? flag is a HOST
+;; value (scalar Mask branches on it with `if` — the existing contract); a
+;; per-particle [N] mask is not expressible on this path. Lives here, below
+;; every record it references (SCI resolves extend-type sequentially).
+(extend-type MaskCombinator
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [[active? & inner-args] args
+          inner (:inner this)]
+      (cond
+        ;; Inactive: EMPTY choices, zero score/weight — trivially batched.
+        (not active?)
+        (let [sub-result {:choices cm/EMPTY
+                          :score ZERO
+                          :weight (when (contains? state :weight) ZERO)}]
+          [(h/merge-sub-result state addr sub-result) nil])
+
+        ;; Active + DynamicGF inner, simulate/generate mode: run once batched.
+        (and (:body-fn inner) (not (contains? state :old-choices)))
+        (batched-dynamic-splice state addr inner (vec inner-args))
+
+        ;; Active + batched-capable combinator inner: delegate.
+        (satisfies? p/IBatchedSplice inner)
+        (p/batched-splice inner state addr (vec inner-args))
+
+        :else
+        (h/combinator-batched-fallback state addr this (vec args))))))
+
+;; Wrapper delegation (genmlx-y3ls): without these, wrapping a batched-capable
+;; GF in contramap/map-retval silently LOST its fast path — the wrapper record
+;; didn't satisfy IBatchedSplice, so runtime.cljs routed it to the N-fold
+;; scalar fallback even though the inner could batch.
+
+(extend-type ContramapGF
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [inner (:inner this)
+          targs (vec ((:f this) (vec args)))]
+      (cond
+        (and (:body-fn inner) (not (contains? state :old-choices)))
+        (batched-dynamic-splice state addr inner targs)
+
+        (satisfies? p/IBatchedSplice inner)
+        (p/batched-splice inner state addr targs)
+
+        :else
+        (h/combinator-batched-fallback state addr this (vec args))))))
+
+(extend-type MapRetvalGF
+  p/IBatchedSplice
+  (batched-splice [this state addr args]
+    (let [inner (:inner this)
+          finish (fn [[state' retval]]
+                   ;; g must be broadcast-compatible — the standard
+                   ;; shape-based-batching contract for all downstream code.
+                   [state' ((:g this) retval)])]
+      (cond
+        (and (:body-fn inner) (not (contains? state :old-choices)))
+        (finish (batched-dynamic-splice state addr inner (vec args)))
+
+        (satisfies? p/IBatchedSplice inner)
+        (finish (p/batched-splice inner state addr (vec args)))
+
+        :else
+        (h/combinator-batched-fallback state addr this (vec args))))))
 
 (defn contramap-gf
   "Transform arguments before passing to a generative function.
