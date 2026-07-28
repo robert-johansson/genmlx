@@ -189,17 +189,22 @@
     (row "batched vsmc         " n (* n 5) ms)))
 
 ;; ---------------------------------------------------------------------------
-;; SMCP3 (3 steps, standard-SMC kernels): NO batched counterpart exists.
-;; The diagnostic here is curve shape alone — flat ms/particle-step = host-bound.
+;; SMCP3 (3 steps, standard-SMC path) — scalar vs vsmcp3 (genmlx-ke97)
 ;; ---------------------------------------------------------------------------
 
-(println "\n== SMCP3 (3 steps, no kernels) — scalar only, curve shape is the verdict ==")
+(println "\n== SMCP3 (3 steps, no kernels) — scalar vs vsmcp3 ==")
 (let [obs3 (subvec obs-seq 0 3)]
   (doseq [n [1 10 50 150]]
     (let [ms (bench (reps-for true n)
                     (fn [] (mx/item (:log-ml-estimate
                                      (smcp3/smcp3 {:particles n :key (rng/fresh-key 41)}
                                                   hmodel [ys] obs3)))))]
-      (row "scalar  smcp3        " n (* n 3) ms))))
+      (row "scalar  smcp3        " n (* n 3) ms)))
+  (doseq [n [1 10 100 1000 3000]]
+    (let [ms (bench 3
+                    (fn [] (mx/item (:log-ml-estimate
+                                     (smcp3/vsmcp3 {:particles n :key (rng/fresh-key 41)}
+                                                   hmodel [ys] obs3)))))]
+      (row "batched vsmcp3       " n (* n 3) ms))))
 
 (println "\n== cost_per_particle done ==")

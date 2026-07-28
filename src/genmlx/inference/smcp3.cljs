@@ -191,6 +191,48 @@
      :ess ess :resampled? resample?}))
 
 ;; ---------------------------------------------------------------------------
+;; Vectorized SMCP3 (standard-SMC path)
+;; ---------------------------------------------------------------------------
+
+(defn vsmcp3
+  "Vectorized SMCP3, standard-SMC path (genmlx-ke97 / genmlx-im8n option d).
+
+   The scalar smcp3 loop without kernels IS standard SMC with the genmlx-uxjm
+   projected-obs increment — and vsmc already implements exactly those
+   semantics batched (ESS-gated systematic resample, vupdate, vproject over
+   the step's obs addresses, log-ML increments against the carried weights).
+   So this composes rather than duplicates: validate the opts, delegate to
+   vsmc. Measured on Thor sm_110: scalar smcp3 is 2.2 ms/particle-step FLAT
+   (host-bound); the vsmc path is 0.0022 — ~1000x.
+
+   Scalar-only features decline LOUDLY (no silent N-fold fallback):
+   :forward-kernel / :backward-kernel / :init-proposal / :rejuvenation-fn all
+   throw — use scalar smcp3 for proposal kernels, or vsmcp3's
+   :rejuvenation-steps / :rejuvenation-selection (vmh sweeps) for batched
+   rejuvenation.
+
+   opts: {:particles N :ess-threshold ratio :rejuvenation-steps K
+          :rejuvenation-selection sel :callback fn :key prng-key}
+   Returns {:vtrace VectorizedTrace :log-ml-estimate MLX-scalar}."
+  [{:keys [forward-kernel backward-kernel init-proposal rejuvenation-fn]
+    :as opts}
+   model args observations-seq]
+  (when (or forward-kernel backward-kernel init-proposal rejuvenation-fn)
+    (throw (ex-info
+            (str "vsmcp3: proposal kernels, init-proposal and rejuvenation-fn "
+                 "are scalar-only — use smcp3 for those, or vsmcp3's "
+                 ":rejuvenation-steps/:rejuvenation-selection for batched "
+                 "rejuvenation (vmh).")
+            {:scalar-only-opts (cond-> []
+                                 forward-kernel (conj :forward-kernel)
+                                 backward-kernel (conj :backward-kernel)
+                                 init-proposal (conj :init-proposal)
+                                 rejuvenation-fn (conj :rejuvenation-fn))})))
+  (smc/vsmc (select-keys opts [:particles :ess-threshold :rejuvenation-steps
+                               :rejuvenation-selection :callback :key])
+            model args observations-seq))
+
+;; ---------------------------------------------------------------------------
 ;; SMCP3 main loop
 ;; ---------------------------------------------------------------------------
 
