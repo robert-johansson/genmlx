@@ -25,7 +25,7 @@ measured, not L3 elimination).
 |---|---|---|---|
 | `p/generate` ×N loop | 1→3000 | 6.3 → **2.4 flat** | host-bound |
 | `importance-sampling` | 1→1000 | 9.5 → **3.9 flat** | host-bound (deep-materialize adds ~1.5 ms/p over raw generate) |
-| `mh` (per chain-step) | 1→20 chains | **61.0–61.6 dead flat** | host-bound, **worst offender by 25×** |
+| `mh` (per chain-step) | 1→20 chains | ~~61.0–61.6~~ → **10.8–11.1** (S=10 chains), **5.66** long-chain | was the worst offender; **fixed** (genmlx-k1z7, see below) |
 | `smc` (per particle-step) | 1→500 | 49.7 → **4.2 flat** | host-bound |
 | `smcp3` (per particle-step) | 1→150 | 6.9 → **2.2 flat** | host-bound (no batched counterpart exists — genmlx-im8n option d) |
 
@@ -56,11 +56,19 @@ node-by-node from CLJS on every call.
 
 ## Findings beyond the curves
 
-1. **Scalar MH's 61.6 ms/step is NOT inherent.** `vmh` at N=1 — same model,
-   same posterior move — costs 6.6 ms/step: 9.4× less doing strictly more
-   general work. ~55 ms/step of the scalar path is removable host overhead
-   (regenerate machinery + per-step Trace rebuild + `assert-joint!` +
-   `mx/realize` sync), not math.
+1. **Scalar MH's 61.6 ms/step was NOT inherent — root-caused and FIXED
+   (genmlx-k1z7, 2026-07-28).** The bean's original suspects (regenerate
+   machinery, `assert-joint!`, Trace rebuild) were all exonerated by profiling:
+   a bare `mh-step` chain runs at 4.4–6.9 ms/step. The 49 ms/step was
+   `collect-samples` wrapping **every** step in `u/tidy-step`, whose depth-0
+   `mx/tidy` exit runs `jsc-cleanup!` — a **full synchronous Bun/JSC GC**
+   (`mlx.cljs:1058`) — per MH step. Fix: `:tidy-every` cadence in
+   `collect-samples` (default 25, plus one cleanup at loop exit). Measured
+   after: 11.1 ms/step for S=10 chains (exit-GC amortized over few steps),
+   5.66 ms/step over 2000 steps, memory bounded (0.1 MB peak), fixed-key
+   samples bit-identical. Benefits every `collect-samples` client (mh,
+   mh-custom, gibbs, involutive-mh, mala, hmc, run-kernel, pmcmc). The same
+   tax may hit drivers with their own loops — audit filed as genmlx-ugq9.
 2. **`mx/item` sits on the per-iteration path in scalar MCMC, structurally.**
    `mh-step` (`mcmc.cljs:64`) does `mx/realize` on the weight every step;
    `mh-custom` does 2 `mx/item`/step (`mcmc.cljs:202`). Structural because the
@@ -84,9 +92,10 @@ node-by-node from CLJS on every call.
 
 | rank | offender | measured | fix shape |
 |---|---|---|---|
-| 1 | scalar `mh` step overhead | 61.6 ms/step vs 6.6 batched-N=1 | profile & strip the 55 ms; or route scalar mh through vmh N=1 |
-| 2 | SMCP3 particle loop | 2.2 ms/p-step flat | vectorize (im8n option d); vsmc equivalent is 0.0022 |
-| 3 | silent batched-splice fallback | N-fold host loop, no signal | emit signal + implement IBatchedSplice for Map first |
+| 1 | ~~scalar `mh` step overhead~~ **FIXED** | 61.6 → 5.66–11.1 ms/step | was a full JSC GC per step in `collect-samples`; `:tidy-every 25` cadence (genmlx-k1z7) |
+| 1b | per-iteration depth-0 tidy exits in other drivers | ~49 ms per depth-0 exit | audit NUTS/MALA/HMC/adev/tidy-importance nesting (genmlx-ugq9); NUTS's 8.4 s/sample is the smoking gun |
+| 2 | SMCP3 particle loop | 2.2 ms/p-step flat | vectorize (im8n option d); vsmc equivalent is 0.0022 (genmlx-ke97) |
+| 3 | silent batched-splice fallback | N-fold host loop, no signal | emit signal + implement IBatchedSplice for Map first (genmlx-y3ls) |
 | 4 | batched host floor | 74% of vgenerate wall is graph build | per-call graph rebuild; L4/fused territory — document, don't chase per-op |
 
 ## Other arches

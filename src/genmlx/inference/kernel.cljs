@@ -216,9 +216,18 @@
    - `step-fn`:    (fn [state key] -> {:state new-state :accepted? bool})
    - `extract-fn`: (fn [state] -> sample)
    - `init-state`: initial state
-   - Returns vector of samples with {:acceptance-rate ...} metadata."
-  [{:keys [samples burn thin callback key]
-    :or {burn 0 thin 1}}
+   - Returns vector of samples with {:acceptance-rate ...} metadata.
+
+   :tidy-every K (default 25) — run the step inside u/tidy-step (a tidy scope
+   whose depth-0 exit is a FULL synchronous JSC GC + MLX cache clear) only
+   every K-th step, bare otherwise, with one jsc-cleanup! at loop exit.
+   Measured on Thor sm_110 (genmlx-k1z7): the per-step GC was 49 of scalar
+   mh's 55 ms/step — ~90% of the loop — while the step itself is ~4.4 ms.
+   Intermediates surviving between tidies are bounded by K steps' worth of
+   scalar-model arrays (same cadence idea as importance's :gc-every 50).
+   :tidy-every 1 restores the old every-step behavior."
+  [{:keys [samples burn thin callback key tidy-every]
+    :or {burn 0 thin 1 tidy-every 25}}
    step-fn extract-fn init-state]
   (mx/with-resource-guard
     (fn []
@@ -228,11 +237,15 @@
       ;; by thin-1 steps and biased the rate low (genmlx-7ca0).
       (loop [i 0, state init-state, acc (transient []), n 0, n-accepted 0, rk key]
         (if (>= n samples)
-          (with-meta (persistent! acc)
-            {:acceptance-rate (if (pos? i) (/ n-accepted i) 0)})
+          (do (mx/jsc-cleanup!)
+              (with-meta (persistent! acc)
+                {:acceptance-rate (if (pos? i) (/ n-accepted i) 0)}))
           (let [[step-key next-key] (rng/split-or-nils rk)
-                {:keys [state accepted?]} (u/tidy-step step-fn state step-key)
-                _  (mx/clear-cache!)
+                tidy? (zero? (mod (inc i) tidy-every))
+                {:keys [state accepted?]} (if tidy?
+                                            (u/tidy-step step-fn state step-key)
+                                            (step-fn state step-key))
+                _  (when tidy? (mx/clear-cache!))
                 past-burn? (>= i burn)
                 keep? (and past-burn? (zero? (mod (- i burn) thin)))]
             (when (and callback keep?)
