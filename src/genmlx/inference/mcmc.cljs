@@ -239,6 +239,61 @@
                   (recur new-p (inc i))))))]
     (mx/compile-fn chain-fn)))
 
+(def ^:private persist-trace-ops-limits
+  "Measured sm_120 trace-DEPTH boundaries at the default 8 MB stack
+   (genmlx-0vwj, 2026-07-28, 12-site GFI linreg score). Per-method, each in
+   its own estimate-fused-ops units, because trace depth per op differs by
+   method (MH embeds a full score subgraph per step, MALA a vjp, HMC
+   leapfrog sub-steps):
+     mala 2500 ops (1250 steps) OK / 5000 (2500 steps) SIGSEGV
+     mh   1250 ops (1250 steps) OK / 2000 steps SIGSEGV
+     hmc  2500 ops (125 x 20)   OK / crash point not reached
+   The same chains pass under ulimit -s 65536, confirming stack overflow in
+   MLX's recursive compile passes (eval's scheduler is iterative — the
+   identity path never overflows). Values sit AT measured-OK points; raise
+   only WITH a new measurement. A much larger per-step score graph lowers
+   the real boundary, so this is a guard, not a guarantee — the durable fix
+   (iterative compile passes / big-stack trace thread) is beaned."
+  {:mh 1250 :mala 2500 :hmc 2500})
+
+(defn- persist-chain
+  "Persistent-compile a pure fused chain builder (genmlx-z2gt Phase 2a,
+   genmlx-0vwj): the first call traces — the builder runs once, inside MLX
+   compile — and every later call replays the cached C++ graph, so a reused
+   :chain-fn stops paying the per-call SCI graph-build cost. The equivalence
+   suite (compiled_persistent_test) pins values AND gradients against direct
+   execution.
+
+   CUDA only for now: Metal keeps identity-compile until its buffer-wall
+   interaction with traced replays is measured (the genmlx-lmmn per-arch
+   discipline — measure, don't extrapolate).
+
+   The native handle rides the returned fn's metadata
+   (:genmlx/compiled-handle); a caller retiring a chain-fn may
+   mx/compiled-free! it, and GC frees the native side otherwise. Preserves
+   the builders' #js-array return convention for the aget consumers.
+   Note the semantics all chain-fns already had: closed-over parameters
+   (eps etc.) are baked at build time — reuse never re-read them, and the
+   trace keeps exactly that behavior.
+
+   `ops` gates by TRACE DEPTH (same units as estimate-fused-ops): MLX's
+   compile passes recurse over the tape, and a chain graph's recursion depth
+   equals its length, so deep traces overflow the default 8 MB stack —
+   measured on sm_120 (genmlx-0vwj): mala 2500 ops (1250 steps) traces OK,
+   5000 ops (2500 steps) SIGSEGVs; the same chain passes under
+   `ulimit -s 65536`. Past the limit we keep today's identity-compile
+   behavior (build-per-call — eval's scheduler is iterative and does not
+   overflow). Proper fix (iterative passes / big-stack trace thread) is
+   beaned; raise the limit only WITH a new measurement."
+  [chain-fn method ops]
+  (if (or (mx/metal-is-available?)
+          (> ops (get persist-trace-ops-limits method 0)))
+    (mx/compile-fn chain-fn)
+    (let [h (mx/compile-create chain-fn)]
+      (with-meta
+        (fn [& args] (to-array (apply mx/compiled-call h args)))
+        {:genmlx/compiled-handle h}))))
+
 (defn- pre-generate-chain-noise
   "Generate all noise for a complete MH chain upfront.
    Returns {:noise [total-steps, n-params] :uniforms [total-steps]}.
@@ -439,7 +494,7 @@
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples new-accept-count)))))]
-    (mx/compile-fn chain-fn)))
+    (persist-chain chain-fn :mh (+ n-burn (* thin n-samples)))))
 
 (defn- make-compiled-trajectory
   "Build a compiled K-step MH chain that returns the FULL trajectory [K,D].
@@ -1092,7 +1147,7 @@
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples new-accept-count)))))]
-    (mx/compile-fn chain-fn)))
+    (persist-chain chain-fn :mh (+ n-burn (* thin n-samples)))))
 
 (defn fused-vectorized-mh
   "Fully fused vectorized MH: N parallel chains, burn-in + thinned collection
@@ -1729,7 +1784,7 @@
                                 sample-count)]
                 (recur new-q new-sq new-gq (inc i)
                        new-count new-samples new-accept-count)))))]
-    (mx/compile-fn chain-fn)))
+    (persist-chain chain-fn :mala (* 2 (+ n-burn (* thin n-samples))))))
 
 (defn fused-mala
   "Fully fused MALA: burn-in + thinned collection in one fused lazy-graph evaluation.
@@ -2334,7 +2389,7 @@
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-q (inc i) new-count new-samples new-accept-count)))))]
-    (mx/compile-fn chain-fn)))
+    (persist-chain chain-fn :hmc (* (+ n-burn (* thin n-samples)) leapfrog-steps))))
 
 (defn fused-hmc
   "Fully fused HMC: burn-in + thinned collection in one fused lazy-graph evaluation.

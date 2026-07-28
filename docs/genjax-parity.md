@@ -92,6 +92,35 @@ IS warmup), so at S=100 GenMLX's total wall wins under ~7 same-shape calls.
 Device probe: cpu 188.0 vs gpu 184.6 ms at S=100 — near-identical, the
 host-bound signature.
 
+### Post-Phase-2a (persistent compile wired — genmlx-0vwj, same day)
+
+`persist-chain` (mcmc.cljs) now wraps the four fused chain builders in the
+persistent CompiledFn (genmlx-z2gt Phase 1): first call traces, replays run
+in C++. Gated per-method at MEASURED trace-depth boundaries (mh 1250 /
+mala 2500 / hmc 2500 ops — MLX's recursive compile passes overflow the 8 MB
+stack on deeper chains; past the gate = today's identity behavior; durable
+fix beaned). Sampling behavior bit-identical (acceptances and slope-tails
+unchanged). The row, third measurement:
+
+| S | GenJAX | GenMLX pre-lmmn | post-lmmn | **post-2a** | gap now |
+|---|---|---|---|---|---|
+| 10 | 0.21 ms | 16.5 ms | 18.2 ms | **6.8 ms** | 33x |
+| 100 | 1.62 ms | 213 ms | 197 ms | **23.5 ms** | 15x |
+| 1000 | 15.6 ms | 6021 ms | 1748 ms | **229 ms** | **15x** |
+
+The warmup ledger changed as predicted: GenMLX now pays trace+compile per
+shape (0.2–6.0 s; order-dependent — the first shape in a process absorbs
+the cold NVRTC kernel bill, disk-cached after) vs GenJAX's 1.6–1.7 s. At
+S=100 the break-even is ~64 same-shape calls in GenMLX's favor.
+
+Reading the residual 15x: S=1000 replay measures 229 ms vs the 116 ms
+pip-MLX Phase-0 floor — the timed unit includes the SCALAR init generate
+(~5 ms, SCI), per-call noise pre-generation, and result marshaling on top
+of the raw replay. At S=10 those overheads ARE the number (6.8 ms for a
+~0.1 ms replay). The next lever is therefore not the chain — it's the
+per-call scaffolding around it (init + noise), which is Phase 2b territory
+alongside the vgenerate/IS row.
+
 **Findings from this row (both resolved 2026-07-28):**
 - genmlx-lmmn (FIXED, above): fused limits were Metal-buffer-wall-sized and
   fired on CUDA; now per-backend with the CUDA boundary measured, tests
