@@ -716,32 +716,40 @@
      :else (scalar v)))
   ([v shape-or-dtype]
    (if (or (vector? shape-or-dtype) (seq? shape-or-dtype))
-     (let [[flat-data _] (infer-shape v)
-           f32 (js/Float32Array.from (clj->js flat-data))]
-       (.fromFloat32 c f32 (clj->js shape-or-dtype)))
-     (let [[flat-data sh] (infer-shape v)]
-       (from-flat flat-data sh shape-or-dtype))))
+     (with-alloc-retry
+       #(let [[flat-data _] (infer-shape v)
+              f32 (js/Float32Array.from (clj->js flat-data))]
+          (.fromFloat32 c f32 (clj->js shape-or-dtype))))
+     (with-alloc-retry
+       #(let [[flat-data sh] (infer-shape v)]
+          (from-flat flat-data sh shape-or-dtype)))))
   ([v shape-vec dtype]
-   (let [[flat-data _] (infer-shape v)]
-     (from-flat flat-data shape-vec dtype))))
+   (with-alloc-retry
+     #(let [[flat-data _] (infer-shape v)]
+        (from-flat flat-data shape-vec dtype)))))
 
 (defn astype [a dtype] (.astype c a dtype))
 
+;; Constructors below are with-alloc-retry-wrapped like scalar/array above:
+;; each can allocate a Metal buffer (zeros/ones/full allocate the scalar fill
+;; eagerly; the rest at eval), so each must pass a buffer-count arming point —
+;; a tiny-array loop over ANY constructor must not march count-blind to the
+;; ~499000 wall (genmlx-7yam coverage audit; the genmlx-5ucd scope gap).
 (defn zeros
-  ([sh]       (.zeros c (clj->js sh)))
-  ([sh dtype] (.zeros c (clj->js sh) dtype)))
+  ([sh]       (with-alloc-retry #(.zeros c (clj->js sh))))
+  ([sh dtype] (with-alloc-retry #(.zeros c (clj->js sh) dtype))))
 (defn ones
-  ([sh]       (.ones c (clj->js sh)))
-  ([sh dtype] (.ones c (clj->js sh) dtype)))
-(defn full [sh v] (.full c (clj->js sh) v))
+  ([sh]       (with-alloc-retry #(.ones c (clj->js sh))))
+  ([sh dtype] (with-alloc-retry #(.ones c (clj->js sh) dtype))))
+(defn full [sh v] (with-alloc-retry #(.full c (clj->js sh) v)))
 (defn eye
-  ([n]       (.eye c n))
-  ([n dtype] (.eye c n nil nil dtype)))
+  ([n]       (with-alloc-retry #(.eye c n)))
+  ([n dtype] (with-alloc-retry #(.eye c n nil nil dtype))))
 (defn arange
-  ([stop]            (.arange c 0 stop))
-  ([start stop]      (.arange c start stop))
-  ([start stop step] (.arange c start stop step)))
-(defn linspace [start stop num] (.linspace c start stop num))
+  ([stop]            (with-alloc-retry #(.arange c 0 stop)))
+  ([start stop]      (with-alloc-retry #(.arange c start stop)))
+  ([start stop step] (with-alloc-retry #(.arange c start stop step))))
+(defn linspace [start stop num] (with-alloc-retry #(.linspace c start stop num)))
 
 (defn meshgrid [a b]
   ;; Via broadcast-to, not native broadcastTo: the [na 1]->[na nb] and
@@ -970,19 +978,25 @@
    EFFECTFUL: triggers eval, then transfers data from GPU to CPU."
   [a]
   (set! clj-read-count (inc clj-read-count))
-  (.eval a)
-  (let [sh (shape a)
-        dt (.dtypeOf c a)
-        ;; Integer dtypes must go through their EXACT converters. Reading
-        ;; uint32 through .toFloat32 value-converts via astype(float32), so
-        ;; values above the 24-bit mantissa are silently rounded — a
-        ;; serialized PRNG key (uint32[2], full 32-bit range) round-tripped
-        ;; to a DIFFERENT key (genmlx-st0y).
-        flat (cond
-               (= dt int32)  (vec (js->clj (.toInt32 a)))
-               (= dt uint32) (vec (js->clj (.toUint32 a)))
-               :else         (vec (js->clj (.toFloat32 a))))]
-    (unflatten flat sh)))
+  ;; with-alloc-retry: eval allocates every pending output buffer, so the read
+  ;; boundary must arm the count sweep and self-heal a wall hit, exactly like
+  ;; item (genmlx-7yam coverage audit). The thunk is a pure eval+read — safe to
+  ;; retry after force-gc! (re-eval of materialized arrays is a no-op).
+  (with-alloc-retry
+    #(do
+       (.eval a)
+       (let [sh (shape a)
+             dt (.dtypeOf c a)
+             ;; Integer dtypes must go through their EXACT converters. Reading
+             ;; uint32 through .toFloat32 value-converts via astype(float32), so
+             ;; values above the 24-bit mantissa are silently rounded — a
+             ;; serialized PRNG key (uint32[2], full 32-bit range) round-tripped
+             ;; to a DIFFERENT key (genmlx-st0y).
+             flat (cond
+                    (= dt int32)  (vec (js->clj (.toInt32 a)))
+                    (= dt uint32) (vec (js->clj (.toUint32 a)))
+                    :else         (vec (js->clj (.toFloat32 a))))]
+         (unflatten flat sh)))))
 
 (defn eval!
   "Evaluate one or more MLX arrays, materializing the computation graph.
@@ -996,7 +1010,13 @@
   (let [valid (filterv array? arrs)]
     (when (seq valid)
       (set! forced-eval-count (inc forced-eval-count))
-      (.evalArrays c (to-array valid)))))
+      ;; with-alloc-retry: eval! is where every lazy graph's output buffers are
+      ;; actually allocated, so the dispatch point must arm the proactive count
+      ;; sweep — a raw-mx hot loop (lazy ops + eval!, no scalar/item reads) must
+      ;; not march count-blind to the ~499000 wall (genmlx-7yam coverage audit).
+      ;; Retry after force-gc! is safe: already-materialized arrays no-op.
+      (let [js-arr (to-array valid)]
+        (with-alloc-retry #(.evalArrays c js-arr))))))
 
 (defn materialize!
   "Evaluate MLX arrays. Safely ignores non-MxArray values (eval! filters
