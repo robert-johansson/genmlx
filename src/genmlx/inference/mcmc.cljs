@@ -2659,7 +2659,15 @@
     :or {step-size 0.01 max-depth 10 burn 0 thin 1 compile? true device :cpu
          adapt-step-size false target-accept 0.8 adapt-metric false}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  ;; Three DISJOINT streams, as `hmc` and `mala` do (genmlx-n7du). This was the
+  ;; last sampler still opening with a bare `(dyn/auto-key model)`, i.e. drawing
+  ;; its INITIAL TRACE from fresh entropy even under an explicit :key, so a
+  ;; seeded nuts run was never reproducible — :key covered only the steps. It
+  ;; also handed the raw key to BOTH the warmup and the sampling loop, whose own
+  ;; first split reproduces the warmup key. Both defects are the ones
+  ;; `sampler-keys` documents; mala's instance was genmlx-r9xv.
+  (let [[init-key warmup-key sample-key] (sampler-keys key)
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
              {:keys [score-fn init-params n-params]}
@@ -2672,7 +2680,7 @@
            ;; Adaptive warmup: dual averaging + optional metric estimation
              {:keys [adapted-eps warmup-q adapted-metric]}
              (if (and (or adapt-step-size adapt-metric) (pos? burn))
-               (let [[eps-key wloop-key] (warmup-keys key)
+               (let [[eps-key wloop-key] (rng/split-or-nils warmup-key)
                      nuts-step-fn
                      (fn [q eps-val m step-key]
                        (let [eps-mx (mx/scalar eps-val)
@@ -2709,7 +2717,8 @@
              start-q (or warmup-q init-q)
              remaining-burn (if warmup-q 0 burn)]
          (kern/collect-samples
-          {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+          {:samples samples :burn remaining-burn :thin thin :callback callback
+           :key sample-key}
           (fn [q step-key]
             (let [new-q (:q' (nuts-transition ctx q q-shape max-depth step-key))]
               {:state new-q :accepted? (not (identical? new-q q))}))
