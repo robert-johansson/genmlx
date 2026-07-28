@@ -1539,12 +1539,17 @@
        :accept-stat (if accepted? 1.0 0.0)})))
 
 (defn- adapt-mala-step-size
-  "Shared MALA dual-averaging warmup (mala + fused-mala): derive warmup keys
-   disjoint from the sampling stream (genmlx-vv3t), find a reasonable initial
-   eps, run dual-averaging-warmup, and report the adapted step-size.
-   Returns {:adapted-eps eps :warmup-q q}."
-  [n-warmup target-accept init-q val-grad-compiled q-shape n-params key]
-  (let [[eps-key wloop-key] (warmup-keys key)
+  "Shared MALA dual-averaging warmup (mala + fused-mala): find a reasonable
+   initial eps, run dual-averaging-warmup, and report the adapted step-size.
+   Returns {:adapted-eps eps :warmup-q q}.
+
+   Takes the caller's WARMUP key, not its raw :key — it splits that into
+   [eps-key wloop-key] exactly as `hmc` does inline (genmlx-r9xv). It used to
+   take the raw key and re-derive the warmup half itself via `warmup-keys`,
+   which hid the stream layout inside this helper and left each caller unable
+   to state which streams it had actually allocated. nil-tolerant."
+  [n-warmup target-accept init-q val-grad-compiled q-shape n-params warmup-key]
+  (let [[eps-key wloop-key] (rng/split-or-nils warmup-key)
         init-eps (find-reasonable-mala-epsilon
                   init-q val-grad-compiled q-shape eps-key)
         step-fn (make-mala-step-fn val-grad-compiled q-shape)
@@ -1581,7 +1586,23 @@
          block-size 50 adapt-step-size false target-accept 0.574
          warmup-steps 200}}
    model args observations]
-  (let [model (dyn/auto-key model)]
+  ;; Three DISJOINT streams, exactly as `hmc` does (genmlx-r9xv). This used to
+  ;; be a bare `(dyn/auto-key model)` plus the raw `key` handed to BOTH the
+  ;; warmup and the sampling loop — the two defects `sampler-keys` documents,
+  ;; still present here after hmc/fused-hmc/fused-mala were fixed:
+  ;;
+  ;;   1. auto-key drew the INITIAL TRACE from fresh entropy even under an
+  ;;      explicit :key, so the chain started somewhere different every run.
+  ;;      Visible symptom: mcmc_diagnostics_test printed a different "Adapted
+  ;;      MALA step-size" on every run (1.2352090958746396 / 1.235758476891016
+  ;;      / ...) — the warmup was reproducible, but it was adapting from a
+  ;;      random starting point. Five runs of that file differed in exactly
+  ;;      that one line and nowhere else.
+  ;;   2. `adapt-mala-step-size` re-derived its warmup keys from the raw key
+  ;;      while the sampling loop got the same raw key, so the loop's own first
+  ;;      split reproduced warmup material — overlapping streams.
+  (let [[init-key warmup-key sample-key] (sampler-keys key)
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))]
     (with-device device
       #(let [{:keys [trace]} (p/generate model args observations)
              {:keys [score-fn init-params n-params]}
@@ -1595,7 +1616,7 @@
              (if (and adapt-step-size (pos? burn))
                (adapt-mala-step-size (min warmup-steps burn) target-accept
                                      init-q val-grad-compiled q-shape
-                                     n-params key)
+                                     n-params warmup-key)
                {:adapted-eps nil :warmup-q nil})
            ;; Use adapted values if available
              final-step-size (or adapted-eps step-size)
@@ -1614,12 +1635,14 @@
                  thin-chain (make-compiled-mala-chain
                              thin-steps val-grad-fn eps half-eps2 two-eps-sq n-params)]
              (run-loop-compiled-mala
-              {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+              {:samples samples :burn remaining-burn :thin thin :callback callback
+               :key sample-key}
               start-q n-params val-grad-compiled
               burn-chain burn-block thin-chain thin-steps))
          ;; Fallback: per-step eager path
            (kern/collect-samples
-            {:samples samples :burn remaining-burn :thin thin :callback callback :key key}
+            {:samples samples :burn remaining-burn :thin thin :callback callback
+             :key sample-key}
             (fn [q step-key]
               (mala-step q val-grad-compiled eps half-eps2 two-eps-sq q-shape step-key))
             mx/->clj
@@ -1740,9 +1763,23 @@
                   ;; Step-size adaptation (optional)
                   {:keys [adapted-eps warmup-q]}
                   (if (and adapt-step-size (nil? chain-fn) (pos? burn))
+                    ;; init-key, and that is BYTE-IDENTICAL to what this call
+                    ;; produced before adapt-mala-step-size took a warmup key
+                    ;; (genmlx-r9xv): the old helper derived its warmup half as
+                    ;; split(key)[0], which is exactly this init-key, then split
+                    ;; it again — which is what the helper now does to whatever
+                    ;; it is handed. So no chain moves here.
+                    ;;
+                    ;; Residual, deliberately NOT changed: the initial trace and
+                    ;; the warmup therefore draw from the same stream, where
+                    ;; `mala`/`hmc` give warmup its own. Giving fused-mala a
+                    ;; third stream would shift every fused-MALA chain, and the
+                    ;; seed-pinned band in fused_mcmc_test (genmlx-5hhd) is
+                    ;; calibrated against the current one. Worth doing WITH a
+                    ;; re-measurement, not as a side effect of this fix.
                     (adapt-mala-step-size (min warmup-steps burn) target-accept
                                           init-params val-grad-compiled q-shape
-                                          n-params key)
+                                          n-params init-key)
                     {:adapted-eps nil :warmup-q nil})
                   ;; Use adapted values if available
                   final-step-size (or adapted-eps step-size)
