@@ -16,6 +16,7 @@
             [genmlx.diff :as diff]
             [genmlx.schema :as schema]
             [genmlx.compiled :as compiled]
+            [genmlx.dist.core :as dc]
             [genmlx.compiled-ops :as cops]
             [genmlx.conjugacy :as cnj]
             [genmlx.rewrite :as rewrite]
@@ -1458,6 +1459,22 @@
       (vect/->VectorizedTrace gf args (:choices result) (:score result)
                              (mx/zeros [n]) n (:retval result)))))
 
+(defn- run-vgenerate-handler
+  "Shared batched-generate handler run. [N]-shaped init score/weight: a
+   single-site fully-observed model has no [N] sample to establish the batch
+   axis, so a scalar init would leave :score/:weight shape [] instead of [N]
+   (genmlx-fgb6/x93e/5nch/v4mz). extra-state keys flow through transitions
+   untouched (used by the probe and noise modes, genmlx-agcp)."
+  [gf args constraints n key transition extra-state]
+  (rt/run-handler transition
+                  (merge {:choices cm/EMPTY :score (mx/zeros [n])
+                          :weight (mx/zeros [n]) :key (rng/ensure-key key)
+                          :constraints constraints :batch-size n :batched? true
+                          :executor execute-sub
+                          :param-store (param-store gf)}
+                         extra-state)
+                  (fn [rt] (run-body gf rt args))))
+
 (defn vgenerate
   "Run model body ONCE with batched generate handler, producing a
    VectorizedTrace. Constrained sites use scalar observations;
@@ -1465,28 +1482,29 @@
    gf: DynamicGF, args: model args, constraints: ChoiceMap,
    n: number of particles, key: PRNG key."
   [gf args constraints n key]
-  (let [key (rng/ensure-key key)
-        result (rt/run-handler h/batched-generate-transition
-                               ;; [N]-shaped init score/weight: a single-site
-                               ;; fully-observed model has no [N] sample to
-                               ;; establish the batch axis, so a scalar init
-                               ;; would leave :score/:weight shape [] instead of
-                               ;; [N] (genmlx-fgb6/x93e/5nch/v4mz).
-                               {:choices cm/EMPTY :score (mx/zeros [n])
-                                :weight (mx/zeros [n]) :key key
-                                :constraints constraints :batch-size n :batched? true
-                                :executor execute-sub
-                                :param-store (param-store gf)}
-                               (fn [rt] (run-body gf rt args)))]
+  (let [result (run-vgenerate-handler gf args constraints n key
+                                      h/batched-generate-transition nil)]
     (tag-vtrace
       (vect/->VectorizedTrace gf args (:choices result) (:score result)
                              (:weight result) n (:retval result)))))
 
 (defn vgenerate-compiled
-  "Persistent-compiled vgenerate (genmlx-z2gt Phase 2b, genmlx-vjnn). Fixes
-   (gf, args, constraints, n) and returns
-     {:call  (fn [key] -> VectorizedTrace)
+  "Persistent-compiled vgenerate (genmlx-z2gt Phase 2b/2c, genmlx-vjnn +
+   genmlx-agcp). Fixes (gf, args, constraints, n) and returns
+     {:mode  :subkey-inputs | :key-traced
+      :call  (fn [key] -> VectorizedTrace)
       :free! (fn [] ...)}
+
+   Two modes, selected automatically (both trace once, replay after; both
+   match the handler BITWISE per key for pure samplers):
+   :subkey-inputs — flat models (no splices): the split ladder is hoisted
+     out of the graph (eager, cheap) and per-site subkeys are inputs;
+     sampling stays in-graph via dist-sample-n.
+   :key-traced — non-flat models: the whole keyed handler run is traced;
+     key derivation stays in the graph.
+   Models whose samplers are host-side rejection loops (item inside — e.g.
+   gamma) are NOT traceable: the first :call degrades LOUDLY and permanently
+   to the plain handler.
 
    The batched handler run IS the tracer: in batched mode every sample is a
    keyed lazy graph op and eval!/item are forbidden in model bodies, so the
@@ -1512,27 +1530,46 @@
   (let [probe        (vgenerate gf args constraints n (rng/fresh-key 0))
         cm-get-in    (fn [m path] (reduce (fn [c a] (when c (cm/get-submap c a))) m path))
         constrained? (fn [path] (boolean (some-> (cm-get-in constraints path) cm/has-value?)))
-        latent-paths (into [] (remove constrained?) (cm/addresses (:choices probe)))]
+        latent-paths (into [] (remove constrained?) (cm/addresses (:choices probe)))
+        template     (:choices probe)]
     (when (> (+ 2 (count latent-paths)) 16)
       (throw (ex-info (str "vgenerate-compiled: " (count latent-paths)
                            " latent sites exceed the 16-output NAPI ceiling")
                       {:genmlx/error :too-many-outputs :latent-paths latent-paths})))
-    (let [template (:choices probe)
-          trace-fn (fn [key]
+    (let [trace-fn (fn [key]
                      (let [vt (vgenerate gf args constraints n key)]
                        (to-array
                         (into [(:weight vt) (:score vt)]
                               (map (fn [p] (cm/get-value (cm-get-in (:choices vt) p))))
                               latent-paths))))
-          handle   (mx/compile-create trace-fn)]
-      {:call  (fn [key]
-                (let [out    (mx/compiled-call handle (rng/ensure-key key))
-                      choices (reduce (fn [c [i p]] (cm/set-choice c p (nth out (+ 2 i))))
-                                      template
-                                      (map-indexed vector latent-paths))]
-                  (tag-vtrace
-                    (vect/->VectorizedTrace gf args choices (nth out 1) (nth out 0)
-                                            n nil))))
+          handle   (mx/compile-create trace-fn)
+          ;; Not every vgenerate-able model is traceable: rejection samplers
+          ;; (e.g. gamma's Marsaglia-Tsang loop) call mx/item per draw —
+          ;; data-dependent host control flow, the hard boundary of fixed-
+          ;; structure compilation. Degrade LOUDLY and permanently to the
+          ;; plain handler on the first such error (the y3ls doctrine).
+          degraded (volatile! false)]
+      {:mode  :key-traced
+       :call  (fn [key]
+                (if @degraded
+                  (vgenerate gf args constraints n key)
+                  (try
+                    (let [out (mx/compiled-call handle (rng/ensure-key key))
+                          choices (reduce (fn [c [i p]] (cm/set-choice c p (nth out (+ 2 i))))
+                                          template
+                                          (map-indexed vector latent-paths))]
+                      (tag-vtrace
+                        (vect/->VectorizedTrace gf args choices (nth out 1) (nth out 0)
+                                                n nil)))
+                    (catch :default e
+                      (if (re-find #"during function transformations"
+                                   (str (.-message e)))
+                        (do (vreset! degraded true)
+                            (println (str "Note: vgenerate-compiled — model is not "
+                                          "traceable (item/eval inside a sampler); "
+                                          "degrading to the plain handler per call."))
+                            (vgenerate gf args constraints n key))
+                        (throw e))))))
        :free! (fn [] (mx/compiled-free! handle))})))
 
 (defn- vupdate*

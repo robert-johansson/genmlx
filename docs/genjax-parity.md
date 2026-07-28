@@ -54,11 +54,31 @@ Below ~700 same-shape calls, GenMLX's TOTAL wall now beats GenJAX on this
 row despite the 27x steady-state deficit.
 
 Reading the residual 27x: the traced graph carries the key-derivation ops
-(~13 threefry splits) and 4 outputs, where the Phase-0 floor (65–75 µs)
-passed pre-generated noise as inputs — the L1 noise-transform factoring.
-That refactor (noise outside, pure transform inside) is the known next
-step if this row needs to go lower; the per-call CLJS wrapper
-(choicemap rebuild) is the other visible term.
+(~13 threefry splits) and 4 outputs, plus the per-call CLJS wrapper
+(choicemap rebuild).
+
+**Factoring experiment (genmlx-agcp, same day): measured and REJECTED.**
+Three factorings of the same sweep, same protocol:
+
+| factoring | median/call |
+|---|---|
+| everything-in-graph (key-traced) | **0.52 ms** |
+| split ladder hoisted out (subkeys as inputs) | 0.79–1.32 ms |
+| splits + sampling hoisted out (noise as inputs) | 1.00–1.45 ms |
+
+On MLX, every op moved OUT of the traced graph costs more in per-call
+dispatch/sync round-trips than the fused in-graph version costs — the
+Phase-0 probe's 65 µs floor pre-generated its inputs OUTSIDE the timed
+region (instrument artifact; recorded). Everything-in-graph stands as the
+optimal factoring; the remaining levers for this row are engine-side
+(replay kernel count / CUDA-graph capture) and the CLJS wrapper.
+
+Keepers from the experiment: (1) not every vgenerate-able model is
+traceable — rejection samplers (gamma's Marsaglia–Tsang loop) call
+`mx/item` per draw, the hard boundary of fixed-structure compilation;
+(2) `vgenerate-compiled` now degrades LOUDLY and permanently to the plain
+handler on that error instead of failing (y3ls doctrine), with test
+coverage.
 
 **Reading the row.** Both sides are N-independent to 30000 — the GPU is idle
 in both worlds; the contest is host floors. GenJAX's floor is one fused XLA

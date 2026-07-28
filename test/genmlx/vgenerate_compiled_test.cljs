@@ -44,6 +44,8 @@
   (testing "compiled :call matches handler vgenerate for the SAME key"
     (let [n   64
           cf  (dyn/vgenerate-compiled hmodel [xs] obs n)
+          _   (is (= :key-traced (:mode cf))
+                  "single traced mode after the genmlx-agcp factoring verdict")
           key (rng/fresh-key 42)
           vt-h (dyn/vgenerate hmodel [xs] obs n key)
           vt-c ((:call cf) key)]
@@ -83,6 +85,28 @@
               "REPLAYS never re-ran the model body")
           (is (not= (vec w1) (vec w2)) "different keys give different weights")
           (is (= (vec w1) (vec w1b)) "same key replays identically"))
+        (finally ((:free! cf)))))))
+
+(deftest untraceable-sampler-degradation-test
+  (testing "a rejection-sampler latent (gamma: item per draw) degrades loudly to the handler"
+    (let [m (dyn/auto-key
+              (gen [_]
+                (let [th (trace :theta (dist/gamma-dist 2 2))]
+                  (trace :y (dist/gaussian th 1))
+                  th)))
+          hm (dyn/strip-analytical-path m)
+          ob (cm/choicemap :y (mx/scalar 0.7))
+          cf (dyn/vgenerate-compiled hm [nil] ob 16)]
+      (try
+        (let [key (rng/fresh-key 9)
+              vt-c ((:call cf) key)   ;; first call: trace fails -> degrade
+              vt-c2 ((:call cf) (rng/fresh-key 10))]
+          (is (some? (:weight vt-c)) "degraded first call still returns a trace")
+          (is (some? (:weight vt-c2)) "later calls keep working on the handler path")
+          (is (h/close? (mx/item (vect/vtrace-log-ml-estimate
+                                  (dyn/vgenerate hm [nil] ob 16 key)))
+                        (mx/item (vect/vtrace-log-ml-estimate vt-c)) 1e-3)
+              "degraded call matches the handler (it IS the handler per call)"))
         (finally ((:free! cf)))))))
 
 (deftest lifecycle-test
