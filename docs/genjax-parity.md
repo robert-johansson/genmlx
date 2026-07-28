@@ -34,6 +34,32 @@ logZ agreement at N=30000: −18.72 (GenJAX) vs −18.76 (GenMLX) — MC noise;
 both sides estimate the same joint. (GenMLX N=3000 row reproduces the
 cost-per-particle table's vgenerate ~1.6–1.8 ms host floor.)
 
+### Post-Phase-2b (vgenerate-compiled — genmlx-vjnn, 2026-07-28)
+
+The batched handler run traced once through the persistent CompiledFn and
+replayed per call (`dyn/vgenerate-compiled`; key splits kept lazy and
+single-stream while tracing — mlx-node `b2290f3`). Second measurement:
+
+| N | GenJAX | GenMLX handler | **GenMLX compiled** | gap now |
+|---|---|---|---|---|
+| any of 1–30000 | 0.019 ms | 1.8–2.1 ms | **0.52 ms** (p10–p90 0.47–0.55) | **~27x** |
+
+logZ is bit-identical to the handler path (same keys → same samples through
+the traced graph) — the strongest equivalence evidence available.
+
+**The warmup ledger inverted.** After the one-time NVRTC kernel bill
+(~11 s first-ever per box, disk-cached), a NEW SHAPE costs GenMLX
+1.4–1.6 ms to trace — one SCI handler run — versus JAX's ~350 ms jit.
+Below ~700 same-shape calls, GenMLX's TOTAL wall now beats GenJAX on this
+row despite the 27x steady-state deficit.
+
+Reading the residual 27x: the traced graph carries the key-derivation ops
+(~13 threefry splits) and 4 outputs, where the Phase-0 floor (65–75 µs)
+passed pre-generated noise as inputs — the L1 noise-transform factoring.
+That refactor (noise outside, pure transform inside) is the known next
+step if this row needs to go lower; the per-call CLJS wrapper
+(choicemap rebuild) is the other visible term.
+
 **Reading the row.** Both sides are N-independent to 30000 — the GPU is idle
 in both worlds; the contest is host floors. GenJAX's floor is one fused XLA
 executable launch (~19 µs); GenMLX's is per-call lazy-graph construction in
