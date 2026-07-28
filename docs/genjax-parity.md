@@ -232,7 +232,31 @@ Reading the residual: the S=1000 captured replay itself measures ~34 ms —
 now plausibly EXECUTION-bound (~30k sequential tiny kernels; XLA fuses the
 step body into far fewer) — with ~8 ms per-call scaffolding on top (scalar
 init generate in SCI + noise pre-gen + marshaling, the h5wg remnant). At
-S=10 the scaffolding IS the number. Next levers, in expected order: the
-h5wg scaffolding (dominates S<=100), fewer/larger kernels per step (engine
-fusion — the first lever that would need MORE than launch amortization),
-and the adaptive-warmup path (still eager).
+S=10 the scaffolding IS the number.
+
+### Post-3.5b (whole-call factory — fused-mala-compiled, genmlx 3815718, same night)
+
+The h5wg scaffolding lever: `fused-mala-compiled` traces the ENTIRE
+per-call unit (init constrained generate + start-point val-grad + noise
+pre-gen + chain) as ONE captured graph of the PRNG key; replays are
+launch-only. The stream layout replicates eager fused-mala exactly (same
+chain; kernel-fusion rounding ~1e-6; repeat calls bit-exact). Found en
+route: `u/extract-params`' scalar path calls mx/realize (eval-in-trace) —
+the factory extracts lazily; and the first "bit-exact" test pass was
+VACUOUS (the factory had silently degraded on that very realize — the
+degrade note now prints the underlying cause). The bench rides the
+factory on :gpu.
+
+| S | GenJAX | post-2a | post-3.5 | **post-3.5b** | gap now |
+|---|---|---|---|---|---|
+| 10 | 0.21 ms | 6.8 ms | 7.6 ms | **0.67 ms** | **3.2x** |
+| 100 | 1.62 ms | 23.5 ms | 10.7 ms | **4.40 ms** | **2.7x** |
+| 1000 | 15.6 ms | 229 ms | 42.6 ms | **34.5 ms** | **2.2x** |
+
+Acceptance 0.820/0.824/0.800 and slope-tails 2.156/2.038/2.050 —
+IDENTICAL to the eager rows above. Warmup (trace+capture per shape):
+42 ms / 239 ms / 7.0 s vs GenJAX's ~1.65 s at every S — GenMLX's total
+wall now wins at S=10/100 from call one AND in steady state the gap is
+2-3x everywhere. The row's remaining levers are all engine-side kernel
+economics (fewer/larger kernels per step — XLA-class step fusion), plus
+the eager adaptive-warmup path if a spec ever pins it.
