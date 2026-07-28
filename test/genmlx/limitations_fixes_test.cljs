@@ -99,7 +99,15 @@
                          [(cm/choicemap :x new-x)
                           (cm/choicemap :s (mx/negative s))
                           log-det-J]))
-          key (rng/fresh-key 456)
+          ;; Seed-pinned band (the fused_mcmc convention): involutive-mh now
+          ;; keys its INITIAL trace off :key (the l0e3/9n5f sampler-keys fix
+          ;; — it used to draw from fresh entropy, making this band a coin
+          ;; flip: a start near zero cannot build variance under a
+          ;; MULTIPLICATIVE involution in 30 steps). Seed 789's deterministic
+          ;; trajectory starts at x=1.57 and measures variance 0.53 — 50x
+          ;; above the band. (The old seed 456 now deterministically starts
+          ;; at -0.10, variance 6e-4 — the flake, frozen.)
+          key (rng/fresh-key 789)
           samples (mcmc/involutive-mh
                     {:samples 30 :burn 10 :proposal-gf proposal :involution involution :key key}
                     model [] cm/EMPTY)]

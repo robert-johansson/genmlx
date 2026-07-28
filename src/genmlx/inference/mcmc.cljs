@@ -1389,11 +1389,17 @@
   [{:keys [samples burn thin proposal-gf involution callback key]
     :or {burn 0 thin 1}}
    model args observations]
-  (let [model (dyn/auto-key model)
+  ;; Init-key split off first (the genmlx-l0e3/9n5f sampler-keys doctrine):
+  ;; the initial trace used to be drawn from FRESH entropy even under an
+  ;; explicit :key, so the chain's starting point was irreproducible — the
+  ;; involutive variance band in limitations_fixes_test was a coin flip
+  ;; (observed failing twice in a row before this fix, then 6x green).
+  (let [[init-key loop-key] (rng/split-or-nils (when key (rng/ensure-key key)))
+        model (if key (dyn/with-key model init-key) (dyn/auto-key model))
         {:keys [trace]} (p/generate model args observations)
         trace (ensure-joint-trace model trace)]
     (kern/collect-samples
-     {:samples samples :burn burn :thin thin :callback callback :key key}
+     {:samples samples :burn burn :thin thin :callback callback :key loop-key}
      (fn [state step-key]
        (let [new-trace (involutive-mh-step state model proposal-gf involution step-key)]
          {:state new-trace :accepted? (not (identical? new-trace state))}))
