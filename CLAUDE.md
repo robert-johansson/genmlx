@@ -129,8 +129,13 @@ TEST_TIME_SCALE=6 TEST_JOBS_SLOW=4 test/run.sh all   # RTX; Thor: scale 8
 # 2026-07-27 (fresh boot): 110 min vs 175 serial (slow tier ~51 min at 4-way,
 # ~2.3x), 428/3 with all 3 misses re-passing solo (band flakes, none
 # parallel-only); min MemAvailable grazed 26 GB vs the 20 GB h3p5 floor —
-# run batteries under the floor-guard wrapper on Thor. RTX walls pending
-# (genmlx-ehni).
+# run batteries under the floor-guard wrapper on Thor.
+# RTX VALIDATED 2026-07-28 (genmlx-ehni): two back-to-back full batteries at
+# scale 6 / 4-way slow measured 76m14s (430/1 — one pre-existing band flake)
+# and 73m21s (431/0 PASS); fast tier ~4 min of that. No serial baseline was
+# taken on this box, so the 4-way SPEEDUP is unmeasured here — only the wall.
+# Peak VRAM stayed far under the 96 GB card (sampled ~3 GB mid-medium-tier);
+# no floor-guard needed, unlike Thor's unified memory.
 ```
 
 No build step for the ClojureScript — nbb interprets it directly. The **native
