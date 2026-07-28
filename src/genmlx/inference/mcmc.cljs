@@ -505,10 +505,13 @@
                 (if (>= i samples)
                   (persistent! acc)
                   (let [[k1 k2 rk'] (rng/split-n rk 3)
-                        p' (mx/tidy-materialize
+                        p' (mx/tidy-materialize-light
                             #(let [noise (rng/normal k1 [thin n-params])
                                    uniforms (rng/uniform k2 [thin])]
                                (thin-chain p noise uniforms)))]
+                    ;; genmlx-ugq9: GC on a cadence, not per sample
+                    (when (zero? (mod (inc i) 25))
+                      (mx/jsc-cleanup!) (mx/clear-cache!))
                     (when callback
                       (callback {:iter i :value (mx/->clj p')}))
                     (recur p' (conj! acc (mx/->clj p')) (inc i) rk'))))
@@ -560,12 +563,14 @@
                                 (let [noise (mx/reshape
                                              (mx/take-idx noise-batch (mx/scalar j mx/int32) 0)
                                              [n-params])
-                                      p' (mx/tidy-materialize
+                                      p' (mx/tidy-materialize-light
                                           #(eager-mh-step p score-fn proposal-std
                                                           noise (nth uniforms-js j)))]
                                   (when callback
                                     (callback {:iter (+ i j) :value (mx/->clj p')}))
                                   (recur p' (conj! acc (mx/->clj p')) (inc j)))))]
+                        ;; genmlx-ugq9: one GC per batch block, not per step
+                        (mx/jsc-cleanup!)
                         (mx/clear-cache!)
                         (recur p' acc' (+ i batch) rk')))))))]
         result))))
@@ -1357,18 +1362,21 @@
                       [[q' sq' gq' rk'] [q' sq' gq']]))
                   {}))
               [init-q init-score init-grad rk])
-        ;; Phase 2: Collect samples (tidy-run prevents Metal resource leak)
+        ;; Phase 2: Collect samples (light tidy + cadence GC, genmlx-ugq9 —
+        ;; the per-sample full GC was 91% of mala wall on Thor)
             result (loop [q params, sq score, gq grad, acc (transient []), i 0, rk rk]
                      (if (>= i samples)
                        (persistent! acc)
                        (let [[step-key rk'] (rng/split rk)
-                             r (mx/tidy-run
+                             r (mx/tidy-run-light
                                 #(let [[k1 k2] (rng/split step-key)
                                        noise (rng/normal k1 [thin-steps n-params])
                                        uniforms (rng/uniform k2 [thin-steps])]
                                    (thin-chain q sq gq noise uniforms))
                                 (fn [r] [(aget r 0) (aget r 1) (aget r 2)]))
                              q' (aget r 0) sq' (aget r 1) gq' (aget r 2)]
+                         (when (zero? (mod (inc i) 25))
+                           (mx/jsc-cleanup!) (mx/clear-cache!))
                          (when callback
                            (callback {:iter i :value (mx/->clj q')}))
                          (recur q' sq' gq' (conj! acc (mx/->clj q')) (inc i) rk'))))]
@@ -1474,12 +1482,14 @@
         (let [;; Split the warmup key BEFORE tidy-run — splitting inside would let
               ;; tidy free the sub-key arrays. [nil nil] when rk is nil (unseeded).
               [step-key rk'] (rng/split-or-nils rk)
-              ;; Wrap step-fn in tidy-run to clean up intermediate MLX arrays
-              ;; (NUTS builds ~10K arrays per step via binary tree — OOMs without cleanup)
-              result (mx/tidy-run
+              ;; Light tidy + short cadence (genmlx-ugq9): the full-GC-per-step
+              ;; tidy was ~49 ms/iteration on Thor. Cadence 5, not 25, because
+              ;; a NUTS step builds ~10K arrays via the binary tree — the bound
+              ;; must stay far from the Metal ~499K buffer-count wall.
+              result (mx/tidy-run-light
                       #(step-fn q current-eps warmup-metric step-key)
                       (fn [{:keys [state]}] [state]))
-              _ (mx/clear-cache!)
+              _ (when (zero? (mod m 5)) (mx/jsc-cleanup!) (mx/clear-cache!))
               {:keys [state accept-stat]} result
               alpha (clamp-accept-stat accept-stat)
               ;; Update dual averaging statistics
@@ -1959,10 +1969,14 @@
   "Single leapfrog step with eval per step to bound graph size.
    Used by NUTS which needs per-step control.
    Optional metric for mass matrix (nil = identity).
-   Returns [q p] Clojure vector."
+   Returns [q p] Clojure vector.
+   Light tidy (genmlx-ugq9): the full-GC tidy here cost one JSC GC per TREE
+   NODE — 3.5 GCs/sample measured on NUTS. The GC cadence lives in nuts'
+   collect-samples (:tidy-every 5, short because a NUTS step builds ~10K
+   arrays) and in dual-averaging-warmup's explicit cadence."
   ([grad-U q p eps half-eps] (leapfrog-step grad-U q p eps half-eps nil))
   ([grad-U q p eps half-eps metric]
-   (let [r (mx/tidy-run
+   (let [r (mx/tidy-run-light
             #(let [g (grad-U q)
                    p (mx/subtract p (mx/multiply half-eps g))
                    q (mx/add q (mx/multiply eps (inv-mass-multiply p metric)))
@@ -2016,7 +2030,9 @@
         ;; Current Hamiltonian
         current-H (hamiltonian neg-U-compiled q p0 half metric)
         ;; Fused leapfrog — L+1 gradient evals, one lazy graph
-        [q' p'] (let [r (mx/tidy-run
+        ;; Light tidy (genmlx-ugq9): runs per hmc step under collect-samples,
+        ;; whose :tidy-every cadence owns the GC.
+        [q' p'] (let [r (mx/tidy-run-light
                          #(let [[q' p'] (leapfrog-trajectory-fused
                                          grad-neg-U q p0 eps half-eps
                                          leapfrog-steps metric)]
@@ -2083,12 +2099,13 @@
                       [[q' rk'] [q']]))
                   {}))
               [init-q rk])
-        ;; Phase 2: Collect samples (tidy-materialize prevents Metal resource leak)
+        ;; Phase 2: Collect samples (light tidy + cadence GC, genmlx-ugq9 —
+        ;; the per-sample full GC was the 1.08 GCs/sample hmc measured)
             result (loop [q params, acc (transient []), i 0, rk rk]
                      (if (>= i samples)
                        (persistent! acc)
                        (let [[step-key rk'] (rng/split rk)
-                             q' (mx/tidy-materialize
+                             q' (mx/tidy-materialize-light
                                  #(if thin-chain
                                  ;; thin > 1: compiled chain of thin steps
                                     (let [[k1 k2] (rng/split step-key)
@@ -2101,6 +2118,8 @@
                                                     eps half-eps half q-shape
                                                     leapfrog-steps metric step-key)]
                                       state)))]
+                         (when (zero? (mod (inc i) 25))
+                           (mx/jsc-cleanup!) (mx/clear-cache!))
                          (when callback
                            (callback {:iter i :value (mx/->clj q')}))
                          (recur q' (conj! acc (mx/->clj q')) (inc i) rk'))))]
@@ -2718,6 +2737,9 @@
              remaining-burn (if warmup-q 0 burn)]
          (kern/collect-samples
           {:samples samples :burn remaining-burn :thin thin :callback callback
+           ;; genmlx-ugq9: short cadence — a NUTS step builds ~10K arrays via
+           ;; the binary tree; 5 steps stays far from the Metal buffer wall.
+           :tidy-every 5
            :key sample-key}
           (fn [q step-key]
             (let [new-q (:q' (nuts-transition ctx q q-shape max-depth step-key))]
@@ -2872,7 +2894,7 @@
                     :params (mx/->clj params)
                     :score-history (persistent! history)})
                  (let [[score-val new-params new-opt-st]
-                       (mx/tidy-materialize
+                       (mx/tidy-materialize-light
                         (fn []
                           (let [[score grad] (val-grad params)
                                 neg-grad (mx/negative grad)]
@@ -2883,6 +2905,9 @@
                                     :sgd [(learn/sgd-step params neg-grad lr) nil]
                                     :adam (learn/adam-step params neg-grad opt-st {:lr lr}))]
                               [sv np nos]))))]
+                   ;; genmlx-ugq9: GC on a cadence, not per optimization step
+                   (when (zero? (mod (inc i) 25))
+                     (mx/jsc-cleanup!) (mx/clear-cache!))
                    (when callback
                      (callback {:iter i :score score-val :params params}))
                    (recur (inc i) new-params new-opt-st
@@ -2950,8 +2975,8 @@
                 :all-scores (mx/->clj final-scores)
                 :score-history (persistent! history)})
            ;; Gradient step for all N restarts simultaneously
-           ;; Use tidy-run to free intermediate arrays each iteration
-             (let [r (mx/tidy-run
+           ;; Light tidy + cadence GC below (genmlx-ugq9)
+             (let [r (mx/tidy-run-light
                       (fn [] (let [grad (grad-fn params)
                                    neg-grad (mx/negative grad)
                                    scores (score-fn params)
@@ -2969,6 +2994,8 @@
                    new-params (:params r)
                    new-opt-st (:opt-st r)
                    best-score (:best-score r)]
+               (when (zero? (mod (inc i) 25))
+                 (mx/jsc-cleanup!) (mx/clear-cache!))
                (when callback
                  (callback {:iter i :best-score best-score}))
                (recur (inc i) new-params new-opt-st

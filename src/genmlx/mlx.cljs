@@ -1367,6 +1367,32 @@
     (cleanup-if-cache-pressure!)
     @result-vol))
 
+;; Light variants (genmlx-ugq9). tidy's depth-0 exit is a FULL synchronous JSC
+;; GC (~49 ms on Thor sm_110) — correct as a memory bound, ruinous inside a
+;; per-iteration hot loop (measured 41-95% of MALA/HMC/NUTS/tidy-importance
+;; wall time). The light variants keep the eval-and-return contract (detaching
+;; graphs from intermediates so a LATER GC can reclaim them) but skip the
+;; unconditional GC; only the pressure-gated cleanup runs. The caller owns the
+;; GC cadence: pair with an enclosing collect-samples tidy cadence or an
+;; explicit periodic jsc-cleanup!/clear-cache! in the surrounding loop.
+
+(defn tidy-run-light
+  "tidy-run's contract without the unconditional depth-0 full GC at exit.
+   Runs f, evals the arrays collect-fn extracts from its result, returns the
+   result. Intermediates become garbage reclaimed at the caller's cadence."
+  [f collect-fn]
+  (let [result (f)
+        arrays (collect-fn result)]
+    (when (seq arrays) (apply eval! arrays))
+    (cleanup-if-cache-pressure!)
+    result))
+
+(defn tidy-materialize-light
+  "tidy-materialize without the depth-0 full GC: run f, eval! the result,
+   return it. See tidy-run-light."
+  [f]
+  (let [r (f)] (eval! r) r))
+
 (defn force-gc! []
   (jsc-cleanup!)
   (when gc-fn (gc-fn))

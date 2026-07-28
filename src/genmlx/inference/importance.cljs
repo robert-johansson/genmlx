@@ -68,7 +68,8 @@
      :log-ml-estimate log-ml}))
 
 (defn tidy-importance-sampling
-  "Memory-efficient importance sampling. Each particle runs inside mx/tidy-run
+  "Memory-efficient importance sampling. Each particle runs inside a light
+   tidy scope (GC every 10 particles, genmlx-ugq9)
    so all trace arrays are disposed immediately after extracting the weight.
    Only returns log-weights (as JS numbers) and log-ML estimate.
 
@@ -82,14 +83,24 @@
   [{:keys [samples key] :or {samples 100}} model args observations]
   (let [model (-> model dyn/auto-key strip-analytical)
         ks (rng/split-n (rng/ensure-key key) samples)
-        ws (mapv (fn [ki]
-                   (mx/tidy-run
-                     (fn []
-                       (let [{:keys [weight]} (p/generate (dyn/with-key model ki) args observations)]
-                         (mx/materialize! weight)
-                         (mx/item weight)))
-                     (fn [_] [])))  ;; nothing to preserve — weight extracted as JS number
+        ;; Light tidy + cadence GC (genmlx-ugq9): the full-GC-per-particle tidy
+        ;; was 95% of wall on Thor (5589 -> ~300 ms for N=100). Cadence 10 (not
+        ;; the sibling gc-every 50) because this fn's contract is memory
+        ;; frugality for LARGE traces — the bound is 10 particles' arrays.
+        ws (into []
+                 (map-indexed
+                  (fn [i ki]
+                    (let [w (mx/tidy-run-light
+                             (fn []
+                               (let [{:keys [weight]} (p/generate (dyn/with-key model ki) args observations)]
+                                 (mx/materialize! weight)
+                                 (mx/item weight)))
+                             (fn [_] []))]  ;; nothing to preserve — weight extracted as JS number
+                      (when (zero? (mod (inc i) 10))
+                        (mx/jsc-cleanup!) (mx/clear-cache!))
+                      w)))
                  ks)
+        _ (mx/jsc-cleanup!)
         log-ml (log-ml-from-weights ws samples)]
     {:log-weights ws
      :log-ml-estimate log-ml}))

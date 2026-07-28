@@ -93,10 +93,30 @@ node-by-node from CLJS on every call.
 | rank | offender | measured | fix shape |
 |---|---|---|---|
 | 1 | ~~scalar `mh` step overhead~~ **FIXED** | 61.6 → 5.66–11.1 ms/step | was a full JSC GC per step in `collect-samples`; `:tidy-every 25` cadence (genmlx-k1z7) |
-| 1b | per-iteration depth-0 tidy exits in other drivers | ~49 ms per depth-0 exit | audit NUTS/MALA/HMC/adev/tidy-importance nesting (genmlx-ugq9); NUTS's 8.4 s/sample is the smoking gun |
+| 1b | ~~per-iteration depth-0 tidy exits in other drivers~~ **FIXED** | see table below | light tidy variants + per-loop cadences (genmlx-ugq9) |
 | 2 | SMCP3 particle loop | 2.2 ms/p-step flat | vectorize (im8n option d); vsmc equivalent is 0.0022 (genmlx-ke97) |
 | 3 | silent batched-splice fallback | N-fold host loop, no signal | emit signal + implement IBatchedSplice for Map first (genmlx-y3ls) |
 | 4 | batched host floor | 74% of vgenerate wall is graph build | per-call graph rebuild; L4/fused territory — document, don't chase per-op |
+
+## The tidy-exit GC purge (genmlx-k1z7 + genmlx-ugq9, 2026-07-28)
+
+`mx/tidy`'s depth-0 exit is a full synchronous Bun/JSC GC (~49 ms on Thor).
+Every scalar driver paid it per iteration — or, for NUTS, per tree node.
+Fixed via `mx/tidy-run-light`/`mx/tidy-materialize-light` (eval-and-return, no
+unconditional GC) + explicit GC cadences (mod-25 in the compiled/MAP loops,
+mod-5 on NUTS paths because a NUTS step builds ~10K arrays). Measured on the
+audit harness (Thor sm_110, fixed keys bit-identical old-vs-new):
+
+| driver | GCs/unit before → after | wall before → after | speedup |
+|---|---|---|---|
+| mala S=25 | 1.08 → 0.12 /sample | 1641 → 299 ms | 5.5× |
+| hmc S=25 L=10 | 1.08 → 0.12 /sample | 4944 → 3738 ms | 1.3× (leapfrog-dominated) |
+| nuts S=10 | 3.50 → 0.30 /sample | 2279 → 678 ms | 3.4× |
+| nuts S=10 +adapt | 4.80 → 0.50 /sample | 3262 → 824 ms | 4.0× |
+| tidy-importance N=100 | 1.00 → 0.11 /particle | 5589 → 1004 ms | 5.6× |
+
+Memory stayed bounded where it matters most: adaptive NUTS, 200 steps of
+~10K-array trees at cadence 5 → 0.00 MB active after, 0.06 MB peak.
 
 ## Other arches
 
