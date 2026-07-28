@@ -224,21 +224,6 @@
         accept-mask (mx/greater log-alpha log-u)]
     [(mx/where accept-mask proposal p) accept-mask]))
 
-(defn- make-compiled-chain
-  "Build a compiled K-step MH chain as one fused lazy-graph evaluation.
-   Returns compiled fn: (params [D], noise [K,D], uniforms [K]) → params [D].
-   Noise and uniforms are generated OUTSIDE — compile-fn freezes random ops."
-  [k-steps score-fn proposal-std n-params]
-  (let [chain-fn
-        (fn [params noise-2d uniforms-1d]
-          (loop [p params, i 0]
-            (if (>= i k-steps) p
-                (let [row (noise-row noise-2d i [n-params])
-                      [new-p _] (mh-transition score-fn proposal-std p
-                                               row uniforms-1d i)]
-                  (recur new-p (inc i))))))]
-    (mx/compile-fn chain-fn)))
-
 (def ^:private persist-trace-ops-limits
   "Measured sm_120 trace-DEPTH boundaries at the default 8 MB stack
    (genmlx-0vwj, 2026-07-28, 12-site GFI linreg score). Per-method, each in
@@ -293,6 +278,39 @@
       (with-meta
         (fn [& args] (to-array (apply mx/compiled-call h args)))
         {:genmlx/compiled-handle h}))))
+
+(defn- persist-chain1
+  "persist-chain for SINGLE-output builders (genmlx-53aa Phase 3a: the
+   block/trajectory chains return one array). Within one sampler call the
+   same block fn runs K times with identical shapes, so the first block
+   traces and blocks 2..K replay in C++ — replay pays off INSIDE a single
+   sampler invocation, no caller plumbing needed. Same gates/metadata as
+   persist-chain; the handle is GC-reclaimed (native side) after the
+   sampler call drops the fn — only the small napi builder ref outlives it
+   (documented Phase-1 tradeoff)."
+  [chain-fn method ops]
+  (if (or (mx/metal-is-available?)
+          (> ops (get persist-trace-ops-limits method 0)))
+    (mx/compile-fn chain-fn)
+    (let [h (mx/compile-create chain-fn)]
+      (with-meta
+        (fn [& args] (nth (apply mx/compiled-call h args) 0))
+        {:genmlx/compiled-handle h}))))
+
+(defn- make-compiled-chain
+  "Build a compiled K-step MH chain as one fused lazy-graph evaluation.
+   Returns compiled fn: (params [D], noise [K,D], uniforms [K]) → params [D].
+   Noise and uniforms are generated OUTSIDE — compile-fn freezes random ops."
+  [k-steps score-fn proposal-std n-params]
+  (let [chain-fn
+        (fn [params noise-2d uniforms-1d]
+          (loop [p params, i 0]
+            (if (>= i k-steps) p
+                (let [row (noise-row noise-2d i [n-params])
+                      [new-p _] (mh-transition score-fn proposal-std p
+                                               row uniforms-1d i)]
+                  (recur new-p (inc i))))))]
+    (persist-chain1 chain-fn :mh k-steps)))
 
 (defn- pre-generate-chain-noise
   "Generate all noise for a complete MH chain upfront.
@@ -511,7 +529,7 @@
                     [p' _] (mh-transition score-fn proposal-std p
                                           row uniforms-1d i)]
                 (recur p' (inc i) (conj traj p'))))))]
-    (mx/compile-fn traj-fn)))
+    (persist-chain1 traj-fn :mh k-steps)))
 
 (defn- eager-mh-step
   "One eager MH step using pre-generated noise and uniform.
@@ -1018,7 +1036,7 @@
                             score-fn proposal-std p noise-3d uniforms-2d i
                             n-chains n-params)]
                 (recur p' (inc i) (conj traj p'))))))]
-    (mx/compile-fn traj-fn)))
+    (persist-chain1 traj-fn :mh k-steps)))
 
 (defn vectorized-compiled-trajectory-mh
   "Vectorized compiled trajectory MH: N parallel chains with K steps per
@@ -1406,7 +1424,7 @@
                     new-sq (mx/where accept-mask sq' sq)
                     new-gq (mx/where accept-mask gq' gq)]
                 (recur new-q new-sq new-gq (inc i))))))]
-    (mx/compile-fn chain-fn)))
+    (persist-chain chain-fn :mala (* 2 k-steps))))
 
 (defn- run-loop-compiled-mala
   "Run compiled MALA with loop compilation for burn-in and collection.
@@ -2148,7 +2166,7 @@
                       log-u (mx/log (mx/index uniforms-1d k))
                       accept-mask (mx/greater log-alpha log-u)]
                   (recur (mx/where accept-mask q-lf q) (inc k))))))]
-    (mx/compile-fn chain-fn)))
+    (persist-chain1 chain-fn :hmc (* k-steps leapfrog-steps))))
 
 (defn- run-loop-compiled-hmc
   "Run compiled HMC with loop compilation for burn-in and optional thinning.
