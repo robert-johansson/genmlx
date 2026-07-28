@@ -297,6 +297,43 @@
         (fn [& args] (nth (apply mx/compiled-call h args) 0))
         {:genmlx/compiled-handle h}))))
 
+(defn- persist-point-fn
+  "Persistent-compile a pure POINT fn — score, grad, or value-and-grad
+   (genmlx-53aa Phase 3b). Unlike chains these are shallow per-evaluation
+   graphs called MANY times per sampler run (eager leapfrog loops, NUTS tree
+   nodes, step-size adaptation), always at fixed shapes: the first call
+   traces, the rest replay in C++. NEVER pass the returned fn into a chain
+   builder — builders trace their own graphs and must receive RAW fns (the
+   raw/compiled variable split at every call site enforces this; audited
+   2026-07-28). No trace-depth gate: point graphs are shallow (the
+   deep-score caveat rides genmlx-a1uh). Metal keeps identity-compile.
+   Untraceable fns (item inside) degrade LOUDLY and permanently to the raw
+   fn. Multi-output fns (value-and-grad pairs) round-trip as destructurable
+   vectors; single-output fns return the bare array."
+  [f]
+  (if (mx/metal-is-available?)
+    (mx/compile-fn f)
+    (let [h (mx/compile-create
+             (fn [& args]
+               (let [r (apply f args)]
+                 (if (sequential? r) (to-array r) r))))
+          degraded (volatile! false)]
+      (with-meta
+        (fn [& args]
+          (if @degraded
+            (apply f args)
+            (try
+              (let [out (apply mx/compiled-call h args)]
+                (if (= 1 (count out)) (nth out 0) out))
+              (catch :default e
+                (if (re-find #"during function transformations" (str (.-message e)))
+                  (do (vreset! degraded true)
+                      (println (str "Note: persist-point-fn — fn is not traceable "
+                                    "(item/eval inside); using the raw fn."))
+                      (apply f args))
+                  (throw e))))))
+        {:genmlx/compiled-handle h}))))
+
 (defn- make-compiled-chain
   "Build a compiled K-step MH chain as one fused lazy-graph evaluation.
    Returns compiled fn: (params [D], noise [K,D], uniforms [K]) → params [D].
@@ -688,7 +725,7 @@
              {:keys [score-fn init-params n-params]}
              (u/prepare-mcmc-score model args observations addresses trace)
              raw-score-fn score-fn
-             score-fn (cond-> raw-score-fn compile? mx/compile-fn)
+             score-fn (cond-> raw-score-fn compile? persist-point-fn)
              std (mx/scalar proposal-std)]
          (if compile?
          ;; Compiled path: fused or block-based burn-in + trajectory collection
@@ -1708,7 +1745,7 @@
              {:keys [score-fn init-params n-params]}
              (u/prepare-mcmc-score model args observations addresses trace)
              val-grad-fn (mx/value-and-grad score-fn)
-             val-grad-compiled (mx/compile-fn val-grad-fn)
+             val-grad-compiled (persist-point-fn val-grad-fn)
              init-q init-params
              q-shape (mx/shape init-q)
            ;; Step-size adaptation (optional)
@@ -1860,7 +1897,7 @@
                        model args observations)))
             ;; Fused path (with validation)
             (let [val-grad-fn (mx/value-and-grad score-fn)
-                  val-grad-compiled (mx/compile-fn val-grad-fn)
+                  val-grad-compiled (persist-point-fn val-grad-fn)
                   q-shape (mx/shape init-params)
                   ;; Step-size adaptation (optional)
                   {:keys [adapted-eps warmup-q]}
@@ -2305,8 +2342,8 @@
              (u/prepare-mcmc-score model args observations addresses trace)
              neg-U (fn [q] (mx/negative (score-fn q)))
              grad-neg-U-raw (mx/grad neg-U)
-             grad-neg-U (cond-> grad-neg-U-raw compile? mx/compile-fn)
-             neg-U-compiled (cond-> neg-U compile? mx/compile-fn)
+             grad-neg-U (cond-> grad-neg-U-raw compile? persist-point-fn)
+             neg-U-compiled (cond-> neg-U compile? persist-point-fn)
              init-q init-params
              q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
@@ -2470,8 +2507,8 @@
             ;; Fused path (with validation)
             (let [neg-U-fn (fn [q] (mx/negative (score-fn q)))
                   grad-neg-U-raw (mx/grad neg-U-fn)
-                  grad-neg-U (mx/compile-fn grad-neg-U-raw)
-                  neg-U-compiled (mx/compile-fn neg-U-fn)
+                  grad-neg-U (persist-point-fn grad-neg-U-raw)
+                  neg-U-compiled (persist-point-fn neg-U-fn)
                   q-shape (mx/shape init-params)
                   ;; Step-size adaptation (optional)
                   {:keys [adapted-eps warmup-q]}
@@ -2617,7 +2654,7 @@
       #(let [;; Build vectorized score and gradient functions
              vec-score-fn (u/make-vectorized-score-fn model args observations addresses)
              neg-U-fn (fn [q] (mx/negative (vec-score-fn q)))
-             grad-fn (mx/compile-fn (u/make-vectorized-grad-score model args observations addresses))
+             grad-fn (persist-point-fn (u/make-vectorized-grad-score model args observations addresses))
              init-params (u/init-vectorized-params model args observations addresses n-chains)
              eps (mx/scalar step-size)
              half-eps (mx/scalar (* 0.5 step-size))
@@ -2786,8 +2823,8 @@
              {:keys [score-fn init-params n-params]}
              (u/prepare-mcmc-score model args observations addresses trace)
              neg-log-density (fn [q] (mx/negative (score-fn q)))
-             grad-neg-ld (cond-> (mx/grad neg-log-density) compile? mx/compile-fn)
-             neg-ld-compiled (cond-> neg-log-density compile? mx/compile-fn)
+             grad-neg-ld (cond-> (mx/grad neg-log-density) compile? persist-point-fn)
+             neg-ld-compiled (cond-> neg-log-density compile? persist-point-fn)
              init-q init-params
              q-shape (mx/shape init-q)
            ;; Adaptive warmup: dual averaging + optional metric estimation
@@ -2954,7 +2991,7 @@
                  (u/prepare-mcmc-score model args observations addresses trace)
                  layout (u/compute-param-layout trace addresses)
                  val-grad-fn (mx/value-and-grad score-fn)
-                 val-grad (cond-> val-grad-fn compile? mx/compile-fn)
+                 val-grad (cond-> val-grad-fn compile? persist-point-fn)
                  opt-state (when (= optimizer :adam) (learn/adam-init init-params))]
              (loop [i 0
                     params init-params
