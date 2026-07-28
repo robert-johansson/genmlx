@@ -118,6 +118,51 @@ audit harness (Thor sm_110, fixed keys bit-identical old-vs-new):
 Memory stayed bounded where it matters most: adaptive NUTS, 200 steps of
 ~10K-array trees at cadence 5 → 0.00 MB active after, 0.06 MB peak.
 
+## The compile-fn verdict (genmlx-819v, 2026-07-28)
+
+**`mx/compile-fn` stays an identity pass-through, permanently — at this
+layer.** This is a decision, not an omission. Grounds:
+
+1. **The GFI execution model violates `mx::compile`'s contract.** MLX's
+   compile traces a pure array-in/array-out function and replays the cached
+   graph. Handler execution is exactly not that: every `trace` op consults
+   handler state (constraints, selections, old choices) per address, PRNG
+   keys thread through host metadata, and addresses can be data-dependent.
+   Tracing through it either fails or — the documented failure mode — severs
+   the autograd tape at an interior `eval!` and returns **silent zero
+   gradients**. The risk asymmetry is decisive: the upside is microseconds,
+   the downside is a wrong-answer class of bug.
+2. **The measured bottleneck is host structure-decision, which compile does
+   not remove.** Everything this milestone measured and fixed was interpreter
+   dispatch, per-step GC, and graph construction — ms-scale host work.
+   Kernel-launch overhead (what fusion buys back) is 5–10 µs/op, two orders
+   below it. Even the batched floor's 74% host share is graph *build* for a
+   structure the interpreter must re-decide per call; `mx::compile` only
+   helps when the structure is fixed — and…
+3. **…where the structure IS fixed, GenMLX already compiles — its own way.**
+   The ladder (noise transforms + expression compiler at L1, fused combinator
+   loops at M5, single fused graphs at L4, fused-vmh cone runners) hoists
+   graph construction out of loops on the CLJS side, and the Rust layer runs
+   natively compiled/fused forwards for the LLM paths (its own graph-exec
+   caching). Compiled execution exists where it belongs: below the membrane,
+   on stable, fixed-shape functions. Duplicating it at the membrane would
+   compose *against* the handler (principle 6).
+4. **Amortization already wins at the scales that matter.** The batched
+   curves are constant-total out to N=3000 (5.6–74 ms); the residual per-call
+   build cost is noise per particle. A compile cache keyed on function
+   identity would additionally be fragile under SCI, where closures are
+   re-created per call.
+
+**What would reopen this verdict** (it is permanent, not unfalsifiable):
+- a profile of a batched hot loop where *eval* time dominates *build* time at
+  fixed N through many small ops — fusion's actual regime;
+- MLX gaining compile support for stateful/traced closures;
+- leaving SCI for compiled ClojureScript, making function identity stable
+  enough to key a compile cache.
+
+Until one of those happens, "compile" work belongs to the ladder (L4 fused
+graphs), not to `mx/compile-fn`.
+
 ## Other arches
 
 | | Metal (M4) | sm_120 (RTX PRO 6000) |

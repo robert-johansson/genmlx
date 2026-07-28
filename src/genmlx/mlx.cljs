@@ -823,12 +823,15 @@
 ;; =========================================================================
 
 (defn compile-fn
-  "Identity pass-through. GenMLX's compilation uses noise transforms +
-   the expression compiler (Level 1), not MLX's graph-caching compile.
-   Direct use of MLX's compile would sever the autograd tape when model
-   bodies contain eval!, returning silent zeros. The real graph caching
-   happens in the Rust layer's compiled model forward passes.
-   See: compiled.cljs, compiled_gen.cljs for the actual compilation strategy."
+  "Identity pass-through — PERMANENTLY, by verdict (genmlx-819v, 2026-07-28;
+   full grounds and the reopen triggers in docs/gpu-cost-per-particle.md).
+   GenMLX's compilation uses noise transforms + the expression compiler
+   (Level 1) and single fused graphs (Level 4), not MLX's graph-caching
+   compile. Direct use of MLX's compile would sever the autograd tape when
+   model bodies contain eval!, returning silent zeros; and the measured
+   bottleneck is host structure-decision, which compile does not remove.
+   The real graph caching happens in the Rust layer's compiled model forward
+   passes. See: compiled.cljs, compiled_gen.cljs for the compilation strategy."
   ([f] f)
   ([f _shapeless?] f))
 
