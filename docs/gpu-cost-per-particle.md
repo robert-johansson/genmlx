@@ -54,6 +54,67 @@ Even the **good** path is ~74% host graph-construction. Consistent with
 `compile-fn` being an identity pass-through: the lazy graph is rebuilt
 node-by-node from CLJS on every call.
 
+## sm_120 (RTX PRO 6000 Blackwell, 2026-07-28, genmlx 6e2fc61 / mlx-node 722bf55e / mlx a27ddcaef, bun 1.3.14)
+
+Run strictly serial, nothing else on the GPU (48 MiB idle before start).
+
+**Read the code pin, not just the arch.** This column was measured at 6e2fc61,
+which is FOUR commits past the sm_110 column's d463384 — it includes k1z7 +
+ugq9 (the tidy cadences), ke97 (`vsmcp3`) and y3ls (batched splice). So the
+last two rows of the batched table below have no sm_110 counterpart yet: at
+d463384 `vsmcp3` did not exist, which is why the sm_110 smcp3 row still reads
+"no batched counterpart exists". Cross-arch differences in the scalar rows are
+confounded with those four commits and should not be read as pure arch effects
+until Thor re-runs at this pin.
+
+### Anchors (harness credibility)
+
+| anchor | im8n reference | measured here | verdict |
+|---|---|---|---|
+| membrane micro-latency | ~1 ms/eval | 0.0169 ms/eval (tiny add+eval!) | credible — same sub-ms order as sm_110's 0.055; im8n's ~1 ms was a model-sized graph, not a membrane roundtrip |
+| vgenerate N=3000 | ~21 ms (metareasoner world model) | 1.6 ms (5-site model) | reproduces — smaller model, right direction, ~3.5× under sm_110's 5.6 ms |
+
+### Scalar paths — ALL host-bound (ms/particle does not fall in N)
+
+| path | N sweep | ms/particle(-step) | verdict |
+|---|---|---|---|
+| `p/generate` ×N loop | 1→3000 | 4.85 → **4.94** | host-bound (dips to 1.09 at N=10, then climbs back — fixed-cost noise, no amortization) |
+| `importance-sampling` | 1→1000 | 2.52 → **4.14** | host-bound |
+| `mh` (per chain-step) | 1→20 chains | 3.92 → **4.95** | host-bound; post-k1z7, so directly comparable to sm_110's 5.66–11.1 |
+| `smc` (per particle-step) | 1→500 | 18.2 → **3.64** | host-bound |
+| `smcp3` (per particle-step) | 1→150 | 5.23 → **6.00** | host-bound |
+
+### Batched paths — all amortizing; total is CONSTANT out to N=3000
+
+| path | total ms, N=1→3000 | ms/particle at N=3000 | speedup vs scalar at 3000 |
+|---|---|---|---|
+| `vgenerate` | 5.2 → 1.6 (flat total) | 0.0005 | ~9,900× |
+| `vectorized-importance-sampling` | 5.1 → 1.8 | 0.0006 | ~7,000× (vs extrapolated scalar) |
+| `vmh` (10 sweeps) | 28.8 → 35.7 | 0.0012 /chain-step | ~4,100× /chain-step |
+| `vsmc` (5 steps) | 17.5 → 18.6 | 0.0012 /particle-step | ~3,000× |
+| `vsmcp3` (3 steps) | 14.6 → 8.2 | 0.0009 /particle-step | ~6,700× — **no sm_110 row** (path is newer than that column) |
+| spliced-Map plate (M=5) | 1.8 → 9.3 | 0.0031 | **no sm_110 row** (genmlx-y3ls fast path is newer) |
+
+CAVEAT on the multipliers: the batched totals at N=3000 are 1.6–1.8 ms for the
+generate/importance rows, which is BELOW this harness's own anchor cost (3.4 ms
+for 200 tiny evals). At that scale timer noise is a material fraction, and the
+totals are non-monotonic in N (vgenerate: 5.2 → 1.8 → 1.5 → 4.0 → 1.6 ms).
+Read those speedups as order-of-magnitude, not as measurements. The robust
+claim is the one the shape supports: **total wall-clock does not grow with N**,
+so particle count is free on this card up to at least 3000.
+
+### GPU-vs-host split of the batched floor (vgenerate, N=3000)
+
+| phase | ms |
+|---|---|
+| graph build (host) | 1.2 |
+| force eval (GPU) | 0.2 |
+
+**~86% host** — even more host-dominated than sm_110's 74%, and in the expected
+direction: the discrete card evaluates the graph faster while CLJS-side graph
+construction costs the same. This sharpens rather than softens the `compile-fn`
+verdict: making the GPU faster moves the ratio further toward the host.
+
 ## Findings beyond the curves
 
 1. **Scalar MH's 61.6 ms/step was NOT inherent — root-caused and FIXED
@@ -167,6 +228,12 @@ graphs), not to `mx/compile-fn`.
 
 | | Metal (M4) | sm_120 (RTX PRO 6000) |
 |---|---|---|
-| status | not yet run | not yet run |
+| status | not yet run | **done 2026-07-28** — see the sm_120 section above |
 
-Run `bun run --bun nbb bench/cost_per_particle.cljs` and record here.
+Run `bun run --bun nbb bench/cost_per_particle.cljs` (bench tier, strictly
+serial, nothing else on the GPU) and add a section like the ones above.
+
+Metal is the remaining gap, and it carries an extra obligation the CUDA boxes
+do not (genmlx-sv3z): the k1z7/ugq9 tidy cadences were sized against Metal's
+~499K buffer-count wall from Thor-side reasoning, so Metal must also re-run the
+mcmc family once and confirm the counts stay comfortable.
