@@ -1543,6 +1543,27 @@
                               (map (fn [p] (cm/get-value (cm-get-in (:choices vt) p))))
                               latent-paths))))
           handle   (mx/compile-create trace-fn)
+          ;; Per-call-invariant work hoisted to factory time (genmlx-w9mz:
+          ;; the wrapper measured ~0.19 ms/call of SCI overhead on top of a
+          ;; ~0.31 ms replay — lazy-seq creation, per-site set-choice walks,
+          ;; record construction + vary-meta). The replayed trace is rebuilt
+          ;; per call by (a) a single transient pass over the fixed top-level
+          ;; latent addresses when all paths are flat (the common case), and
+          ;; (b) assoc onto a pre-tagged VectorizedTrace template (record
+          ;; assoc preserves type + the :joint score-type meta).
+          flat?       (every? #(= 1 (count %)) latent-paths)
+          flat-addrs  (when flat? (mapv first latent-paths))
+          indexed     (vec (map-indexed vector latent-paths))
+          vt-template (tag-vtrace
+                       (vect/->VectorizedTrace gf args nil nil nil n nil))
+          rebuild     (if flat?
+                        (fn [out]
+                          (cm/assoc-values template flat-addrs
+                                           (fn [i] (aget out (+ 2 i)))))
+                        (fn [out]
+                          (reduce (fn [c [i p]] (cm/set-choice c p (aget out (+ 2 i))))
+                                  template
+                                  indexed)))
           ;; Not every vgenerate-able model is traceable: rejection samplers
           ;; (e.g. gamma's Marsaglia-Tsang loop) call mx/item per draw —
           ;; data-dependent host control flow, the hard boundary of fixed-
@@ -1554,13 +1575,11 @@
                 (if @degraded
                   (vgenerate gf args constraints n key)
                   (try
-                    (let [out (mx/compiled-call handle (rng/ensure-key key))
-                          choices (reduce (fn [c [i p]] (cm/set-choice c p (nth out (+ 2 i))))
-                                          template
-                                          (map-indexed vector latent-paths))]
-                      (tag-vtrace
-                        (vect/->VectorizedTrace gf args choices (nth out 1) (nth out 0)
-                                                n nil)))
+                    (let [out (mx/compiled-call1 handle (rng/ensure-key key))]
+                      (assoc vt-template
+                             :choices (rebuild out)
+                             :score   (aget out 1)
+                             :weight  (aget out 0)))
                     (catch :default e
                       (if (re-find #"during function transformations"
                                    (str (.-message e)))

@@ -143,6 +143,22 @@
                      addr
                      (if (satisfies? IChoiceMap value) value (->Value value)))))))
 
+(defn assoc-values
+  "Bulk top-level leaf update: cm with each addr in the addrs vector bound to
+   (->Value (vals-fn i)), one transient pass. Equivalent to reducing
+   set-choice over single-element [addr] paths, minus the per-call path
+   destructuring, satisfies? dispatch, and per-step Node rebuilds — the hot
+   replay-wrapper constructor (genmlx-w9mz). addrs must be top-level
+   addresses; vals-fn takes the index and returns a RAW value (never a
+   choicemap — this always wraps in Value). cm must be a Node (EMPTY is)."
+  [cm addrs vals-fn]
+  (let [n (count addrs)]
+    (loop [i 0
+           m (transient (:m cm))]
+      (if (< i n)
+        (recur (inc i) (assoc! m (nth addrs i) (->Value (vals-fn i))))
+        (->Node (persistent! m))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Merge: values in b override values in a
 ;; ---------------------------------------------------------------------------

@@ -817,6 +817,11 @@
 ;; =========================================================================
 
 (defn shape [a] (vec (.shapeOf c a)))
+(defn shape-raw
+  "Shape as the RAW JS array from the NAPI boundary (no vector wrap) — for
+   hot-path shape checks (aget/.-length). Callers must not mutate it.
+   Prefer shape everywhere else."
+  [a] (.shapeOf c a))
 (defn ndim  [a] (.ndimOf c a))
 (defn dtype [a] (.dtypeOf c a))
 (defn size  [a] (js/Number (.sizeOf c a)))
@@ -876,6 +881,13 @@
    of output arrays (also for single-output builders). Lazy: outputs are
    graph nodes; eval!/materialize! applies as usual."
   [handle & arrays] (vec (.compiledCall c handle (to-array arrays))))
+
+(defn compiled-call1
+  "compiled-call for a SINGLE-input handle, returning the RAW JS output
+   array (no vector wrap, no rest-arg marshaling) — the hot replay-loop
+   variant (genmlx-w9mz). Index outputs with aget/nth. Prefer compiled-call
+   everywhere the call is not per-iteration hot."
+  [handle arr] (.compiledCall c handle #js [arr]))
 
 (defn compiled-free!
   "Free a persistent compiled handle: drops its cached graphs and releases

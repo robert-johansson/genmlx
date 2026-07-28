@@ -33,10 +33,15 @@
   "True if k is a well-formed MLX PRNG key: an MLX array of shape [2] whose
    dtype is not float32. A fresh key is uint32[2]; the float 0-scalar that an
    autograd boundary can produce (shape [], float32) is rejected. Shape/dtype
-   are lazy-graph metadata, so this is a cheap check (no GPU eval)."
+   are lazy-graph metadata, so this is a cheap check (no GPU eval).
+   Runs on every rng call AND every ensure-key in replay hot loops, so it
+   uses the raw shape array (one NAPI call, no vector alloc or seq
+   equality — genmlx-w9mz measured ensure-key at 52 us/call via the
+   vector path)."
   [key]
   (and (mx/array? key)
-       (= [2] (mx/shape key))
+       (let [sh (mx/shape-raw key)]
+         (and (= 1 (.-length sh)) (= 2 (aget sh 0))))
        (not= mx/float32 (mx/dtype key))))
 
 (defn- check-key
