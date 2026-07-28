@@ -263,11 +263,11 @@
 
 (defn- validate-compiled-result
   "Validate that a compiled function produced a valid result.
-   Throws with descriptive error if result is nil (Metal graph too large)."
+   Throws with descriptive error if result is nil (fused graph too large)."
   [result method-name total-steps]
   (when (nil? result)
     (throw (ex-info
-            (str "Fused " method-name " compilation failed: Metal graph too large for "
+            (str "Fused " method-name " compilation failed: fused graph too large for "
                  total-steps " total steps. Reduce samples/burn/thin or use the "
                  "block-compiled version instead.")
             {:genmlx/error :fused-graph-too-large
@@ -667,12 +667,29 @@
 ;; budget is buffer-bound, not op-bound, so both tiers share the same
 ;; step-denominated wall with ~20% headroom.
 
+;; The wall above is a METAL wall (buffer-count at ~204.5 buffers/step). CUDA
+;; has no buffer-count limit and MLX's CUDA backend partitions large graphs
+;; internally (upstream get_graph_limits has a cc-1200 entry), so the fused
+;; budget there is a MEASURED-VALIDATED boundary, not a known cliff
+;; (genmlx-lmmn, probed 2026-07-28 on sm_120, GFI linreg, escalating sizes):
+;;   mala ops=16000 (8000 steps)      16.2 s/call, 3.5 GiB VRAM, accept 0.80
+;;   mh   ops=16000 (16000 steps)     43.6 s/call, 12.4 GiB VRAM, accept 0.22
+;;   hmc  ops=16000 (1600x10 leapfrog) 24.3 s/call, 12.2 GiB VRAM, accept 0.97
+;; All fused, all linear in size — no failures, no cliff. 16000 is where the
+;; probe stopped, not where CUDA broke; raise it WITH a new measurement, not
+;; by extrapolation. Both tiers share the value (probed at the heavier :gfi
+;; tier). VRAM at the boundary is <13 GiB on the 96 GB card.
 (def ^:private fused-ops-limits
-  {:gfi    {:mh 2000 :mala 1500 :hmc 2000}
-   :native {:mh 2000 :mala 1500 :hmc 2000}})
+  {:metal {:gfi    {:mh 2000 :mala 1500 :hmc 2000}
+           :native {:mh 2000 :mala 1500 :hmc 2000}}
+   :cuda  {:gfi    {:mh 16000 :mala 16000 :hmc 16000}
+           :native {:mh 16000 :mala 16000 :hmc 16000}}})
+
+(def ^:private fused-backend
+  (delay (if (mx/metal-is-available?) :metal :cuda)))
 
 (defn- estimate-fused-ops
-  "Estimate Metal graph operations for a fused chain.
+  "Estimate fused-graph operations for a fused chain.
    Returns estimated ops count (proportional to graph size)."
   [method total-steps {:keys [leapfrog-steps]}]
   (case method
@@ -686,7 +703,7 @@
   [method total-steps {:keys [tensor-native? leapfrog-steps]}]
   (let [ops (estimate-fused-ops method total-steps {:leapfrog-steps leapfrog-steps})
         tier (if tensor-native? :native :gfi)]
-    (<= ops (get-in fused-ops-limits [tier method]))))
+    (<= ops (get-in fused-ops-limits [@fused-backend tier method]))))
 
 (defn- block-result->fused-format
   "Convert block-compiled result (vector of JS arrays) to fused return format.
@@ -706,7 +723,7 @@
                       :chain-fn compiled-fn}.
 
    Auto-falls back to block-compiled path when chain is too large for a
-   single Metal graph.
+   single fused graph (per-backend limit).
 
    Pass :chain-fn from a previous call to reuse the chain builder.
 
@@ -734,10 +751,10 @@
         (let [{:keys [trace]} (p/generate model args observations)
               {:keys [score-fn init-params n-params tensor-native?]}
               (u/prepare-mcmc-score model args observations addresses trace)]
-          ;; Auto-fallback: when chain is too large for single Metal graph
+          ;; Auto-fallback: when chain is too large for a single fused graph
           (if (and (nil? chain-fn)
                    (not (can-fuse? :mh total-steps {:tensor-native? tensor-native?})))
-            (do (println "Note: chain too large for single Metal graph — using block-compiled path.")
+            (do (println "Note: chain too large for a single fused graph — using block-compiled path.")
                 (block-result->fused-format
                  (compiled-mh {:samples samples :burn burn :thin thin :addresses addresses
                                :proposal-std proposal-std :key stream-key :device device :compile? true}
@@ -1105,7 +1122,7 @@
     (when (and (nil? chain-fn)
                (not (can-fuse? :mh total-steps {:tensor-native? false})))
       (throw (ex-info
-              (str "fused-vectorized-mh: chain too large for single Metal graph ("
+              (str "fused-vectorized-mh: chain too large for a single fused graph ("
                    total-steps " total steps x " n-chains " chains). "
                    "Reduce samples/burn/thin or use vectorized-compiled-mh instead.")
               {:genmlx/error :fused-graph-too-large
@@ -1721,7 +1738,9 @@
                       :chain-fn compiled-fn :acceptance-rate float}.
 
    Auto-falls back to block-compiled MALA when chain is too large for a
-   single Metal graph.
+   single fused graph (per-backend limit). On that fallback :chain-fn AND
+   :acceptance-rate are nil — the block path does not track acceptance
+   (genmlx-d62h).
 
    When :adapt-step-size is true, runs a short eager warmup phase using
    dual averaging (Hoffman & Gelman 2014) to tune the step-size, then
@@ -1757,10 +1776,10 @@
         (let [{:keys [trace]} (p/generate model args observations)
               {:keys [score-fn init-params n-params tensor-native?]}
               (u/prepare-mcmc-score model args observations addresses trace)]
-          ;; Auto-fallback: when chain is too large for single Metal graph
+          ;; Auto-fallback: when chain is too large for a single fused graph
           (if (and (nil? chain-fn)
                    (not (can-fuse? :mala total-steps {:tensor-native? tensor-native?})))
-            (do (println "Note: chain too large for single Metal graph — using block-compiled MALA.")
+            (do (println "Note: chain too large for a single fused graph — using block-compiled MALA.")
                 (block-result->fused-format
                  (mala {:samples samples :burn burn :thin thin :addresses addresses
                         :step-size step-size :key stream-key :device device :compile? true
@@ -2325,7 +2344,9 @@
             :chain-fn compiled-fn :acceptance-rate float}.
 
    Auto-falls back to block-compiled HMC when chain is too large for a
-   single Metal graph (estimated from total-steps * leapfrog-steps).
+   single fused graph, per-backend limit (estimated from total-steps * leapfrog-steps).
+   On that fallback :chain-fn AND :acceptance-rate are nil — the block path
+   does not track acceptance (genmlx-d62h).
 
    When :adapt-step-size is true, runs a short eager warmup phase using
    dual averaging (Hoffman & Gelman 2014) to tune the step-size, then
@@ -2361,12 +2382,12 @@
         (let [{:keys [trace]} (p/generate model args observations)
               {:keys [score-fn init-params n-params tensor-native?]}
               (u/prepare-mcmc-score model args observations addresses trace)]
-          ;; Auto-fallback: when chain is too large for single Metal graph
+          ;; Auto-fallback: when chain is too large for a single fused graph
           (if (and (nil? chain-fn)
                    (not (can-fuse? :hmc total-steps
                                    {:tensor-native? tensor-native?
                                     :leapfrog-steps leapfrog-steps})))
-            (do (println "Note: chain too large for single Metal graph — using block-compiled HMC.")
+            (do (println "Note: chain too large for a single fused graph — using block-compiled HMC.")
                 (block-result->fused-format
                  (hmc {:samples samples :burn burn :thin thin :addresses addresses
                        :step-size step-size :leapfrog-steps leapfrog-steps

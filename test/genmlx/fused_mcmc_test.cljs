@@ -660,7 +660,7 @@
             (vreset! threw? true)
             (vreset! msg (str e))))
         (is @threw? "nil result throws")
-        (is (re-find #"Metal graph too large" @msg) "error mentions Metal graph")))))
+        (is (re-find #"fused graph too large" @msg) "error mentions fused graph")))))
 
 (deftest safe-compile-chain-test
   (testing "safe-compile-chain catches failure"
@@ -686,25 +686,43 @@
       (is false "estimate-fused-ops exists"))))
 
 (deftest can-fuse-decision-test
-  (testing "can-fuse? decision logic"
+  (testing "can-fuse? decision logic (per-backend limits, genmlx-lmmn)"
     (if-let [cf (some-> (resolve 'genmlx.inference.mcmc/can-fuse?) deref)]
       (do
         (is (cf :mh 500 {}) "small GFI MH fuseable")
-        (is (not (cf :mh 10000 {})) "large GFI MH not fuseable")
-        ;; The current pin retains every per-step temporary live for the whole
-        ;; fused eval (~166-205 buffers/step, genmlx-rsgr), so the single-graph
-        ;; budget is buffer-bound and tensor-native no longer buys larger
-        ;; fusions: the wall sits at ~2400 steps for BOTH tiers.
-        (is (cf :mh 2000 {:tensor-native? true}) "2000-step tensor-native MH fuseable")
-        (is (not (cf :mh 10000 {:tensor-native? true}))
-            "10000-step tensor-native MH exceeds the buffer wall (genmlx-rsgr)"))
+        (if (mx/metal-is-available?)
+          ;; METAL: the current pin retains every per-step temporary live for
+          ;; the whole fused eval (~166-205 buffers/step, genmlx-rsgr), so the
+          ;; single-graph budget is buffer-bound and tensor-native no longer
+          ;; buys larger fusions: the wall sits at ~2400 steps for BOTH tiers.
+          (do
+            (is (not (cf :mh 10000 {})) "large GFI MH not fuseable (Metal)")
+            (is (cf :mh 2000 {:tensor-native? true}) "2000-step tensor-native MH fuseable")
+            (is (not (cf :mh 10000 {:tensor-native? true}))
+                "10000-step tensor-native MH exceeds the buffer wall (genmlx-rsgr)"))
+          ;; CUDA: no buffer wall; the limit is the measured-validated
+          ;; boundary (16000 ops, probed 2026-07-28 on sm_120 — see the
+          ;; fused-ops-limits comment). Both tiers share it.
+          (do
+            (is (cf :mh 16000 {}) "16000-step GFI MH fuseable (CUDA measured boundary)")
+            (is (not (cf :mh 16001 {})) "past the CUDA measured boundary not fuseable")
+            (is (cf :mh 16000 {:tensor-native? true}) "tensor-native shares the CUDA boundary")
+            (is (not (cf :mh 20000 {:tensor-native? true}))
+                "tensor-native past the CUDA boundary not fuseable"))))
       (is false "can-fuse? exists"))))
 
 (deftest fused-mh-auto-fallback-test
   (testing "fused-mh auto-fallback on large chain"
     (if (some-> (resolve 'genmlx.inference.mcmc/can-fuse?) deref)
-      (let [result (mcmc/fused-mh
-                     {:samples 5000 :burn 5000 :thin 1
+      ;; Force the fallback RELATIVE to the active backend's limit (Metal
+      ;; 2000 ops, CUDA 16000 — genmlx-lmmn) so this keeps testing the
+      ;; fallback path on every backend instead of assuming Metal's wall.
+      (let [limits  @(resolve 'genmlx.inference.mcmc/fused-ops-limits)
+            backend @@(resolve 'genmlx.inference.mcmc/fused-backend)
+            total   (inc (get-in limits [backend :gfi :mh]))
+            n-burn  (quot total 2)
+            result (mcmc/fused-mh
+                     {:samples (- total n-burn) :burn n-burn :thin 1
                       :addresses [:slope :intercept]
                       :proposal-std 0.3 :key (rng/fresh-key 5033)}
                      linreg-model [xs] obs)]
@@ -734,8 +752,14 @@
       ;; Seed-pinned (genmlx-5hhd): 30-seed scan sd 0.215, 30/30 inside
       ;; ±0.5 — but pinned anyway (key 2011 -> 2.021) so a tail seed can
       ;; never flake the fallback path.
-      (let [result (mcmc/fused-mala
-                     {:samples 3000 :burn 2000 :thin 1
+      ;; Sized past the ACTIVE backend's limit (mala ops = steps*2): Metal
+      ;; 1500 ops -> 751 steps, CUDA 16000 -> 8001 steps (genmlx-lmmn).
+      (let [limits  @(resolve 'genmlx.inference.mcmc/fused-ops-limits)
+            backend @@(resolve 'genmlx.inference.mcmc/fused-backend)
+            total   (inc (quot (get-in limits [backend :gfi :mala]) 2))
+            n-burn  (quot total 2)
+            result (mcmc/fused-mala
+                     {:samples (- total n-burn) :burn n-burn :thin 1
                       :addresses [:slope :intercept]
                       :step-size 0.05 :key (rng/fresh-key 2011)}
                      linreg-model [xs] obs)]
@@ -750,8 +774,14 @@
 (deftest fused-hmc-auto-fallback-test
   (testing "fused-hmc auto-fallback"
     (if (some-> (resolve 'genmlx.inference.mcmc/can-fuse?) deref)
-      (let [result (mcmc/fused-hmc
-                     {:samples 300 :burn 200 :thin 1
+      ;; Sized past the ACTIVE backend's limit (hmc ops = steps*leapfrog):
+      ;; Metal 2000 ops -> 101 steps, CUDA 16000 -> 801 (genmlx-lmmn).
+      (let [limits  @(resolve 'genmlx.inference.mcmc/fused-ops-limits)
+            backend @@(resolve 'genmlx.inference.mcmc/fused-backend)
+            total   (inc (quot (get-in limits [backend :gfi :hmc]) 20))
+            n-burn  (quot total 2)
+            result (mcmc/fused-hmc
+                     {:samples (- total n-burn) :burn n-burn :thin 1
                       :addresses [:slope :intercept]
                       :step-size 0.05 :leapfrog-steps 20
                       :key (rng/fresh-key 5035)}

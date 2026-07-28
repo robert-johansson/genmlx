@@ -252,7 +252,12 @@
      :median_ms   (round-to (percentile sorted 0.5) 4)
      :p10_ms      (round-to (percentile sorted 0.1) 4)
      :p90_ms      (round-to (percentile sorted 0.9) 4)
-     :acceptance_rate (round-to (/ (reduce + @accs) (count @accs)) 4)
+     ;; The block-compiled fallback returns :acceptance-rate nil (it does not
+     ;; track acceptance) — report null honestly instead of coercing nil to 0
+     ;; (genmlx-d62h: CLJS + treats nil as 0, which forged a 0.000 rate).
+     :acceptance_rate (let [as (remove nil? @accs)]
+                        (when (seq as)
+                          (round-to (/ (reduce + as) (count as)) 4)))
      :mean_slope_tail (round-to (slope-tail-mean @last-r s) 4)}))
 
 ;; ---------------------------------------------------------------------------
@@ -317,7 +322,8 @@
                  (println (str "  S=" (.padStart (str s) 5)
                                "  warmup " (.padStart (.toFixed (:warmup_ms r) 1) 9) " ms"
                                "   median " (.padStart (.toFixed (:median_ms r) 3) 9) " ms"
-                               "   accept " (.toFixed (:acceptance_rate r) 3)
+                               "   accept " (if-some [a (:acceptance_rate r)]
+                                              (.toFixed a 3) "nil(fallback)")
                                "   slope-tail " (.toFixed (:mean_slope_tail r) 3)))
                  r))
              (get-in spec [:sweep :n_steps]))))))

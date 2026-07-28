@@ -69,26 +69,35 @@ verified: joint Gen.jl-style MALA both sides, eps 0.08, acceptance 0.80–0.89
 
 | S (steps) | GenJAX median | GenMLX median | steady gap | GenJAX warmup | GenMLX warmup | break-even calls |
 |---|---|---|---|---|---|---|
-| 10 | 0.21 ms | 16.5 ms | 79x | 1656 ms | 26.7 ms | ~100 |
-| 100 | 1.62 ms | 213 ms | 132x | 1619 ms | 159 ms | ~7 |
-| 1000 | 15.6 ms | 6021 ms | 386x | 1684 ms | 5588 ms | — (GenJAX wins everywhere) |
+| 10 | 0.21 ms | 18.2 ms | 87x | 1656 ms | 26.8 ms | ~91 |
+| 100 | 1.62 ms | 197 ms | 122x | 1619 ms | 162 ms | ~7 |
+| 1000 | 15.6 ms | 1748 ms | 112x | 1684 ms | 1813 ms | — (GenJAX wins, barely on warmup) |
+
+(Post-genmlx-lmmn numbers. The first measurement of this row had S=1000 at
+**6021 ms / 386x** with a 5.6 s warmup: `fused-mala` tripped its Metal-sized
+graph fallback on the CUDA card. Making the fused limits per-backend and
+probing the CUDA boundary — validated to 16000 ops with no cliff, see the
+`fused-ops-limits` comment in `mcmc.cljs` — restored the fused path: 3.4x
+faster at S=1000, acceptance reported for real (0.800, exactly matching
+GenJAX's 0.80 at the same eps), and the row now shows one consistent
+host-floor ratio across all S.)
 
 **Reading the row.** A chain is sequential, so GenJAX cannot amortize
 launches across steps the way vmap amortizes across particles: it pays its
 floor per STEP (~15.6 µs/step, linear in S). GenMLX pays its floor per step
-too — ~1.7–2.1 ms/step on the fused path — so the mid-range gap (~80–130x)
-is the SAME host-floor ratio as the IS row, now applied per step. Warmup is
-where MCMC differs from IS: tracing the chain costs JAX ~1.65 s per shape
-(10x its IS warmup), so at S=100 GenMLX's total wall wins under ~7 same-shape
-calls. At S=1000 the picture inverts hard: GenMLX's fused chain trips the
-graph-size fallback and degrades to ~6 ms/step with a 5.6 s warmup — GenJAX
-dominates everywhere. Device probe: cpu 189.6 vs gpu 183.9 ms at S=100 —
-near-identical, the host-bound signature.
+too — ~1.7–2.1 ms/step on the fused path — so the gap (~87–122x) is the
+SAME host-floor ratio as the IS row, now applied per step. Warmup is where
+MCMC differs from IS: tracing the chain costs JAX ~1.65 s per shape (10x its
+IS warmup), so at S=100 GenMLX's total wall wins under ~7 same-shape calls.
+Device probe: cpu 188.0 vs gpu 184.6 ms at S=100 — near-identical, the
+host-bound signature.
 
-**Findings filed from this row:**
-- `fused-mala`'s block-compiled fallback reports `:acceptance-rate` **0.000**
-  while the chain demonstrably mixes (slope-tail 2.011 ≈ posterior mean) —
-  reporting defect in the fallback path.
-- The auto-fallback threshold is **Metal-sized and fires on CUDA** (message:
-  "chain too large for single Metal graph" on a 96 GB sm_120 card), forcing
-  the 3x-slower block path at S=1000. Per-arch threshold decision needed.
+**Findings from this row (both resolved 2026-07-28):**
+- genmlx-lmmn (FIXED, above): fused limits were Metal-buffer-wall-sized and
+  fired on CUDA; now per-backend with the CUDA boundary measured, tests
+  backend-aware and fallback-forcing tests sized relative to the active
+  limit.
+- genmlx-d62h (root-caused): the "acceptance 0.000" was the bench coercing
+  the fallback's honest `:acceptance-rate nil` through CLJS `+` (nil→0).
+  Bench now reports null; `fused-mala`/`fused-hmc` docstrings state the nil.
+  The block path itself still does not track acceptance.
