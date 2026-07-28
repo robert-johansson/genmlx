@@ -207,16 +207,36 @@
     (vreset! chain-fn-box (:chain-fn r))
     r))
 
+(defn make-mala-runner
+  "Per-(s, device) mala runner. On :gpu the whole-call captured factory
+   (mcmc/fused-mala-compiled — init generate + val-grad + noise + chain
+   traced as ONE graph of the key, launch-only replays; bit-exact vs the
+   eager path per capture_replay_test); on :cpu the eager fused-mala with
+   :chain-fn reuse (capture is gpu-only). Factory creation is OUTSIDE
+   timing; the first call (trace + capture) is the measured warmup,
+   symmetric with jit."
+  [s device]
+  (let [alg (:algorithm spec)]
+    (if (= device :gpu)
+      (let [f (mcmc/fused-mala-compiled
+               {:samples s :burn (:burn_in alg) :thin (:thin alg)
+                :step-size (:step_size alg)
+                :addresses (mapv keyword (:selection alg))}
+               hmodel [xs] obs)]
+        (fn [k] (let [r ((:call f) k)] (mx/eval! (:samples r)) r)))
+      (let [box (volatile! nil)]
+        (fn [k] (mala-one-call s device box k))))))
+
 (defn probe-device [s]
   (into {}
         (for [d [:cpu :gpu]]
-          (let [box (volatile! nil)
+          (let [runner (make-mala-runner s d)
                 ks  (mapv (fn [k] (mx/eval! k) k)
                           (rng/split-n (rng/fresh-key 99) 3))]
-            (mala-one-call s d box (nth ks 0))
+            (runner (nth ks 0))
             (mx/sweep-dead-arrays!)
             [d (median (mapv (fn [i]
-                               (let [t (time-ms #(mala-one-call s d box (nth ks i)))]
+                               (let [t (time-ms #(runner (nth ks i)))]
                                  (mx/sweep-dead-arrays!) t))
                              [1 2]))]))))
 
@@ -231,20 +251,20 @@
   (let [{:keys [warmup_runs timed_runs]} (:measurement spec)
         run-keys (mapv (fn [k] (mx/eval! k) k)
                        (rng/split-n (rng/fresh-key 0) (+ warmup_runs timed_runs)))
-        box       (volatile! nil)
+        runner    (make-mala-runner s device)
         t0        (js/performance.now)
-        _         (mala-one-call s device box (nth run-keys 0))
+        _         (runner (nth run-keys 0))
         warmup-ms (- (js/performance.now) t0)
         _         (mx/sweep-dead-arrays!)
         _         (doseq [r (range 1 warmup_runs)]
-                    (mala-one-call s device box (nth run-keys r))
+                    (runner (nth run-keys r))
                     (mx/sweep-dead-arrays!))
         last-r    (volatile! nil)
         accs      (volatile! [])
         timings   (mapv (fn [r]
                           (let [k  (nth run-keys (+ warmup_runs r))
                                 t0 (js/performance.now)
-                                res (mala-one-call s device box k)
+                                res (runner k)
                                 ms (- (js/performance.now) t0)]
                             (vreset! last-r res)
                             (vswap! accs conj (:acceptance-rate res))

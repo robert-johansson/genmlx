@@ -186,6 +186,79 @@
           "same key reproduces after other keys ran (no state bleed)")
       ((:free! cf)))))
 
+(deftest fused-mala-compiled-matches-eager
+  ;; The whole-call factory (init generate + val-grad + noise + chain in ONE
+  ;; traced graph — the h5wg scaffolding lever) replicates the eager PRNG
+  ;; stream layout ([init-key stream-key] = split(k); noise/uniforms split
+  ;; off stream-key), so it follows the SAME chain — to kernel-fusion
+  ;; rounding: fusing the init/chain boundary into one graph reorders
+  ;; float32 contractions vs the eager factoring (~1e-6 relative, the same
+  ;; class vgenerate_compiled_test tolerates). Factory-vs-factory stays
+  ;; BIT-exact.
+  (when-not cuda?
+    (println "  (Metal: fused-mala-compiled throws by design — skipping)"))
+  (when cuda?
+    (let [opts {:samples 40 :burn 5 :thin 1 :step-size 0.15
+                :addresses [:slope :intercept]}
+          f (mcmc/fused-mala-compiled opts linreg-h [] linreg-obs)
+          k1 (rng/fresh-key 31)
+          k2 (rng/fresh-key 32)
+          r1 ((:call f) k1)
+          r2 ((:call f) k2)
+          r1b ((:call f) k1)
+          eager (mcmc/fused-mala (assoc opts :key k1 :device :gpu)
+                                 linreg-h [] linreg-obs)
+          flat (fn [r] (flatten (->v (:samples r))))]
+      (is (every? true? (map #(th/close? %1 %2 (max 1e-3 (* 1e-4 (js/Math.abs %1))))
+                             (flat eager) (flat r1)))
+          "factory follows the eager chain (same stream, fusion tolerance)")
+      (is (< (js/Math.abs (- (:acceptance-rate eager) (:acceptance-rate r1)))
+             0.051)
+          "acceptance agrees (a boundary step may flip under 1e-6 rounding)")
+      (is (not= (->v (:samples r1)) (->v (:samples r2)))
+          "different key, different chain")
+      (is (= (->v (:samples r1)) (->v (:samples r1b)))
+          "same key reproduces BIT-exactly after another key ran")
+      ((:free! f)))))
+
+(deftest fused-mala-compiled-degrades-on-untraceable-models
+  ;; gamma latent: the init generate's sampler calls item per draw
+  ;; (Marsaglia-Tsang) -> the trace fails -> LOUD permanent degrade to the
+  ;; eager path per call (y3ls doctrine).
+  (when cuda?
+    (let [m (dyn/auto-key
+             (gen []
+               (let [th (trace :theta (dist/gamma-dist 2 2))]
+                 (trace :y (dist/gaussian th 1))
+                 th)))
+          hm (dyn/strip-analytical-path m)
+          ob (cm/choicemap :y (mx/scalar 0.7))
+          f (mcmc/fused-mala-compiled {:samples 10 :burn 0 :thin 1
+                                       :step-size 0.1 :addresses [:theta]}
+                                      hm [] ob)
+          r ((:call f) (rng/fresh-key 44))
+          r2 ((:call f) (rng/fresh-key 45))]
+      (is (= [10 1] (vec (mx/shape (:samples r)))) "degraded call returns a chain")
+      (is (some? (:acceptance-rate r2)) "later calls keep working")
+      ((:free! f)))))
+
+(deftest captured-point-fn-value-and-grad
+  ;; persist-point-fn now rides the captured path: a value-and-grad handle
+  ;; must return correct (value, grad) pairs across DIFFERENT inputs.
+  (let [f (fn [q] (mx/negative (mx/sum (mx/square q))))
+        vg (mx/value-and-grad f)
+        h (mx/compile-create (fn [q] (to-array (vg q))))
+        q1 (mx/array [1.0 2.0])
+        q2 (mx/array [3.0 -1.0])]
+    (mx/eval! q1 q2)
+    (let [o1 (mx/compiled-call-captured h #js [q1])
+          o2 (mx/compiled-call-captured h #js [q2])]
+      (is (= -5 (->v (aget o1 0))) "value at q1")
+      (is (= [-2 -4] (->v (aget o1 1))) "grad at q1")
+      (is (= -10 (->v (aget o2 0))) "value at q2 (replay, new input)")
+      (is (= [-6 2] (->v (aget o2 1))) "grad at q2 (replay, new input)"))
+    (mx/compiled-free! h)))
+
 (deftest fused-mala-chain-rides-the-captured-path
   (let [opts {:samples 50 :burn 0 :thin 1 :step-size 0.15
               :addresses [:slope :intercept]

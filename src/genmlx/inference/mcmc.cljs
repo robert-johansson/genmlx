@@ -331,8 +331,12 @@
           (if @degraded
             (apply f args)
             (try
-              (let [out (apply mx/compiled-call h args)]
-                (if (= 1 (count out)) (nth out 0) out))
+              ;; Captured replay (genmlx-7prh): launch-only after the first
+              ;; call, outputs evaluated — the caller's materialize! becomes
+              ;; a no-op, which is where point fns spent most of their
+              ;; per-call wall (the ~180 us fixed eval floor, genmlx-w9mz).
+              (let [out (mx/compiled-call-captured h (to-array args))]
+                (if (= 1 (alength out)) (aget out 0) out))
               (catch :default e
                 (if (re-find #"during function transformations" (str (.-message e)))
                   (do (vreset! degraded true)
@@ -1797,12 +1801,14 @@
 ;; Fused MALA (one fused graph evaluation for the entire chain)
 ;; ---------------------------------------------------------------------------
 
-(defn- make-fused-mala-burn-and-collect
-  "Compile a single function for MALA burn-in + thinned collection.
-   State threads [q, score, grad] to avoid redundant val-grad calls.
-   Returns compiled fn: (init-q [D], init-score [], init-grad [D], noise [T,D], uniforms [T])
+(defn- make-fused-mala-chain-raw
+  "RAW MALA burn-in + thinned-collection chain builder — the pure graph fn
+   (init-q [D], init-score [], init-grad [D], noise [T,D], uniforms [T])
      → #js [final-q, final-score, final-grad, samples [S,D], accept-count []].
-   one fused lazy-graph evaluation for the entire chain."
+   State threads [q, score, grad] to avoid redundant val-grad calls.
+   NOT persisted: fused-mala wraps it via make-fused-mala-burn-and-collect;
+   fused-mala-compiled traces it INSIDE its whole-call graph (a persisted
+   handle must never run inside another trace)."
   [n-burn n-samples thin val-grad-fn eps half-eps2 two-eps-sq n-params]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
@@ -1847,7 +1853,17 @@
                                 sample-count)]
                 (recur new-q new-sq new-gq (inc i)
                        new-count new-samples new-accept-count)))))]
-    (persist-chain chain-fn :mala (* 2 (+ n-burn (* thin n-samples))))))
+    chain-fn))
+
+(defn- make-fused-mala-burn-and-collect
+  "Persisted (captured-replay) wrapper of make-fused-mala-chain-raw —
+   one fused lazy-graph evaluation for the entire chain, trace-once/
+   replay-many across fused-mala calls that reuse :chain-fn."
+  [n-burn n-samples thin val-grad-fn eps half-eps2 two-eps-sq n-params]
+  (persist-chain
+   (make-fused-mala-chain-raw n-burn n-samples thin val-grad-fn
+                              eps half-eps2 two-eps-sq n-params)
+   :mala (* 2 (+ n-burn (* thin n-samples)))))
 
 (defn fused-mala
   "Fully fused MALA: burn-in + thinned collection in one fused lazy-graph evaluation.
@@ -1954,6 +1970,127 @@
                :final-params (aget result 0)
                :chain-fn cfn
                :acceptance-rate (/ (mx/item (aget result 4)) remaining-total)})))))))
+
+(defn fused-mala-compiled
+  "Whole-call captured fused MALA (genmlx-7prh + the genmlx-h5wg
+   scaffolding lever): fixes (opts, model, args, observations) and returns
+     {:call  (fn [key] -> {:samples [S,D] :final-params [D]
+                           :acceptance-rate float})
+      :free! (fn [] ...)}
+
+   The ENTIRE per-call unit — initial constrained generate (latents from
+   the prior), the val-grad at the start point, chain-noise pre-generation,
+   and the S-step MALA chain — is traced ONCE as a pure function of the
+   PRNG key, then replayed as a captured launch (compiled-call-captured;
+   outputs come back evaluated). The PRNG stream layout is byte-identical
+   to (fused-mala {... :key k}): [init-key stream-key] = split(k), the
+   generate keyed by init-key, noise/uniforms split off stream-key — so
+   (:call f) k follows the SAME chain as eager fused-mala k, matching to
+   kernel-fusion rounding (~1e-6 relative: the whole-call graph fuses the
+   init/chain boundary the eager factoring keeps separate). Repeat calls
+   with the same key reproduce BIT-exactly (pinned by capture_replay_test).
+
+   Degrades LOUDLY and permanently to per-call eager fused-mala (with
+   :chain-fn reuse) when the model is untraceable (item/eval inside a
+   sampler — the y3ls doctrine), and takes the eager path from the start
+   when the chain exceeds the fused/trace-depth gates. Throws on Metal
+   until measured there (the lmmn discipline). No :adapt-step-size — the
+   adaptive warmup is a host loop; use fused-mala for that."
+  [{:keys [samples burn thin addresses step-size]
+    :or {burn 0 samples 1000 thin 1 step-size 0.01}}
+   model args observations]
+  (when (mx/metal-is-available?)
+    (throw (ex-info "fused-mala-compiled: unmeasured on Metal — use fused-mala (genmlx-7prh)"
+                    {:genmlx/error :unmeasured-backend})))
+  (let [total-steps (+ burn (* thin samples))
+        ;; Factory-time probe: one eager generate fixes the layout
+        ;; (addresses, n-params, score-fn) exactly as fused-mala does.
+        {:keys [trace]} (p/generate (dyn/with-key model (rng/fresh-key 0))
+                                    args observations)
+        {:keys [score-fn n-params tensor-native? layout latent-index]}
+        (u/prepare-mcmc-score model args observations addresses trace)
+        ;; In-trace start-q extraction: LAZY, in the exact layout order
+        ;; prepare used for init-params. u/extract-params' scalar path is
+        ;; NOT usable here — it goes through mx/realize (eval + item) per
+        ;; address, which is exactly the eval-in-trace error; stack/reshape
+        ;; the raw choice values instead.
+        extract-start-q
+        (fn [tr]
+          (if tensor-native?
+            (u/extract-params-by-index tr latent-index)
+            (let [ch (:choices tr)
+                  entries (:layout layout)]
+              (if (:array-valued? layout)
+                (mx/concatenate
+                 (mapv (fn [{:keys [addr]}]
+                         (mx/reshape (cm/get-choice ch [addr]) [-1]))
+                       entries))
+                (mx/stack
+                 (mapv (fn [{:keys [addr]}] (cm/get-choice ch [addr]))
+                       entries))))))
+        eps (mx/scalar step-size)
+        half-eps2 (mx/scalar (* 0.5 step-size step-size))
+        two-eps-sq (mx/scalar (* 2.0 step-size step-size))
+        val-grad-fn (mx/value-and-grad score-fn)
+        chain-raw (make-fused-mala-chain-raw
+                   burn samples thin val-grad-fn eps half-eps2 two-eps-sq
+                   n-params)
+        ;; BOTH gates: the fused-graph op limit (can-fuse?) AND the
+        ;; trace-depth stack gate persist-chain applies (compile's
+        ;; recursive passes overflow the 8 MB stack past it —
+        ;; genmlx-0vwj/a1uh).
+        traceable? (and (can-fuse? :mala total-steps
+                                   {:tensor-native? tensor-native?})
+                        (<= (* 2 total-steps)
+                            (get persist-trace-ops-limits :mala 0)))
+        trace-fn
+        (fn [key]
+          (let [[init-key stream-key] (rng/split key)
+                {:keys [trace]} (p/generate (dyn/with-key model init-key)
+                                            args observations)
+                start-q (extract-start-q trace)
+                [init-score init-grad] (val-grad-fn start-q)
+                [k1 k2] (rng/split (rng/ensure-key stream-key))
+                noise (rng/normal k1 [total-steps n-params])
+                uniforms (rng/uniform k2 [total-steps])
+                r (chain-raw start-q init-score init-grad noise uniforms)]
+            #js [(aget r 3) (aget r 0) (aget r 4)]))
+        handle (when traceable? (mx/compile-create trace-fn))
+        degraded (volatile! (not traceable?))
+        eager-box (volatile! nil)
+        eager-call
+        (fn [key]
+          (let [r (fused-mala (cond-> {:samples samples :burn burn
+                                       :thin thin :step-size step-size
+                                       :addresses addresses :key key
+                                       :device :gpu}
+                                @eager-box (assoc :chain-fn @eager-box))
+                              model args observations)]
+            (vreset! eager-box (:chain-fn r))
+            (select-keys r [:samples :final-params :acceptance-rate])))]
+    (when-not traceable?
+      (println (str "Note: fused-mala-compiled — chain too large for a single "
+                    "traced graph; using eager fused-mala per call.")))
+    {:call (fn [key]
+             (let [key (rng/ensure-key key)]
+               (if @degraded
+                 (eager-call key)
+                 (try
+                   (let [out (mx/compiled-call-captured handle #js [key])]
+                     {:samples (aget out 0)
+                      :final-params (aget out 1)
+                      :acceptance-rate (/ (mx/item (aget out 2)) total-steps)})
+                   (catch :default e
+                     (if (re-find #"during function transformations"
+                                  (str (.-message e)))
+                       (do (vreset! degraded true)
+                           (println (str "Note: fused-mala-compiled — model is "
+                                         "not traceable; degrading to eager "
+                                         "fused-mala per call. Cause: "
+                                         (.-message e)))
+                           (eager-call key))
+                       (throw e)))))))
+     :free! (fn [] (when handle (mx/compiled-free! handle)))}))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized MALA (N parallel chains)
