@@ -48,12 +48,28 @@
       (is (= 50 (count samples)) "returns 50 samples")
       (is (every? #(not (js/isNaN (first %))) samples) "samples are finite"))))
 
+;; SEEDED from a MEASURED 15-seed sweep (2026-07-28, RTX sm_120), the same
+;; discipline as hmc-adapt-metric below and the compiled_optimizer precedent.
+;; These three bands were the last unseeded Monte Carlo assertions in this file:
+;; every run was a different experiment, so a regression and a bad draw looked
+;; alike. They became seedable only once nuts started honouring :key for the
+;; INITIAL TRACE as well as the steps (genmlx-n7du) — before that a :key here
+;; would have pinned nothing.
+;;
+;; Measured at the SHIPPED budgets, |mean - 5.097| against the +/-0.5 band:
+;;   posterior-accuracy   (300/200, eps 0.01)  15/15, worst 0.128, min uniq 145
+;;   bad-initial-recovery (100/150, eps 1.0 )  15/15, worst 0.178, min uniq  69
+;;   adapt-metric         (200/200, eps 0.01)  15/15, worst 0.208, min uniq  22
+;; i.e. 2.4x-3.9x margin everywhere and no failures, so BUDGETS AND BANDS ARE
+;; UNCHANGED — this adds reproducibility, it does not paper over a weak test.
+;; Each seed below is its config's MEDIAN-error seed, not a lucky one.
 (deftest nuts-posterior-accuracy-test
   (testing "NUTS posterior accuracy"
+    ;; seed 371 = median error 0.0397 of the 0.5 band
     (let [samples (mcmc/nuts
                     {:samples 300 :burn 200 :step-size 0.01
                      :addresses [:mu] :adapt-step-size true :compile? false
-                     :device :cpu}
+                     :device :cpu :key (rng/fresh-key 371)}
                     model [3] obs)
           vals (mapv first samples)
           m (mean vals)
@@ -63,9 +79,10 @@
 (deftest nuts-bad-initial-recovery-test
   (testing "NUTS from bad initial step-size adapts"
     (let [samples (mcmc/nuts
+                    ;; seed 260 = median error 0.0665 of the 0.5 band
                     {:samples 100 :burn 150 :step-size 1.0
                      :addresses [:mu] :adapt-step-size true :compile? false
-                     :device :cpu}
+                     :device :cpu :key (rng/fresh-key 260)}
                     model [3] obs)
           vals (mapv first samples)
           n-unique (count (distinct (map #(.toFixed % 2) vals)))
@@ -76,9 +93,10 @@
 (deftest nuts-adapt-metric-test
   (testing "NUTS adapt-metric"
     (let [samples (mcmc/nuts
+                    ;; seed 297 = median error 0.0323 of the 0.5 band
                     {:samples 200 :burn 200 :step-size 0.01
                      :addresses [:mu] :adapt-step-size true :adapt-metric true
-                     :compile? false :device :cpu}
+                     :compile? false :device :cpu :key (rng/fresh-key 297)}
                     model [3] obs)
           vals (mapv first samples)
           m (mean vals)]
