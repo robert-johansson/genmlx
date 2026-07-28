@@ -1482,6 +1482,59 @@
       (vect/->VectorizedTrace gf args (:choices result) (:score result)
                              (:weight result) n (:retval result)))))
 
+(defn vgenerate-compiled
+  "Persistent-compiled vgenerate (genmlx-z2gt Phase 2b, genmlx-vjnn). Fixes
+   (gf, args, constraints, n) and returns
+     {:call  (fn [key] -> VectorizedTrace)
+      :free! (fn [] ...)}
+
+   The batched handler run IS the tracer: in batched mode every sample is a
+   keyed lazy graph op and eval!/item are forbidden in model bodies, so the
+   whole vgenerate result is a pure function of the key array. The first
+   :call traces — one full SCI handler execution inside MLX compile — and
+   every later :call replays the cached C++ graph with a new key.
+
+   Baked at trace time (graph constants): args, constraint VALUES, n, and
+   any values the model closes over. Different obs values or a different N
+   need a new factory call. Fixed structure is required — the same contract
+   shape-based batching already imposes (no value-dependent structure).
+
+   The replayed trace carries :weight, :score, and every latent choice;
+   :retval is nil (not reconstructed) — use plain vgenerate when the return
+   value matters. Caller owns the handle: :free! releases it (GC reclaims
+   the native side otherwise). Throws on Metal until measured there
+   (genmlx-lmmn discipline) and when latent sites exceed the 16-output
+   NAPI ceiling."
+  [gf args constraints n]
+  (when (mx/metal-is-available?)
+    (throw (ex-info "vgenerate-compiled: unmeasured on Metal — use vgenerate (genmlx-z2gt)"
+                    {:genmlx/error :unmeasured-backend})))
+  (let [probe        (vgenerate gf args constraints n (rng/fresh-key 0))
+        cm-get-in    (fn [m path] (reduce (fn [c a] (when c (cm/get-submap c a))) m path))
+        constrained? (fn [path] (boolean (some-> (cm-get-in constraints path) cm/has-value?)))
+        latent-paths (into [] (remove constrained?) (cm/addresses (:choices probe)))]
+    (when (> (+ 2 (count latent-paths)) 16)
+      (throw (ex-info (str "vgenerate-compiled: " (count latent-paths)
+                           " latent sites exceed the 16-output NAPI ceiling")
+                      {:genmlx/error :too-many-outputs :latent-paths latent-paths})))
+    (let [template (:choices probe)
+          trace-fn (fn [key]
+                     (let [vt (vgenerate gf args constraints n key)]
+                       (to-array
+                        (into [(:weight vt) (:score vt)]
+                              (map (fn [p] (cm/get-value (cm-get-in (:choices vt) p))))
+                              latent-paths))))
+          handle   (mx/compile-create trace-fn)]
+      {:call  (fn [key]
+                (let [out    (mx/compiled-call handle (rng/ensure-key key))
+                      choices (reduce (fn [c [i p]] (cm/set-choice c p (nth out (+ 2 i))))
+                                      template
+                                      (map-indexed vector latent-paths))]
+                  (tag-vtrace
+                    (vect/->VectorizedTrace gf args choices (nth out 1) (nth out 0)
+                                            n nil))))
+       :free! (fn [] (mx/compiled-free! handle))})))
+
 (defn- vupdate*
   "Shared batched-update core: run the model body ONCE with the batched
    update handler under exec-args ((:args vtrace) for vupdate, the thesis

@@ -152,8 +152,13 @@
         ;; Distinct pre-materialized keys per run: no key work in timed regions.
         run-keys (mapv (fn [k] (mx/eval! k) k)
                        (rng/split-n (rng/fresh-key 0) (+ warmup_runs timed_runs)))
+        ;; Persistent-compiled sweep (genmlx-vjnn): factory outside timing
+        ;; (one probe handler run); the FIRST timed-protocol call traces —
+        ;; that is warmup_ms, symmetric with the GenJAX side's jit — and
+        ;; every later call replays the cached C++ graph.
+        cf       (dyn/vgenerate-compiled hmodel [xs] obs n)
         one-call (fn [k]
-                   (let [vt (dyn/vgenerate hmodel [xs] obs n k)]
+                   (let [vt ((:call cf) k)]
                      (mx/eval! (:weight vt))
                      vt))
         t0        (js/performance.now)
