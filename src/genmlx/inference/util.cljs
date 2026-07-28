@@ -392,6 +392,36 @@
     (vec (remove eliminated addresses))
     addresses))
 
+(defn derive-unconstrained-addresses
+  "Default MCMC address set: every TOP-LEVEL leaf address in the trace's
+   choices that is not constrained by observations, in choicemap traversal
+   order. Used by prepare-mcmc-score when the caller passes no :addresses —
+   a nil used to flow straight into compute-param-layout, whose reduce over
+   nil yields an EMPTY layout (n-params 0), and the empty param vector then
+   crashed NATIVELY (SIGFPE) inside the fused chain machinery (genmlx-ph4g).
+   Nested (spliced) latents cannot be expressed in the scalar-per-address
+   layout, so a model whose only unconstrained leaves are nested still
+   requires explicit :addresses; deriving nothing at all throws."
+  [trace observations]
+  (let [paths (cm/addresses (:choices trace))
+        constrained? (fn [path]
+                       (boolean
+                        (some-> (reduce (fn [c a] (when c (cm/get-submap c a)))
+                                        observations path)
+                                cm/has-value?)))
+        top (into []
+                  (comp (filter #(= 1 (count %)))
+                        (remove constrained?)
+                        (map first))
+                  paths)]
+    (when (empty? top)
+      (throw (ex-info (str "MCMC: no unconstrained top-level addresses to sample "
+                           "(every leaf address is observed or nested inside a "
+                           "splice). Pass :addresses explicitly.")
+                      {:genmlx/error :no-mcmc-addresses
+                       :n-leaf-paths (count paths)})))
+    top))
+
 (defn make-conjugate-aware-score-fn
   "Build a score function that excludes analytically marginalized parameters.
    The auto-handlers in p/generate handle eliminated addresses automatically,
@@ -514,11 +544,20 @@
    The returned score-fn and init-params always use the same indexing,
    whether tensor-native or GFI-based."
   [model args observations addresses trace]
-  (let [;; L3.5: filter out conjugate prior addresses
+  (let [;; nil addresses = "everything unconstrained" (the mcmc.cljs selection
+        ;; convention). Derive it here rather than letting nil reach
+        ;; compute-param-layout as an empty reduction (genmlx-ph4g: the empty
+        ;; param vector SIGFPEd natively in the fused chain machinery).
+        derived? (nil? addresses)
+        addresses (if derived?
+                    (derive-unconstrained-addresses trace observations)
+                    addresses)
+        ;; L3.5: filter out conjugate prior addresses
         eliminated (get-eliminated-addresses model)
         addresses (filter-addresses addresses eliminated)
-        layout (compute-param-layout trace addresses)]
-    (if (:array-valued? layout)
+        layout (compute-param-layout trace addresses)
+        result
+        (if (:array-valued? layout)
       ;; Array-valued latents: only the layout-aware GFI score-fn packs and
       ;; unpacks flat offsets correctly. The tensor-native and
       ;; compiled-generate score-fns index one SCALAR per address, so their
@@ -546,4 +585,17 @@
            :n-params (:total-size layout)
            :tensor-native? false
            :layout layout
-           :latent-index latent-index})))))
+           :latent-index latent-index})))]
+    ;; With EXPLICIT addresses an n-params-0 result is the pinned contract
+    ;; (mcmc_elim_filter_test: all-eliminated GFI fallback). On the DERIVED
+    ;; path there is no such pin — an empty param vector would only crash
+    ;; natively downstream (genmlx-ph4g), so fail loudly here instead.
+    (if (and derived? (zero? (:n-params result)))
+      (throw (ex-info (str "MCMC: every derived address was analytically "
+                           "eliminated (n-params 0 — nothing to sample; the "
+                           "posterior is fully analytical). Pass :addresses "
+                           "explicitly to opt into the pinned n-params-0 "
+                           "surface, or use p/generate directly.")
+                      {:genmlx/error :all-addresses-eliminated
+                       :eliminated eliminated}))
+      result)))

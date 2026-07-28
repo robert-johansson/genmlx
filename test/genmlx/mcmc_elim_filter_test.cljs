@@ -18,6 +18,7 @@
    (or zeroes out a param vector) fails here first."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -107,6 +108,45 @@
       (is (= 1 (:n-params r)) "the :mu latent is a free sampling parameter")
       (is (= 10 (count samples)) "compiled-MH returns the requested samples")
       (is (= 1 (count (first samples))) "each sample is the 1-D :mu latent"))))
+
+(deftest nil-addresses-derive-instead-of-crashing
+  ;; genmlx-ph4g: :addresses nil used to flow into compute-param-layout as an
+  ;; empty reduction -> n-params 0 -> empty param vector -> native SIGFPE in
+  ;; the fused chain machinery. nil now means "derive every unconstrained
+  ;; top-level address from the trace" (the mcmc.cljs selection convention).
+  (testing "plain model: nil derives the free latents"
+    (let [m (dyn/auto-key (gen [] (let [mu (trace :mu (dist/gaussian 0 1))]
+                                    (trace :y (dist/gaussian mu 1))
+                                    mu)))
+          obs (cm/choicemap :y (mx/scalar 0.5))
+          {:keys [trace]} (p/generate m [] obs)
+          r (u/prepare-mcmc-score m [] obs nil trace)]
+      (is (= 1 (:n-params r)) "derived [:mu], observed :y excluded")))
+  (testing "tensor-native eliminated model: nil matches explicit (full joint)"
+    (let [{:keys [trace]} (p/generate two-g [] obs-2g)
+          r (u/prepare-mcmc-score two-g [] obs-2g nil trace)]
+      (is (:tensor-native? r))
+      (is (= 2 (:n-params r)) "derived path bypasses the filter exactly like explicit")))
+  (testing "GFI-fallback all-eliminated model: nil throws loudly (no n-params-0 pin on the derived path)"
+    (let [{:keys [trace]} (p/generate bb [] obs-bb)]
+      (is (thrown-with-msg? js/Error #"analytically\s+eliminated"
+            (u/prepare-mcmc-score bb [] obs-bb nil trace)))))
+  (testing "fully observed model: nil throws :no-mcmc-addresses"
+    (let [m (dyn/auto-key (gen [] (trace :x (dist/gaussian 0 1))))
+          obs (cm/choicemap :x (mx/scalar 0.5))
+          {:keys [trace]} (p/generate m [] obs)]
+      (is (thrown-with-msg? js/Error #"no unconstrained top-level addresses"
+            (u/prepare-mcmc-score m [] obs nil trace)))))
+  (testing "fused-mala runs without :addresses (the original crash repro shape)"
+    (let [m (dyn/auto-key (gen [] (let [mu (trace :mu (dist/gaussian 0 1))]
+                                    (trace :y (dist/gaussian mu 1))
+                                    mu)))
+          obs (cm/choicemap :y (mx/scalar 0.5))
+          r (mcmc/fused-mala {:samples 20 :burn 0 :thin 1 :step-size 0.2
+                              :key (rng/fresh-key 7) :device :cpu}
+                             m [] obs)]
+      (is (= [20 1] (vec (mx/shape (:samples r)))))
+      (is (js/isFinite (mx/item (mx/sum (:samples r))))))))
 
 (cljs.test/run-tests)
 
