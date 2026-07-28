@@ -1,10 +1,12 @@
 (ns genmlx.inference.compiled-optimizer
-  "Optimization step: gradient + Adam update via mx/compile-fn.
+  "Optimization step: gradient + Adam update, persistent-captured on CUDA.
 
-   NOTE: mx/compile-fn is currently identity in mlx-node (no persistent
-   compilation cache). The code structure supports future compilation —
-   when mlx-node adds persistent compileFn, these paths will fuse
-   automatically. Until then, the lazy graph materializes per iteration.
+   The Adam step and the loss-gradient point fns ride the captured-replay
+   path (genmlx-7prh via persist-step-fn below): the first call per handle
+   traces + captures the step's eval into retained CUDA graph execs; every
+   later iteration is launch-only with evaluated outputs — no per-iteration
+   SCI graph rebuild, no per-op scheduler walk. On Metal (and for
+   untraceable fns) the paths keep today's identity-compile behavior.
 
    WP-0: compiled-train, make-compiled-opt-step
    WP-1: make-compiled-loss-grad, learn
@@ -86,6 +88,41 @@
 ;; Compiled optimization step (WP-0)
 ;; ---------------------------------------------------------------------------
 
+(defn- persist-step-fn
+  "Persistent-captured wrapper for a pure multi-array step fn — the
+   compiled-optimizer sibling of mcmc's persist-point-fn (genmlx-h5wg).
+   First call traces + captures; later calls launch the retained CUDA
+   graph execs and return EVALUATED outputs (the caller's materialize!
+   becomes a no-op). Metal keeps identity-compile; untraceable fns
+   degrade LOUDLY and permanently to the raw fn. Multi-output fns
+   round-trip as indexable JS arrays (seq-destructurable); single-output
+   fns return the bare array."
+  [f]
+  (if (mx/metal-is-available?)
+    (mx/compile-fn f)
+    (let [h (mx/compile-create
+             (fn [& args]
+               (let [r (apply f args)]
+                 (if (sequential? r) (to-array r) r))))
+          degraded (volatile! false)]
+      (with-meta
+        (fn [& args]
+          (if @degraded
+            (apply f args)
+            (try
+              (let [out (mx/compiled-call-captured h (to-array args))]
+                (if (= 1 (alength out)) (aget out 0) out))
+              (catch :default e
+                (if (re-find #"during function transformations"
+                             (str (.-message e)))
+                  (do (vreset! degraded true)
+                      (println (str "Note: persist-step-fn — fn is not "
+                                    "traceable (item/eval inside); using the "
+                                    "raw fn. Cause: " (.-message e)))
+                      (apply f args))
+                  (throw e))))))
+        {:genmlx/compiled-handle h}))))
+
 (defn make-compiled-opt-step
   "Build a compiled single optimization step.
 
@@ -128,7 +165,7 @@
                 (adam-update params m v grad scalars bias1 bias2)]
             #js [new-params new-m new-v loss]))]
 
-    (mx/compile-fn step-fn)))
+    (persist-step-fn step-fn)))
 
 ;; ---------------------------------------------------------------------------
 ;; Compiled training loop (WP-0)
@@ -335,7 +372,7 @@
              n-params (count latent-index)
              neg-score (fn [params] (mx/negative (score-fn params)))
              vg (mx/value-and-grad neg-score)
-             compiled-vg (mx/compile-fn vg)]
+             compiled-vg (persist-step-fn vg)]
          {:loss-grad-fn compiled-vg
           :score-fn score-fn
           :init-params init-params
@@ -454,7 +491,7 @@
                 (adam-update params m v grad scalars bias1 bias2)]
             #js [new-params new-m new-v loss]))]
 
-    (mx/compile-fn step-fn)))
+    (persist-step-fn step-fn)))
 
 (defn make-fused-mcmc-train
   "Fused MCMC + optimization: each iteration runs a differentiable MH chain
