@@ -30,7 +30,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.protocols :as p]
             [genmlx.dynamic :as dyn]
-            [genmlx.vectorized :as vect])
+            [genmlx.vectorized :as vect]
+            [genmlx.inference.mcmc :as mcmc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 (def fs (js/require "fs"))
@@ -49,8 +50,10 @@
 
 (assert (= "float32" (:float_dtype spec)))
 (assert (= "linear_regression" (get-in spec [:model :type])))
-(assert (= "importance_sampling" (get-in spec [:algorithm :type])))
-(assert (= "prior" (get-in spec [:algorithm :proposal])))
+(def alg-type (get-in spec [:algorithm :type]))
+(assert (contains? #{"importance_sampling" "mala"} alg-type))
+(when (= alg-type "importance_sampling")
+  (assert (= "prior" (get-in spec [:algorithm :proposal]))))
 (doseq [site [:slope :intercept]]
   (assert (= "gaussian" (get-in spec [:model :prior site :dist]))))
 (assert (= "gaussian" (get-in spec [:model :likelihood :dist])))
@@ -129,6 +132,11 @@
 ;; Timing (protocol from the spec's :measurement, mirroring run_genjax.py)
 ;; ---------------------------------------------------------------------------
 
+(defn time-ms [f]
+  (let [t0 (js/performance.now)] (f) (- (js/performance.now) t0)))
+
+(defn median [xs] (nth (vec (sort xs)) (quot (count xs) 2)))
+
 (defn percentile [sorted q]
   (let [i    (* q (dec (count sorted)))
         lo   (js/Math.floor i)
@@ -175,6 +183,79 @@
      :logmeanexp_weight (round-to lme 4)}))
 
 ;; ---------------------------------------------------------------------------
+;; MALA sweep (fused-mala: whole chain as one lazy graph — the scan analog).
+;; Timed unit matches the GenJAX side: init (constrained generate, latents
+;; from prior) + S-step chain, materialized. :chain-fn from the first call is
+;; reused for the rest (documented API), mirroring jit's compiled-fn reuse.
+;; ---------------------------------------------------------------------------
+
+(defn mala-one-call [s device chain-fn-box k]
+  (let [alg (:algorithm spec)
+        r   (mcmc/fused-mala
+             (cond-> {:samples s :burn (:burn_in alg) :thin (:thin alg)
+                      :step-size (:step_size alg)
+                      :addresses (mapv keyword (:selection alg))
+                      :key k :device device}
+               @chain-fn-box (assoc :chain-fn @chain-fn-box))
+             hmodel [xs] obs)]
+    (mx/eval! (:samples r))
+    (vreset! chain-fn-box (:chain-fn r))
+    r))
+
+(defn probe-device [s]
+  (into {}
+        (for [d [:cpu :gpu]]
+          (let [box (volatile! nil)
+                ks  (mapv (fn [k] (mx/eval! k) k)
+                          (rng/split-n (rng/fresh-key 99) 3))]
+            (mala-one-call s d box (nth ks 0))
+            (mx/sweep-dead-arrays!)
+            [d (median (mapv (fn [i]
+                               (let [t (time-ms #(mala-one-call s d box (nth ks i)))]
+                                 (mx/sweep-dead-arrays!) t))
+                             [1 2]))]))))
+
+(defn slope-tail-mean [r s]
+  ;; :samples is [S,D]; column order follows :addresses ([:slope :intercept]).
+  ;; The spec's posterior reference (1.99 vs -1.10) screams if this is wrong.
+  (let [rows (js->clj (mx/->clj (:samples r)))
+        tail (drop (quot s 2) rows)]
+    (/ (reduce + (map first tail)) (count tail))))
+
+(defn sweep-mala [s device]
+  (let [{:keys [warmup_runs timed_runs]} (:measurement spec)
+        run-keys (mapv (fn [k] (mx/eval! k) k)
+                       (rng/split-n (rng/fresh-key 0) (+ warmup_runs timed_runs)))
+        box       (volatile! nil)
+        t0        (js/performance.now)
+        _         (mala-one-call s device box (nth run-keys 0))
+        warmup-ms (- (js/performance.now) t0)
+        _         (mx/sweep-dead-arrays!)
+        _         (doseq [r (range 1 warmup_runs)]
+                    (mala-one-call s device box (nth run-keys r))
+                    (mx/sweep-dead-arrays!))
+        last-r    (volatile! nil)
+        accs      (volatile! [])
+        timings   (mapv (fn [r]
+                          (let [k  (nth run-keys (+ warmup_runs r))
+                                t0 (js/performance.now)
+                                res (mala-one-call s device box k)
+                                ms (- (js/performance.now) t0)]
+                            (vreset! last-r res)
+                            (vswap! accs conj (:acceptance-rate res))
+                            (mx/sweep-dead-arrays!)
+                            ms))
+                        (range timed_runs))
+        sorted    (vec (sort timings))]
+    {:n_steps s
+     :warmup_ms   (round-to warmup-ms 3)
+     :median_ms   (round-to (percentile sorted 0.5) 4)
+     :p10_ms      (round-to (percentile sorted 0.1) 4)
+     :p90_ms      (round-to (percentile sorted 0.9) 4)
+     :acceptance_rate (round-to (/ (reduce + @accs) (count @accs)) 4)
+     :mean_slope_tail (round-to (slope-tail-mean @last-r s) 4)}))
+
+;; ---------------------------------------------------------------------------
 ;; Run + report
 ;; ---------------------------------------------------------------------------
 
@@ -183,35 +264,60 @@
 (println (str "spec " (:id spec) " — GenMLX side (genmlx "
               (sh "git rev-parse --short HEAD") ")"))
 
+(defn write-result! [conv-diff extra rows]
+  (let [stamp  (-> (.toISOString (js/Date.)) (.replace (js/RegExp. "[-:]" "g") "")
+                   (.replace (js/RegExp. "\\..*") "") (.replace "T" "-"))
+        result (merge {:spec_id (:id spec)
+                       :side "genmlx"
+                       :timestamp (.toISOString (js/Date.))
+                       :versions {:genmlx (sh "git rev-parse HEAD")
+                                  :mlx_node (sh "git -C mlx-node rev-parse HEAD")}
+                       :host {:nvidia_smi (try (sh "nvidia-smi --query-gpu=name,driver_version --format=csv,noheader")
+                                               (catch :default _ nil))}
+                       :weight_convention_absdiff conv-diff
+                       :results rows}
+                      extra)
+        out-dir  (.join node-path (.dirname node-path spec-path) ".." "results")
+        out-path (.join node-path out-dir (str (:id spec) ".genmlx." stamp ".json"))]
+    (.writeFileSync fs out-path (str (js/JSON.stringify (clj->js result) nil 2) "\n"))
+    (println (str "wrote " out-path))))
+
 (let [conv-diff (check-weight-convention)]
   (println (str "weight-convention check OK (|diff| = " (.toExponential conv-diff 2) ")"))
-  (let [exact (analytical-exact-logz)]
-    (when exact
-      (println (str "analytical exact logZ (L3 elimination, ground truth): "
-                    (round-to exact 4))))
-    (let [rows (mapv (fn [n]
-                       (let [r (sweep-n n)]
-                         (println (str "  N=" (.padStart (str n) 6)
-                                       "  warmup " (.padStart (.toFixed (:warmup_ms r) 1) 9) " ms"
-                                       "   median " (.padStart (.toFixed (:median_ms r) 3) 8) " ms"
-                                       "   p10 " (.padStart (.toFixed (:p10_ms r) 3) 8)
-                                       "   p90 " (.padStart (.toFixed (:p90_ms r) 3) 8)
-                                       "   logZ~ " (.toFixed (:logmeanexp_weight r) 3)))
-                         r))
-                     (get-in spec [:sweep :n_particles]))
-          stamp  (-> (.toISOString (js/Date.)) (.replace (js/RegExp. "[-:]" "g") "")
-                     (.replace (js/RegExp. "\\..*") "") (.replace "T" "-"))
-          result {:spec_id (:id spec)
-                  :side "genmlx"
-                  :timestamp (.toISOString (js/Date.))
-                  :versions {:genmlx (sh "git rev-parse HEAD")
-                             :mlx_node (sh "git -C mlx-node rev-parse HEAD")}
-                  :host {:nvidia_smi (try (sh "nvidia-smi --query-gpu=name,driver_version --format=csv,noheader")
-                                          (catch :default _ nil))}
-                  :weight_convention_absdiff conv-diff
-                  :analytical_exact_logz (some-> exact (round-to 4))
-                  :results rows}
-          out-dir  (.join node-path (.dirname node-path spec-path) ".." "results")
-          out-path (.join node-path out-dir (str (:id spec) ".genmlx." stamp ".json"))]
-      (.writeFileSync fs out-path (str (js/JSON.stringify (clj->js result) nil 2) "\n"))
-      (println (str "wrote " out-path)))))
+  (case alg-type
+    "importance_sampling"
+    (let [exact (analytical-exact-logz)]
+      (when exact
+        (println (str "analytical exact logZ (L3 elimination, ground truth): "
+                      (round-to exact 4))))
+      (write-result!
+       conv-diff {:analytical_exact_logz (some-> exact (round-to 4))}
+       (mapv (fn [n]
+               (let [r (sweep-n n)]
+                 (println (str "  N=" (.padStart (str n) 6)
+                               "  warmup " (.padStart (.toFixed (:warmup_ms r) 1) 9) " ms"
+                               "   median " (.padStart (.toFixed (:median_ms r) 3) 8) " ms"
+                               "   p10 " (.padStart (.toFixed (:p10_ms r) 3) 8)
+                               "   p90 " (.padStart (.toFixed (:p90_ms r) 3) 8)
+                               "   logZ~ " (.toFixed (:logmeanexp_weight r) 3)))
+                 r))
+             (get-in spec [:sweep :n_particles]))))
+
+    "mala"
+    (let [probe  (probe-device (second (get-in spec [:sweep :n_steps])))
+          device (key (apply min-key val probe))]
+      (println (str "device probe (median ms at S="
+                    (second (get-in spec [:sweep :n_steps])) "): "
+                    (pr-str probe) " -> " device))
+      (write-result!
+       conv-diff {:device (name device)
+                  :device_probe (into {} (map (fn [[k v]] [k (round-to v 3)]) probe))}
+       (mapv (fn [s]
+               (let [r (sweep-mala s device)]
+                 (println (str "  S=" (.padStart (str s) 5)
+                               "  warmup " (.padStart (.toFixed (:warmup_ms r) 1) 9) " ms"
+                               "   median " (.padStart (.toFixed (:median_ms r) 3) 9) " ms"
+                               "   accept " (.toFixed (:acceptance_rate r) 3)
+                               "   slope-tail " (.toFixed (:mean_slope_tail r) 3)))
+                 r))
+             (get-in spec [:sweep :n_steps]))))))

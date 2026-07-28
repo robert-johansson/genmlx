@@ -54,3 +54,41 @@ report both.
   analytical anyway (the spec pins the ALGORITHM), but detection silently
   failing on closure params is a real conjugacy-coverage gap (cf. the
   genmlx-7zuq class).
+
+## linreg_mala — single-chain joint MALA, same posterior, sweep over chain length
+
+sm_120, measured 2026-07-28. Pins: genmlx `4518858` src tree (bench's mala
+support landed the following commit), mlx-node `722bf55e`, genjax 1.0.13,
+jax 0.7.2/cuda13, driver 595.71.05. GenMLX side: `mcmc/fused-mala` (whole
+chain as one lazy graph — the scan analog), `:chain-fn` reused across calls,
+device chosen by probe. Timed unit both sides: init (constrained generate,
+latents from prior) + S-step chain, materialized. Algorithm identity
+verified: joint Gen.jl-style MALA both sides, eps 0.08, acceptance 0.80–0.89
+(GenJAX) vs 0.82 (GenMLX), slope-tails bracket the analytic posterior mean
+1.9917 ± 0.11.
+
+| S (steps) | GenJAX median | GenMLX median | steady gap | GenJAX warmup | GenMLX warmup | break-even calls |
+|---|---|---|---|---|---|---|
+| 10 | 0.21 ms | 16.5 ms | 79x | 1656 ms | 26.7 ms | ~100 |
+| 100 | 1.62 ms | 213 ms | 132x | 1619 ms | 159 ms | ~7 |
+| 1000 | 15.6 ms | 6021 ms | 386x | 1684 ms | 5588 ms | — (GenJAX wins everywhere) |
+
+**Reading the row.** A chain is sequential, so GenJAX cannot amortize
+launches across steps the way vmap amortizes across particles: it pays its
+floor per STEP (~15.6 µs/step, linear in S). GenMLX pays its floor per step
+too — ~1.7–2.1 ms/step on the fused path — so the mid-range gap (~80–130x)
+is the SAME host-floor ratio as the IS row, now applied per step. Warmup is
+where MCMC differs from IS: tracing the chain costs JAX ~1.65 s per shape
+(10x its IS warmup), so at S=100 GenMLX's total wall wins under ~7 same-shape
+calls. At S=1000 the picture inverts hard: GenMLX's fused chain trips the
+graph-size fallback and degrades to ~6 ms/step with a 5.6 s warmup — GenJAX
+dominates everywhere. Device probe: cpu 189.6 vs gpu 183.9 ms at S=100 —
+near-identical, the host-bound signature.
+
+**Findings filed from this row:**
+- `fused-mala`'s block-compiled fallback reports `:acceptance-rate` **0.000**
+  while the chain demonstrably mixes (slope-tail 2.011 ≈ posterior mean) —
+  reporting defect in the fallback path.
+- The auto-fallback threshold is **Metal-sized and fires on CUDA** (message:
+  "chain too large for single Metal graph" on a 96 GB sm_120 card), forcing
+  the 3x-slower block path at S=1000. Per-arch threshold decision needed.
