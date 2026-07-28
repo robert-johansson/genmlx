@@ -251,10 +251,34 @@
                       (let [x (trace :x (dist/gaussian prev-state 1))]
                         x))
           unfold-gf (comb/unfold-combinator kernel)
-          N 200
+          ;; N 800, not 200, and the scalar side is SEEDED (genmlx-8egz).
+          ;;
+          ;; This compared two NOISY estimates, one of which was frozen: the
+          ;; batched side is one fixed draw at key 99, and at N=200 that draw's
+          ;; sample variance was 0.319 while the analytic truth is 0.5 (score =
+          ;; log N(x;0,1) with x~N(0,1), so Var = 0.25*Var(x^2) = 0.5). The
+          ;; comparison therefore started ~0.18 into its own 0.5 tolerance, and
+          ;; the unseeded scalar side wandered over 0.254..0.822. Measured on
+          ;; RTX sm_120 2026-07-28, 40 reps at N=200: max |dvar| 0.4948-0.5034
+          ;; against tol 0.5 — riding the edge, ~2.5% observed failure rate.
+          ;; The battery caught one.
+          ;;
+          ;; N=800 concentrates BOTH estimators (the batched draw moves 0.319
+          ;; -> 0.592) and halves the gap: max |dvar| 0.243 of the 0.5 band
+          ;; over 20 reps, i.e. ~2x margin instead of ~1x. TOLERANCES ARE
+          ;; UNCHANGED — the estimator was fixed, not the band. Cost 1.2s ->
+          ;; 5.4s, trivial against the medium tier's cap.
+          ;;
+          ;; Seeding: per-iteration keys, NOT one key on the gf — a single
+          ;; fixed key would make all N scalar draws identical and collapse the
+          ;; sample variance to 0.
+          N 800
           ;; N scalar simulate scores (1-step unfold)
-          scalar-scores (mapv (fn [_]
-                                (h/realize (:score (p/simulate unfold-gf [1 (mx/scalar 0.0)]))))
+          scalar-scores (mapv (fn [i]
+                                (h/realize
+                                  (:score (p/simulate
+                                            (dyn/with-key unfold-gf (rng/fresh-key (+ 7000 i)))
+                                            [1 (mx/scalar 0.0)]))))
                               (range N))
           ;; 1 batched run via vgenerate on kernel (step 0)
           vtrace (dyn/vgenerate kernel [0 (mx/scalar 0.0)] cm/EMPTY N (rng/fresh-key 99))
@@ -396,7 +420,16 @@
           branch-a (dyn/auto-key (gen [x] (trace :z (dist/gaussian x 1))))
           branch-b (dyn/auto-key (gen [x] (trace :z (dist/gaussian x 2))))
           switch-gf (comb/switch-combinator branch-a branch-b)
-          N 200
+          ;; N 800, not 200 (genmlx-8egz) — see the class note on
+          ;; unfold-batched-vs-scalar-score-moments above. Same defect: a noisy
+          ;; unseeded scalar estimate compared against a FROZEN key-99 batched
+          ;; draw whose N=200 sample variance (0.319) sits far from the analytic
+          ;; truth (0.5), spending a third of the 0.5 tolerance before any noise.
+          ;; This is the instance that actually reddened a standalone re-run
+          ;; while fixing the unfold one: scalar var 0.917 vs the frozen 0.319,
+          ;; |dvar| 0.598 > 0.5. Same shape, same cause, same fix.
+          ;; Tolerances UNCHANGED; only the estimators were concentrated.
+          N 800
           ;; N scalar simulates using branch 0 (index=0)
           scalar-scores (mapv (fn [_]
                                 (h/realize (:score (p/simulate switch-gf [0 1.0]))))
@@ -421,7 +454,13 @@
                         (let [x (trace :x (dist/gaussian (mx/add carry input) 1))]
                           [x x])))
           scan-gf (comb/scan-combinator kernel)
-          N 200
+          ;; N 800, not 200 (genmlx-8egz) — see the class note on
+          ;; unfold-batched-vs-scalar-score-moments above. Same defect: a noisy
+          ;; unseeded scalar estimate compared against a FROZEN key-99 batched
+          ;; draw whose N=200 sample variance (0.319) sits far from the analytic
+          ;; truth (0.5), spending a third of the 0.5 tolerance before any noise.
+          ;; Tolerances UNCHANGED; only the estimators were concentrated.
+          N 800
           ;; N scalar simulates of 1-step scan
           scalar-scores (mapv (fn [_]
                                 (h/realize (:score (p/simulate scan-gf [(mx/scalar 0.0) [(mx/scalar 1.0)]]))))
@@ -445,17 +484,35 @@
           comp-b (dyn/auto-key (gen [] (trace :z (dist/gaussian 5 1))))
           mix-gf (comb/mix-combinator [comp-a comp-b]
                                        (mx/array [(js/Math.log 0.5) (js/Math.log 0.5)]))
-          N 200
+          ;; N 800, not 200 (genmlx-8egz) — see the class note on
+          ;; unfold-batched-vs-scalar-score-moments above.
+          N 800
           ;; N scalar simulates constraining component-idx to 0
           constraints (cm/choicemap :component-idx (mx/array 0 mx/int32))
+          ;; The TRACE SCORE, not the generate :weight (genmlx-8egz). This
+          ;; asserted on :weight, and :weight here is log p(component-idx=0)
+          ;; ALONE — :z is sampled, not constrained, so it contributes nothing
+          ;; to the weight. Measured over 800 draws: every weight is exactly
+          ;; log 0.5 = -0.6931, sample variance 0.000000. So the assertion
+          ;; compared a CONSTANT against a genuine variance-0.5 quantity and
+          ;; passed only because the frozen key-99 batched draw happened to
+          ;; land at 0.319, under the 0.5 tolerance; concentrating that draw
+          ;; toward its true 0.5 (N=800 gives 0.592) made it fail 8/8. The
+          ;; comment here used to claim "both sample from N(0,1) so score
+          ;; variance should match" — true of the score, never of the weight.
+          ;;
+          ;; The score IS the intended quantity and the comparison now holds
+          ;; for the stated reason: scalar score var 0.512 vs batched 0.592
+          ;; (|d| 0.080 of the 0.5 band), both near the analytic 0.5. The
+          ;; component-idx log-prob still rides along as a CONSTANT shift
+          ;; (scalar mean -2.143 = batched -1.451 + log 0.5), which is exactly
+          ;; why variance, not mean, is the invariant compared here.
           scalar-scores (mapv (fn [_]
-                                (h/realize (:weight (p/generate mix-gf [] constraints))))
+                                (h/realize (:score (:trace (p/generate mix-gf [] constraints)))))
                               (range N))
           ;; N batched scores via vgenerate on comp-a directly
           vtrace (dyn/vgenerate comp-a [] cm/EMPTY N (rng/fresh-key 99))
           batched-scores (vec (h/realize-vec (:score vtrace)))]
-      ;; Scalar weights include component-idx log-prob (log 0.5), batched scores don't.
-      ;; Compare variance — both sample from N(0,1) so score variance should match.
       (is (h/close? (h/sample-variance scalar-scores) (h/sample-variance batched-scores) 0.5)
           "score variances match (both sample from same component)"))))
 

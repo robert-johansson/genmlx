@@ -116,8 +116,71 @@ def main() -> int:
         check("incomplete fragment classified missing",
               m.classify_fragment("m5:mh", d / "m5_mh.json")[0] == "missing")
 
+    shrink_guard_tests()
+
     print(f"\n{'ALL PASS' if FAILURES == 0 else str(FAILURES) + ' FAILURES'}")
     return 1 if FAILURES else 0
+
+
+def _merged(n_combos: int, n_params: int) -> dict:
+    """A merged-results shape with the given evidence size."""
+    return {"config": {}, "results": [{"model": f"m{i}", "algorithm": "cmh",
+                                       "params": []} for i in range(n_combos)],
+            "summary": {"pass": n_params, "fail": 0, "total": n_params,
+                        "complete?": True, "failed_combos": [],
+                        "missing_combos": [], "provenance": []}}
+
+
+def shrink_guard_tests():
+    """The genmlx-ty5u guard: a merge may not shrink TRACKED frozen evidence."""
+    print("\n-- shrink guard (tracked frozen evidence) --")
+    import subprocess as sp
+    with tempfile.TemporaryDirectory() as td:
+        d = pathlib.Path(td)
+        sp.run(["git", "init", "-q"], cwd=d, check=True)
+        sp.run(["git", "config", "user.email", "t@t"], cwd=d, check=True)
+        sp.run(["git", "config", "user.name", "t"], cwd=d, check=True)
+
+        frozen = d / "frozen.json"
+        frozen.write_text(json.dumps(_merged(27, 50)))
+        sp.run(["git", "add", "frozen.json"], cwd=d, check=True)
+        sp.run(["git", "commit", "-qm", "freeze"], cwd=d, check=True)
+
+        untracked = d / "scratch.json"
+        untracked.write_text(json.dumps(_merged(27, 50)))
+
+        cwd = pathlib.Path.cwd()
+        try:
+            import os
+            os.chdir(d)
+            check("tracked file detected", m.git_tracked(pathlib.Path("frozen.json")))
+            check("untracked file not detected",
+                  not m.git_tracked(pathlib.Path("scratch.json")))
+
+            # The 2026-07-07 incident shape: 1 combo replacing 27.
+            check("shrink on tracked output is REFUSED",
+                  m.shrink_guard(pathlib.Path("frozen.json"),
+                                 _merged(1, 2), False) is not None)
+            check("fewer param tests at equal combo count is REFUSED",
+                  m.shrink_guard(pathlib.Path("frozen.json"),
+                                 _merged(27, 49), False) is not None)
+            check("equal-size merge is allowed",
+                  m.shrink_guard(pathlib.Path("frozen.json"),
+                                 _merged(27, 50), False) is None)
+            check("larger merge is allowed",
+                  m.shrink_guard(pathlib.Path("frozen.json"),
+                                 _merged(28, 52), False) is None)
+            check("--force overrides the refusal",
+                  m.shrink_guard(pathlib.Path("frozen.json"),
+                                 _merged(1, 2), True) is None)
+            check("UNtracked output is never guarded (scratch runs)",
+                  m.shrink_guard(pathlib.Path("scratch.json"),
+                                 _merged(1, 2), False) is None)
+            check("absent output is never guarded",
+                  m.shrink_guard(pathlib.Path("nope.json"),
+                                 _merged(1, 2), False) is None)
+        finally:
+            os.chdir(cwd)
 
 
 if __name__ == "__main__":

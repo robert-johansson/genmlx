@@ -11,6 +11,9 @@
      SBC_LIST=1           Print 'COMBO model:algo' lines and exit (for runners)
      SBC_ONLY=model:algo  Run a single model x algorithm combo
      SBC_OUT=path         Output JSON path (default results/sbc_results.json)
+     SBC_FREEZE=1         Allow writing on top of git-TRACKED frozen evidence.
+                          Without it, an output path that is tracked is
+                          redirected to $TMPDIR/genmlx-sbc/ (genmlx-ty5u).
 
    The FULL run takes ~6h of sustained GPU work. Do NOT run it in one
    process: sustained GPU load risks the Metal uninterruptible-sleep wedge
@@ -677,8 +680,55 @@
 
 (def all-results (atom []))
 (def summary (atom {:pass 0 :fail 0}))
+(def freeze?
+  "Explicit opt-in to write on top of the git-TRACKED frozen SBC evidence
+   (results/sbc_results.json and the results/sbc/ fragments). Without it, a
+   run whose output path is tracked is REDIRECTED to a scratch path outside
+   the checkout — because a partial or timed-out run silently replacing the
+   frozen record is exactly what happened on 2026-07-07, when 25,876 lines of
+   Mac evidence became a 448-line CUDA stub (genmlx-ty5u). test/run_sbc.sh
+   threads the same flag; this guard is the backstop for direct invocation."
+  (contains? #{"1" "true" "yes"} (or (aget js/process.env "SBC_FREEZE") "")))
+
+(defn- git-tracked?
+  "True iff path is a git-tracked file in this checkout. Degrades to false
+   outside a checkout or without git — there is no frozen evidence to protect
+   in that case."
+  [path]
+  (try (cp/execSync (str "git ls-files --error-unmatch -- " (pr-str path))
+                    #js {:stdio "ignore"})
+       true
+       (catch :default _ false)))
+
 (def results-path
-  (or (aget js/process.env "SBC_OUT") "results/sbc_results.json"))
+  (let [requested (or (aget js/process.env "SBC_OUT") "results/sbc_results.json")]
+    (if (and (git-tracked? requested) (not freeze?))
+      (let [dir  (str (or (aget js/process.env "TMPDIR") "/tmp") "/genmlx-sbc")
+            base (last (str/split requested #"/"))
+            redirect (str dir "/" base)]
+        (fs/mkdirSync dir #js {:recursive true})
+        (println (str "NOTE: " requested " is git-tracked frozen evidence; "
+                      "writing to " redirect " instead."))
+        (println "      Set SBC_FREEZE=1 to update the frozen record on purpose.")
+        redirect)
+      requested)))
+
+(defn- device-label
+  "Honest device label across backends. On Metal the membrane derives a real
+   name from the GPU architecture generation; off Metal it returns
+   :unavailable BY DESIGN (genmlx-yjyl refuses to parse a CUDA arch string
+   with Apple assumptions), so we ask the NVIDIA driver rather than record a
+   contentless \"unavailable\" — or nil when neither source answers. Never a
+   fabricated constant: the 2026-07-07 clobber labelled a CUDA-only host
+   'apple-gpu-gen-12' (genmlx-ty5u)."
+  []
+  (let [nm (:device-name (mx/metal-device-info))]
+    (if (string? nm)
+      nm
+      (try (-> (cp/execSync "nvidia-smi --query-gpu=name --format=csv,noheader"
+                            #js {:encoding "utf8" :stdio #js ["ignore" "pipe" "ignore"]})
+               str/split-lines first str/trim not-empty)
+           (catch :default _ nil)))))
 
 (def run-meta
   "Provenance for the results-freeze gate (genmlx-9ocx): the exact code,
@@ -695,7 +745,8 @@
      :mlx_node_commit (git "mlx-node")
      :bun (some-> js/process.versions .-bun)
      :node js/process.version
-     :device (:device-name (mx/metal-device-info))
+     :backend (if (mx/metal-is-available?) "metal" "non-metal")
+     :device (device-label)
      :started (.toISOString (js/Date.))}))
 
 (defn write-results!

@@ -38,26 +38,42 @@ import sys
 # --- Golden pins, copied verbatim from test/genmlx/llm_forward_golden_test.cljs ---
 PROMPT = "The capital of France is"
 EXPECTED_PROMPT_IDS = [760, 6511, 314, 9338, 369]
+# Re-synced 2026-07-28 from the CLJS `golden` vector, which is now keyed per
+# ARCH (:metal / :cuda-sm120 / :cuda-sm110). This script stays arch-NEUTRAL: it
+# pins the reference set that Metal, sm_120, and mlx-lm on both agree on, and
+# leans on LOGPROB_TOL to span the arch spread. See the note on LOGPROB_TOL for
+# why sm_110 needs watching.
 GOLDEN = [
     {
         "name": "qwen3.5-0.8b", "dir": "qwen3.5-0.8b-mlx-bf16",
         "argmax": 11751, "argmax_decoded": " Paris",
-        "top5": [(11751, -2.171875), (279, -2.234375), (7172, -2.609375),
-                 (25, -2.984375), (198, -2.984375)],
+        "top5": [(11751, -2.125), (279, -2.3125), (7172, -2.5625),
+                 (25, -2.875), (198, -2.875)],
     },
     {
         "name": "qwen3.5-4b", "dir": "qwen3.5-4b-mlx-bf16",
         "argmax": 11751, "argmax_decoded": " Paris",
-        "top5": [(11751, -0.601563), (7172, -2.843750), (264, -3.031250),
-                 (3750, -3.468750), (279, -3.593750)],
+        "top5": [(11751, -0.62109375), (7172, -2.75), (264, -3.125),
+                 (3750, -3.4375), (279, -3.625)],
     },
 ]
 
 # Cross-IMPLEMENTATION tolerance. The CLJS test uses 0.01 (same bit-reproducible
-# build vs itself). mlx-lm is a DIFFERENT forward, so individual logprobs differ
-# by bf16 cross-kernel noise -- measured up to ~0.17 nat on 0.8b. 0.25 tolerates
-# that band while still catching the "off by whole nats" garbage-forward failure
-# mode (the pre-fix bug f6ov's gate was built to detect was off by whole nats).
+# build vs itself, within one arch). mlx-lm is a DIFFERENT forward, so individual
+# logprobs differ by bf16 cross-kernel noise -- measured up to ~0.17 nat on 0.8b.
+# 0.25 tolerates that band while still catching the "off by whole nats"
+# garbage-forward failure mode (the pre-fix bug f6ov's gate was built to detect
+# was off by whole nats).
+#
+# CAVEAT this band is quietly absorbing (genmlx-z4hy, 2026-07-28): the arches do
+# NOT all agree. Measured on qwen3.5-0.8b, argmax logprob:
+#     Metal -2.125 | sm_120 -2.109 | mlx-lm on sm_120 -2.125 | sm_110 -1.883
+# so sm_110 sits ~0.24 from the rest -- just inside this 0.25 tol. On a Thor run
+# this check therefore passes with almost no margin, and sm_110 also has a
+# DIFFERENT top-5 membership (303/220 instead of 25/198), which the set-equality
+# assertion below would fail outright. If this script is ever to be a real gate
+# on sm_110, it needs the same per-arch table the CLJS test grew -- not a wider
+# tolerance.
 LOGPROB_TOL = 0.25
 
 MODEL_ROOT = os.environ.get(

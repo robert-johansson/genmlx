@@ -271,4 +271,108 @@
       (mx/eval! ref-indices)
       (is (= (mx/->clj ref-indices) (mx/->clj fast-indices)) "O(N) matches O(N^2) for skewed weights"))))
 
+;; =========================================================================
+;; Section 10: Scale — the O(N*M) cliff (genmlx-l5m2)
+;;
+;; The native primitive has two paths: a broadcast mask below a size cap and a
+;; vectorized bisection above it (mlx_genmlx_searchsorted.cpp). Every test
+;; above this line is 100x below the crossover, which is exactly why the
+;; quadratic-memory cliff stayed invisible until a 60GB mask OOM-rebooted the
+;; Thor. These tests straddle the crossover and pin the memory bound.
+;; =========================================================================
+
+(defn- chunked-count-reference
+  "Reference counts computed the OLD way — predicate mask + sum — but in bounded
+   slabs over the sorted axis, so it is O(N*M) in TIME while staying small in
+   memory. Independent of whichever path the primitive takes."
+  [sorted values right? slab]
+  (let [m (first (mx/shape sorted))]
+    (loop [off 0 acc nil]
+      (if (>= off m)
+        acc
+        (let [len   (min slab (- m off))
+              row   (mx/expand-dims (mx/slice sorted off (+ off len)) 0)
+              col   (mx/expand-dims values 1)
+              cnt   (mx/sum (if right? (mx/less-equal row col) (mx/less row col)) [1])]
+          (recur (+ off len) (if acc (mx/add acc cnt) cnt)))))))
+
+(deftest searchsorted-across-the-path-crossover
+  (testing "analytic oracle on both sides of the broadcast/bisection cap"
+    ;; sorted = [0..M), values = [0..N)+0.5  =>  left index of value i is i+1.
+    (doseq [[label n m] [["below cap (broadcast)" 1000 1000]
+                         ["above cap (bisection)" 4096 4096]
+                         ["far above cap"        10000 10000]]]
+      (let [sorted (mx/astype (mx/arange 0 m 1) mx/float32)
+            values (mx/add (mx/astype (mx/arange 0 n 1) mx/float32) (mx/scalar 0.5))
+            got    (mx/searchsorted sorted values)
+            want   (mx/add (mx/astype (mx/arange 0 n 1) mx/int32) (mx/scalar 1))]
+        (mx/eval! got want)
+        (is (= (mx/->clj want) (mx/->clj got)) (str label ": analytic indices")))))
+
+  (testing "ties, both sides, against the chunked mask reference"
+    ;; Floored uniforms give heavy ties — the case where left/right differ, and
+    ;; the one a bisection gets wrong if its tie predicate is off by one.
+    (let [n 4096 m 4096
+          sorted (mx/astype (mx/floor (mx/multiply (rng/uniform (rng/fresh-key 4242) [m])
+                                                   (mx/scalar 20.0)))
+                            mx/float32)
+          sorted (mx/sort-arr sorted)
+          values (mx/astype (mx/floor (mx/multiply (rng/uniform (rng/fresh-key 8484) [n])
+                                                   (mx/scalar 24.0)))
+                            mx/float32)]
+      (mx/eval! sorted values)
+      (doseq [[label right?] [["left" false] ["right" true]]]
+        (let [want (mx/astype (chunked-count-reference sorted values right? 512) mx/int32)
+              got  (if right?
+                     (mx/searchsorted sorted values :right)
+                     (mx/searchsorted sorted values))]
+          (mx/eval! want got)
+          (is (= (mx/->clj want) (mx/->clj got))
+              (str "bisection matches mask-sum with ties (" label ")")))))))
+
+(deftest searchsorted-memory-does-not-go-quadratic
+  (testing "N=M=50000 stays O(N) in memory"
+    ;; The regression this pins: the broadcast path would materialize N*M =
+    ;; 2.5e9 mask elements (~2.3 GiB as bool) here. The bisection path touches
+    ;; ~20 arrays of N int32 (~4 MB). The bound below is ~100x under the
+    ;; quadratic requirement and ~50x over the linear one, so it fails loudly
+    ;; on a regression without OOMing the host that runs it.
+    (let [n 50000 m 50000
+          sorted (mx/astype (mx/arange 0 m 1) mx/float32)
+          values (mx/add (mx/astype (mx/arange 0 n 1) mx/float32) (mx/scalar 0.5))]
+      (mx/eval! sorted values)
+      (mx/reset-peak-memory!)
+      (let [got (mx/searchsorted sorted values)]
+        (mx/eval! got)
+        (let [peak-mib (/ (mx/get-peak-memory) 1048576.0)
+              idx      (mx/->clj got)]
+          (is (< peak-mib 256.0)
+              (str "peak memory " (.toFixed peak-mib 1) " MiB < 256 MiB "
+                   "(quadratic would need ~2400 MiB)"))
+          (is (= [1 n] [(first idx) (last idx)])
+              "indices still correct at scale"))))))
+
+(deftest systematic-resampling-memory-at-scale
+  (testing "the production caller (vectorized.cljs) stays O(N) at 50000 particles"
+    ;; This is the path the cliff actually endangered: N particles searched
+    ;; against an M=N cumsum is exactly N^2. Guarding the primitive is not the
+    ;; same as guarding the caller, so pin the caller too.
+    (let [n 50000
+          log-w (mx/zeros [n])
+          key (rng/fresh-key 31337)]
+      (mx/eval! log-w)
+      (mx/reset-peak-memory!)
+      (let [indices (vec/systematic-resample-indices log-w n key)]
+        (mx/eval! indices)
+        (let [peak-mib (/ (mx/get-peak-memory) 1048576.0)
+              idx (mx/->clj indices)]
+          (is (< peak-mib 256.0)
+              (str "resample peak " (.toFixed peak-mib 1) " MiB < 256 MiB"))
+          (is (= [n] (vec (mx/shape indices))) "resample: shape")
+          (is (every? #(and (>= % 0) (< % n)) idx) "resample: indices in range")
+          ;; Uniform weights + systematic resampling is a permutation-free
+          ;; identity sweep: every particle survives exactly once.
+          (is (= (set (range n)) (set idx))
+              "resample: uniform weights keep every particle at scale"))))))
+
 (cljs.test/run-tests)

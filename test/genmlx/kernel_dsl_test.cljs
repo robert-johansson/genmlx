@@ -75,11 +75,15 @@
           ;; :key; the same pattern is used by mh-kernel-key-reproducibility-test
           ;; below.
           ;;
-          ;; The BUDGET is deliberately unchanged: measured over 10 seeds at
-          ;; this 200/300 budget, 0 fail, worst |err| 0.4 against the +/-1.5
-          ;; slope tolerance (600/2000 gives 0/10 too, so the extra cost buys
-          ;; nothing). No seed is load-bearing here — unlike the compiled_
-          ;; optimizer case, seeding alone is sufficient and hides nothing.
+          ;; The BUDGET is deliberately unchanged. Measured 20/20 seeds pass at
+          ;; this 200/300 budget (RTX sm_120, 2026-07-27, genmlx-c2x9 close-out;
+          ;; an earlier 10-seed sweep agreed). Worst errors across those seeds:
+          ;; slope 0.354 of the +/-1.5 band, intercept 1.327 of the +/-2.0 band
+          ;; — so the INTERCEPT is the binding one, at ~1.5x margin, and it is
+          ;; the number to watch if this ever reddens again. 600/2000 gives 0
+          ;; failures too, so the extra cost buys nothing. No seed is load-
+          ;; bearing here — unlike the compiled_optimizer case, seeding alone is
+          ;; sufficient and hides nothing.
           {:keys [trace]} (p/generate (dyn/with-key model2 (rng/fresh-key 20260726)) [xs] obs)
           k (kern/random-walk {:slope 0.3 :intercept 0.3})
           traces (kern/run-kernel {:samples 200 :burn 300 :key (rng/fresh-key 20260727)} k trace)

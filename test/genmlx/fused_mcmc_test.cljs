@@ -291,8 +291,31 @@
 
 (deftest fused-vectorized-mh-test
   (testing "fused-vectorized-mh"
+    ;; burn 600, not 200 (genmlx-l0e3). The posterior-band assertion below was
+    ;; a documented flake; measured on RTX sm_120, 2026-07-27:
+    ;;
+    ;;   burn  mean-slope   sd     |err| max   outside the +/-0.5 band
+    ;;   200      1.913    0.348     0.884     3/20  (15%)
+    ;;   600      1.998    0.079     0.192     0/20
+    ;;  1200      2.011    0.085     0.196     0/20
+    ;;
+    ;; At burn 200 the chain has NOT converged: the estimator is biased low
+    ;; (1.913) and its sd is 0.35, so the +/-0.5 band is only ~1.4 sd wide —
+    ;; a ~15% failure rate by construction the moment anything stops pinning
+    ;; the seed. The error is common-mode (all chains share one starting
+    ;; trace), which is why raising n-chains does NOT help: measured sd was
+    ;; 0.348 / 0.511 / 0.407 at 4 / 8 / 16 chains. Burn-in is the real lever
+    ;; and it saturates by 600 (1200 buys nothing). The band is UNCHANGED at
+    ;; +/-0.5 — it is now ~6 sd rather than widened to fit.
+    ;;
+    ;; Cost: 729ms -> 1075ms. Still fused at 800 total steps: chain-fn and
+    ;; acceptance-rate both stay non-nil (the block-compiled fallback returns
+    ;; nil for both and would break the assertions below).
+    ;;
+    ;; Also measured: at a FIXED key this is bit-identical over 20 reps on
+    ;; sm_120, so there is no sub-PRNG nondeterminism to blame on this arch.
     (let [result (mcmc/fused-vectorized-mh
-                   {:samples 200 :burn 200 :n-chains 4
+                   {:samples 200 :burn 600 :n-chains 4
                     :addresses [:slope :intercept]
                     :proposal-std 0.3 :key (rng/fresh-key 5014)
                     :device :cpu}
