@@ -135,17 +135,36 @@ TEST_TIME_SCALE=6 TEST_JOBS_SLOW=4 test/run.sh all   # RTX; Thor: scale 8
 
 No build step for the ClojureScript — nbb interprets it directly. The **native
 addon does** need building from the `mlx-node` submodule on a fresh clone:
-`cd mlx-node && yarn install && yarn build && node packages/genmlx-core/build.mjs`.
-That last step is **required and easy to miss**: `yarn build` builds the
-`@mlx-node/core` addon, but GenMLX's Layer 0 loads **`@genmlx/core`**
-(`packages/genmlx-core/index.node`, gitignored), which only `build.mjs` produces —
-skip it and every `nbb` run fails at `(js/require "@genmlx/core")`.
+
+```bash
+cd mlx-node && yarn install && node packages/genmlx-core/build.mjs
+```
+
+**`build.mjs` is the whole build — do NOT run `yarn build` first** (genmlx-r9xv
+session, 2026-07-28). Three facts, each verified in-tree:
+
+- GenMLX's Layer 0 loads **`@genmlx/core`** (`packages/genmlx-core/index.node`,
+  gitignored), which only `build.mjs` produces. Skip it and every `nbb` run
+  fails at `(js/require "@genmlx/core")`.
+- `yarn build` = `yarn build:native && yarn build:ts`, and `build:native` =
+  `yarn workspace @mlx-node/core build` — it builds **`@mlx-node/core`, which
+  GenMLX never loads**. `package.json` depends on `@genmlx/core` + `nbb` only,
+  and there are zero `(js/require "@mlx-node/...")` calls in `src/` or `test/`
+  (the ~20 textual mentions are all comments). `@mlx-node/core` matters for the
+  `mlx` CLI and agent (`mlx launch claude`), not for the guards or the battery.
+- `build.mjs` drives its **own** cargo build (`node_modules/.bin/napi` on
+  `crates/genmlx-core/Cargo.toml`), so `mlx-sys` — where the C++/FFI lives — is
+  rebuilt as a dependency. Nothing else is needed to pick up a native change.
+
+Running `yarn build` anyway is not merely redundant: its `build:ts` leg is
+known-broken (`genmlx-a9kf`, TS1359 on a napi-generated `var`), and on Thor the
+yarn workspace path can fail outright from stale yarn state (`THOR-BUILD.md`).
 
 **Requirements:** macOS with Apple Silicon (Metal backend) *or* Linux with an
 NVIDIA GPU (CUDA backend — `mlx-node`'s build selects it automatically on
 Linux; validated on an aarch64 Jetson AGX Thor sm_110 and an x86_64 RTX PRO
 6000 Blackwell sm_120), Bun (or Node.js 18+), the native build
-above (`@genmlx/core` via `build.mjs`, plus `@mlx-node/core`/`@mlx-node/lm`), and
+above (`@genmlx/core` via `build.mjs` — that alone), and
 nbb `1.4.208` (pinned via the `nbb` script in `package.json`). Malli is a git submodule tracking **official upstream
 `metosin/malli`** on the nbb classpath — the earlier robert-johansson/malli fork
 existed only for nbb 1.4.206 compatibility, which 1.4.208 made unnecessary (its
@@ -177,10 +196,22 @@ sm_120; bring-up record: bean `genmlx-1aea`, handoff
   impact-set method (reverse-transitive ns-`:require` closure of the changed
   namespaces → run just those test files + the contract guards; bean
   `genmlx-emms` — measured 21 files/3m20s vs a 2h battery). Any **native**
-  change or submodule bump invalidates that shortcut: rebuild, then the
-  contract-guard block (`exact`/`gradient_fd`/`score_gradient`/
-  `clip_contract`/`membrane_coverage` + `qmm_determinism`/`gather_qmm_oracle`)
-  is mandatory, and run the full battery before calling it green.
+  change or submodule bump invalidates that shortcut: rebuild
+  (`node packages/genmlx-core/build.mjs` — see the build note above; `yarn
+  build` is neither required nor sufficient), then the contract-guard block
+  (`exact`/`gradient_fd`/`score_gradient`/`clip_contract`/`membrane_coverage`
+  + `qmm_determinism`/`gather_qmm_oracle`) is mandatory, and run the full
+  battery before calling it green.
+- **Impact sets: closure first, then CALL SITES.** For a LOW-level namespace the
+  ns-closure degenerates and you must narrow further. Measured 2026-07-28: the
+  reverse closure of `genmlx.inference.mcmc` is **113 test files** — nearly the
+  whole suite — because `genmlx.inference` is an aggregator ns that re-requires
+  everything, so almost every test transitively "depends on" mcmc. Grepping the
+  actual call sites of the CHANGED functions (`mcmc/mala`, `mcmc/fused-mala`)
+  plus the tests that pin the invariant being changed (here the PRNG/warmup
+  ones) gave **11 files in 5m14s** — and that set caught a real red the full
+  battery would have taken 73 min to reach. Use the closure to bound the search,
+  the call sites to choose what to run, and say which you used.
 - **Per-arch numerics.** Tolerances are per-ARCH, not per-backend: the same
   law measured Metal ~0 / sm_110 0.003 / sm_120 0.199 (GDN scan-vs-step,
   `genmlx-nhvg`). A red on one box that is green on another is DATA for the
