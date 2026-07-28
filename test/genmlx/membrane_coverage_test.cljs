@@ -129,11 +129,15 @@
    :foreign-tensor-type
    #{"Tensor"}
 
-   ;; native MLX graph-caching compile — DELIBERATELY bypassed. The membrane's
-   ;; compile-fn (mlx.cljs) is an identity pass-through: GenMLX compilation uses
-   ;; noise transforms + the expression compiler (Level 1), not MLX's compile
-   ;; (which would sever the autograd tape across model-body eval!). vmap — the
-   ;; sibling transform relocated alongside it into @genmlx/core — IS wrapped.
+   ;; native MLX graph-caching compile, ONE-SHOT form — DELIBERATELY bypassed.
+   ;; The membrane's compile-fn (mlx.cljs) is an identity pass-through: GenMLX
+   ;; compilation uses noise transforms + the expression compiler (Level 1),
+   ;; not blanket MLX compile (which would sever the autograd tape across
+   ;; model-body eval!). This one-shot export also creates a fresh closure
+   ;; identity per call, so it re-traces every invocation — useless for
+   ;; amortization. The PERSISTENT trio (compileCreate/compiledCall/
+   ;; compiledFree, genmlx-z2gt Phase 1) IS wrapped: trace-once/replay-many
+   ;; behind an explicit handle, opt-in at pure-builder call sites only.
    :compile-strategy-bypass
    #{"compileFn"}
 
@@ -258,9 +262,10 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 227 (count exported-fns))
+      (is (= 230 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 227; 2026-07-20 genmlx-krma added fusedGdnGating) "
+               " fns (pinned at 230; 2026-07-28 genmlx-cqgx added the persistent-"
+               "compile trio compileCreate/compiledCall/compiledFree) "
                "— the partition test above pinpoints what moved."))
       (is (= 49 (count omitted))
           (str "intentional-omissions size changed: " (count omitted) " (pinned at 49)."))

@@ -848,6 +848,51 @@
    Effectful: frees GPU memory used by cached compiled graphs."
   [] (.compileClearCache c))
 
+;; ---- Persistent compile (genmlx-z2gt Phase 1) ---------------------------
+;; Trace-once/replay-many MLX graph compilation, behind an EXPLICIT handle.
+;; The general compile-fn above STAYS identity by the genmlx-819v verdict —
+;; these are new, OPT-IN entry points for the named compiled-path call sites
+;; (fused sampler chain-fns, L1-compiled models, L4 graphs), never a blanket
+;; wrapper. PURITY CONTRACT on the builder f: pure arrays->array(s) graph
+;; construction only — no eval!/item/materialize!/handler state inside, and
+;; fixed structure (no value-dependent branching). Violating it recreates the
+;; silent-zero-gradient failure mode the verdict guards against; the
+;; compiled_persistent_test equivalence suite is the tripwire.
+
+(defn compile-create
+  "Create a persistent compiled handle for pure graph-builder f.
+   No trace happens here. The FIRST compiled-call per input-shape traces by
+   invoking f once (f sees MxArray tracer args); every later call replays
+   the cached graph in C++ without invoking f. Multi-output builders MUST
+   return a JS array (to-array [...]) — a CLJS vector is not a JS array.
+   Lifecycle: the handle owns native graph caches + a reference to f; the
+   CALLER must compiled-free! it (or use with-compiled). A GC'd handle frees
+   the native side but leaks the f reference — dispose explicitly."
+  ([f] (.compileCreate c f))
+  ([f shapeless?] (.compileCreate c f shapeless?)))
+
+(defn compiled-call
+  "Call a persistent compiled handle on MLX-array inputs. Returns a vector
+   of output arrays (also for single-output builders). Lazy: outputs are
+   graph nodes; eval!/materialize! applies as usual."
+  [handle & arrays] (vec (.compiledCall c handle (to-array arrays))))
+
+(defn compiled-free!
+  "Free a persistent compiled handle: drops its cached graphs and releases
+   the builder reference. Effectful; idempotent (false when already freed)."
+  [handle] (.compiledFree c handle))
+
+(defn with-compiled
+  "Fenced scope for a persistent compiled handle:
+     (with-compiled f (fn [call] (call x y) ...))
+   `call` is (fn [& arrays] -> [outputs]). Frees the handle on exit, success
+   or throw — the blessed lifecycle (mirrors with-server / with-trainer)."
+  [f body-fn]
+  (let [h (compile-create f)]
+    (try
+      (body-fn (fn [& arrays] (apply compiled-call h arrays)))
+      (finally (compiled-free! h)))))
+
 (defn vmap
   "Vectorized map: transforms f into a batched version that operates over
    an additional batch dimension. Pure graph-to-graph transformation."
