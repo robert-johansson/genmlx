@@ -2544,13 +2544,13 @@
 ;; Fused HMC (one fused graph evaluation for the entire chain)
 ;; ---------------------------------------------------------------------------
 
-(defn- make-fused-hmc-burn-and-collect
-  "Compile a single function for HMC burn-in + thinned collection.
-   Each step contains L leapfrog sub-steps (unrolled at graph-build time).
-   Identity mass matrix only.
-   Returns compiled fn: (init-q [D], momentum [T,D], uniforms [T])
+(defn- make-fused-hmc-chain-raw
+  "RAW HMC burn-in + thinned-collection chain builder — the pure graph fn
+   (init-q [D], momentum [T,D], uniforms [T])
      → #js [final-q, samples [S,D], accept-count []].
-   one fused lazy-graph evaluation for the entire chain."
+   Each step contains L leapfrog sub-steps (unrolled at graph-build time).
+   Identity mass matrix only. NOT persisted — see make-fused-mala-chain-raw
+   for the raw/persisted split rationale."
   [n-burn n-samples thin neg-U-fn grad-neg-U eps half-eps half n-params leapfrog-steps]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
@@ -2589,7 +2589,17 @@
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-q (inc i) new-count new-samples new-accept-count)))))]
-    (persist-chain chain-fn :hmc (* (+ n-burn (* thin n-samples)) leapfrog-steps))))
+    chain-fn))
+
+(defn- make-fused-hmc-burn-and-collect
+  "Persisted (captured-replay) wrapper of make-fused-hmc-chain-raw — one
+   fused lazy-graph evaluation for the entire chain, trace-once/replay-many
+   across fused-hmc calls that reuse :chain-fn."
+  [n-burn n-samples thin neg-U-fn grad-neg-U eps half-eps half n-params leapfrog-steps]
+  (persist-chain
+   (make-fused-hmc-chain-raw n-burn n-samples thin neg-U-fn grad-neg-U
+                             eps half-eps half n-params leapfrog-steps)
+   :hmc (* (+ n-burn (* thin n-samples)) leapfrog-steps)))
 
 (defn fused-hmc
   "Fully fused HMC: burn-in + thinned collection in one fused lazy-graph evaluation.
@@ -2700,6 +2710,105 @@
                :final-params (aget result 0)
                :chain-fn cfn
                :acceptance-rate (/ (mx/item (aget result 2)) remaining-total)})))))))
+
+(defn fused-hmc-compiled
+  "Whole-call captured fused HMC — the fused-mala-compiled analog (see its
+   docstring for the full contract): fixes (opts, model, args,
+   observations) and returns {:call (fn [key] -> {:samples :final-params
+   :acceptance-rate}) :free! ...}. The ENTIRE per-call unit — initial
+   constrained generate, momentum/uniform pre-generation, and the S-step
+   chain of L-leapfrog HMC steps — is traced ONCE as a pure function of
+   the PRNG key and replayed launch-only. Stream layout replicates eager
+   fused-hmc ([init-key stream-key] = split(k); momentum/uniforms split
+   off stream-key): same chain to kernel-fusion rounding, repeat calls
+   bit-exact. Identity mass matrix, no :adapt-step-size, CUDA only;
+   untraceable models degrade loudly to eager fused-hmc per call."
+  [{:keys [samples burn thin addresses step-size leapfrog-steps]
+    :or {burn 0 samples 1000 thin 1 step-size 0.01 leapfrog-steps 20}}
+   model args observations]
+  (when (mx/metal-is-available?)
+    (throw (ex-info "fused-hmc-compiled: unmeasured on Metal — use fused-hmc (genmlx-7prh)"
+                    {:genmlx/error :unmeasured-backend})))
+  (let [total-steps (+ burn (* thin samples))
+        {:keys [trace]} (p/generate (dyn/with-key model (rng/fresh-key 0))
+                                    args observations)
+        {:keys [score-fn n-params tensor-native? layout latent-index]}
+        (u/prepare-mcmc-score model args observations addresses trace)
+        extract-start-q
+        (fn [tr]
+          (if tensor-native?
+            (u/extract-params-by-index tr latent-index)
+            (let [ch (:choices tr)
+                  entries (:layout layout)]
+              (if (:array-valued? layout)
+                (mx/concatenate
+                 (mapv (fn [{:keys [addr]}]
+                         (mx/reshape (cm/get-choice ch [addr]) [-1]))
+                       entries))
+                (mx/stack
+                 (mapv (fn [{:keys [addr]}] (cm/get-choice ch [addr]))
+                       entries))))))
+        neg-U-fn (fn [q] (mx/negative (score-fn q)))
+        grad-neg-U-raw (mx/grad neg-U-fn)
+        eps (mx/scalar step-size)
+        half-eps (mx/scalar (* 0.5 step-size))
+        half (mx/scalar 0.5)
+        chain-raw (make-fused-hmc-chain-raw
+                   burn samples thin neg-U-fn grad-neg-U-raw
+                   eps half-eps half n-params leapfrog-steps)
+        traceable? (and (can-fuse? :hmc total-steps
+                                   {:tensor-native? tensor-native?
+                                    :leapfrog-steps leapfrog-steps})
+                        (<= (* total-steps leapfrog-steps)
+                            (get persist-trace-ops-limits :hmc 0)))
+        trace-fn
+        (fn [key]
+          (let [[init-key stream-key] (rng/split key)
+                {:keys [trace]} (p/generate (dyn/with-key model init-key)
+                                            args observations)
+                start-q (extract-start-q trace)
+                [k1 k2] (rng/split (rng/ensure-key stream-key))
+                momentum (rng/normal k1 [total-steps n-params])
+                uniforms (rng/uniform k2 [total-steps])
+                r (chain-raw start-q momentum uniforms)]
+            #js [(aget r 1) (aget r 0) (aget r 2)]))
+        handle (when traceable? (mx/compile-create trace-fn))
+        degraded (volatile! (not traceable?))
+        eager-box (volatile! nil)
+        eager-call
+        (fn [key]
+          (let [r (fused-hmc (cond-> {:samples samples :burn burn
+                                      :thin thin :step-size step-size
+                                      :leapfrog-steps leapfrog-steps
+                                      :addresses addresses :key key
+                                      :device :gpu}
+                               @eager-box (assoc :chain-fn @eager-box))
+                             model args observations)]
+            (vreset! eager-box (:chain-fn r))
+            (select-keys r [:samples :final-params :acceptance-rate])))]
+    (when-not traceable?
+      (println (str "Note: fused-hmc-compiled — chain too large for a single "
+                    "traced graph; using eager fused-hmc per call.")))
+    {:call (fn [key]
+             (let [key (rng/ensure-key key)]
+               (if @degraded
+                 (eager-call key)
+                 (try
+                   (let [out (mx/compiled-call-captured handle #js [key])]
+                     {:samples (aget out 0)
+                      :final-params (aget out 1)
+                      :acceptance-rate (/ (mx/item (aget out 2)) total-steps)})
+                   (catch :default e
+                     (if (re-find #"during function transformations"
+                                  (str (.-message e)))
+                       (do (vreset! degraded true)
+                           (println (str "Note: fused-hmc-compiled — model is "
+                                         "not traceable; degrading to eager "
+                                         "fused-hmc per call. Cause: "
+                                         (.-message e)))
+                           (eager-call key))
+                       (throw e)))))))
+     :free! (fn [] (when handle (mx/compiled-free! handle)))}))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized HMC (N parallel chains)

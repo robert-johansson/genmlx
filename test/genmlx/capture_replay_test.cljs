@@ -242,6 +242,34 @@
       (is (some? (:acceptance-rate r2)) "later calls keep working")
       ((:free! f)))))
 
+(deftest fused-hmc-compiled-matches-eager
+  ;; The HMC analog of the whole-call factory: same stream-layout
+  ;; replication, same fusion-rounding tolerance vs eager, bit-exact
+  ;; factory-vs-factory.
+  (when cuda?
+    (let [opts {:samples 30 :burn 5 :thin 1 :step-size 0.1
+                :leapfrog-steps 8 :addresses [:slope :intercept]}
+          f (mcmc/fused-hmc-compiled opts linreg-h [] linreg-obs)
+          k1 (rng/fresh-key 51)
+          k2 (rng/fresh-key 52)
+          r1 ((:call f) k1)
+          r2 ((:call f) k2)
+          r1b ((:call f) k1)
+          eager (mcmc/fused-hmc (assoc opts :key k1 :device :gpu)
+                                linreg-h [] linreg-obs)
+          flat (fn [r] (flatten (->v (:samples r))))]
+      (is (every? true? (map #(th/close? %1 %2 (max 1e-3 (* 1e-4 (js/Math.abs %1))))
+                             (flat eager) (flat r1)))
+          "factory follows the eager HMC chain (same stream, fusion tolerance)")
+      (is (< (js/Math.abs (- (:acceptance-rate eager) (:acceptance-rate r1)))
+             0.051)
+          "acceptance agrees")
+      (is (not= (->v (:samples r1)) (->v (:samples r2)))
+          "different key, different chain")
+      (is (= (->v (:samples r1)) (->v (:samples r1b)))
+          "same key reproduces BIT-exactly")
+      ((:free! f)))))
+
 (deftest captured-point-fn-value-and-grad
   ;; persist-point-fn now rides the captured path: a value-and-grad handle
   ;; must return correct (value, grad) pairs across DIFFERENT inputs.
