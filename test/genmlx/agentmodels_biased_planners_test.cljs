@@ -48,9 +48,18 @@
         e-Q   (apply max (for [s (range S) a (range A)] (Math/abs (- (get-in Qh [s a]) (eub s a)))))]
     (assert-true (str "  " label ": biased k=0 matches recursive EU (max err < 1e-4)") (< e-rec 1e-4))
     (assert-true (str "  " label ": biased k=0 matches tensor Q   (max err < 1e-4)") (< e-Q 1e-4))
-    (assert-equal (str "  " label ": first action agrees at start")
-                  (argmax-idx (get Qh (:start-idx eq-mdp)))
-                  (argmax-idx (mapv #(eub (:start-idx eq-mdp) %) (range A))))))
+    ;; First-action agreement UP TO VALUE TIES: this grid is symmetric, so two
+    ;; actions at the start tie EXACTLY (measured M2 Max: tensor float32 splits
+    ;; them by ~1e-7 toward one index, recursive float64 by ~1e-15 toward the
+    ;; other). Index equality over an exact tie is arch-noise; assert the CHOSEN
+    ;; actions have equivalent Q instead (same 1e-4 the row check uses).
+    (let [s0 (:start-idx eq-mdp)
+          qrow (get Qh s0)
+          ia (argmax-idx qrow)
+          ib (argmax-idx (mapv #(eub s0 %) (range A)))]
+      (assert-true (str "  " label ": first action agrees at start up to value ties"
+                        " (tensor " ia " vs biased " ib ")")
+                   (< (Math/abs (- (nth qrow ia) (nth qrow ib))) 1e-4)))))
 
 ;; ===========================================================================
 (println "\n== Section 2: Procrastination MDP — hyperbolic preference reversal ==")

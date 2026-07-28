@@ -41,6 +41,21 @@
   (let [s (js/parseFloat (or (.. js/process -env -TEST_TIME_SCALE) "1"))]
     (if (and (js/isFinite s) (pos? s)) s 1)))
 
+(def par-degree
+  "The tier's parallel degree, passed by test/run.sh as TEST_PAR (1 when a file
+   runs solo). Under J-way parallelism GPU-bound files share the device and
+   wall-clock inflates up to J-fold — run.sh scales its per-file CAPS by J for
+   exactly this reason, and absolute-ms assertions must scale the same way or
+   contention reads as a perf regression (genmlx-7yam, 8-way Metal battery)."
+  (let [p (js/parseFloat (or (.. js/process -env -TEST_PAR) "1"))]
+    (if (and (js/isFinite p) (pos? p)) p 1)))
+
+(def wall-scale
+  "Combined budget multiplier for ABSOLUTE wall-clock assertions:
+   host speed (time-scale) x device contention (par-degree). Relative/ratio
+   assertions should stay unscaled — both sides inflate together."
+  (* time-scale par-degree))
+
 ;; ---------------------------------------------------------------------------
 ;; MLX helpers
 ;; ---------------------------------------------------------------------------

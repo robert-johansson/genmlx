@@ -32,7 +32,6 @@
 
 ;; Host-speed scale for the absolute wall-clock assertions below — the shared
 ;; helper this file's original private def was promoted into (genmlx-y8zt).
-(def ^:private time-scale h/time-scale)
 
 ;; ---------------------------------------------------------------------------
 ;; Model
@@ -227,9 +226,12 @@
           t1 (.now js/Date)
           fused-ms (/ (- t1 t0) 5.0)]
       ;; 200ms budget tuned on Apple Silicon (observed 231ms on Thor/CUDA);
-      ;; scaled by the TEST_TIME_SCALE host-speed knob (genmlx-9ox0).
-      (is (< fused-ms (* 200 time-scale))
-          (str "fused < " (* 200 time-scale) "ms per chain")))))
+      ;; scaled by the TEST_TIME_SCALE host-speed knob (genmlx-9ox0) AND by the
+      ;; runner's parallel degree (TEST_PAR, genmlx-7yam): under J-way tiers
+      ;; GPU contention inflates wall-clock up to J-fold — same reason run.sh
+      ;; J-scales its per-file caps. A real regression still trips the bound.
+      (is (< fused-ms (* 200 h/wall-scale))
+          (str "fused < " (* 200 h/wall-scale) "ms per chain")))))
 
 (deftest model-integration-linreg-test
   (testing "model integration: linreg"
@@ -344,10 +346,11 @@
                linreg-model [xs] obs)
           t1 (.now js/Date)]
       (is (= [200 4 2] (mx/shape (:samples r2))) "cached vectorized samples shape")
-      ;; 500ms budget tuned on Apple Silicon; scaled by the TEST_TIME_SCALE
-      ;; host-speed knob (genmlx-9ox0).
-      (is (< (- t1 t0) (* 500 time-scale))
-          (str "cached vectorized < " (* 500 time-scale) "ms")))))
+      ;; 500ms budget tuned on Apple Silicon; scaled by host speed
+      ;; (TEST_TIME_SCALE, genmlx-9ox0) and the runner's parallel degree
+      ;; (TEST_PAR, genmlx-7yam) — see the performance-test note.
+      (is (< (- t1 t0) (* 500 h/wall-scale))
+          (str "cached vectorized < " (* 500 h/wall-scale) "ms")))))
 
 (deftest fused-vectorized-mh-thin2-test
   (testing "fused-vectorized-mh thin=2"

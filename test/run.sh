@@ -19,8 +19,13 @@
 # `core` is a 3rd-column marker on `fast` lines (core ⊆ fast), not a separate tier —
 # the manifest stays the single, complete classification that `check` guards.
 #
-# WHY each file runs in its own process: MLX/Metal segfaults under sustained
-# single-process GPU load (see CLAUDE.md / genmlx-5ucd). Isolation is mandatory.
+# WHY each file runs in its own process: originally because MLX/Metal aborted
+# under sustained single-process GPU load (genmlx-5ucd). That crash class is
+# now catchable + proactively swept (5ucd Layer 1/2) and proven under N-way
+# parallel load (genmlx-7yam), so isolation is no longer REQUIRED for safety —
+# it is kept as a measurement/cleanliness choice: per-file walls and honest
+# per-file tallies, leaked state cannot cross files, and one file's band flake
+# can never poison another's GPU context.
 #
 # HONESTY CONTRACT (the thing run_all.sh got wrong): a Metal SIGTRAP/SIGSEGV
 # (CRASH) or a TIMEOUT is a FAIL, never a silent "skip". Exit is non-zero if any
@@ -31,12 +36,16 @@
 # the genmlx-5ucd buffer-count mitigation make concurrent GPU load safe, and
 # do_one retries once on the known parallel-bunx launcher race; genmlx-q69j).
 # TEST_JOBS=1 restores fully-serial runs. Bench stays strictly serial
-# (perf numbers under contention are noise). Slow defaults to serial but is
-# opt-in parallel via TEST_JOBS_SLOW (e.g. 4): its long files are mostly
-# small-model convergence tests that barely load the GPU, and the CUDA boxes
-# have the VRAM for the few that do (35B resident = 31.5 GiB in 96 GiB on
-# sm_120). Keep the Mac serial until validated there — the serial policy
-# exists because of Metal wedge history, not CUDA.
+# (perf numbers under contention are noise). TEST_JOBS_SLOW (default 4) sets
+# the slow tier's degree: its long files are mostly small-model convergence
+# tests that barely load the GPU, and the CUDA boxes have the VRAM for the
+# few that do (35B resident = 31.5 GiB in 96 GiB on sm_120). The old
+# serial-slow-on-Mac precaution (Metal wedge history) is RETIRED: the Metal
+# buffer-count wall is per-process and both crash defenses hold at 8-way
+# parallel (genmlx-7yam, validated M2 Max 2026-07-28: 2 full batteries at
+# TEST_JOBS=8 TEST_JOBS_SLOW=4, zero crashes/timeouts, zero parallel-only
+# failures; slow tier ~15 min vs ~71 serial). TEST_JOBS_SLOW=1 is the
+# escape hatch.
 #
 # TEST_TIME_SCALE — host-speed scale (positive integer, default 1) multiplying
 # every per-tier wall-clock cap, so slower-than-Apple hosts don't need retagged
@@ -66,7 +75,17 @@ MANIFEST="test/tiers.txt"
 NBB_CMD="bun run --bun nbb"
 export NBB_CMD
 JOBS="${TEST_JOBS:-4}"
-JOBS_SLOW="${TEST_JOBS_SLOW:-1}"
+JOBS_SLOW="${TEST_JOBS_SLOW:-4}"
+
+# GNU timeout is the honesty-contract enforcer (a hung file must FAIL, not hang
+# the battery). macOS does not ship it; Homebrew coreutils installs it as
+# `gtimeout`. Resolve whichever exists — and hard-fail if neither, because
+# running without per-file caps would silently break the contract.
+if   command -v timeout  >/dev/null 2>&1; then TIMEOUT_BIN=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT_BIN=gtimeout
+else echo "FATAL: neither 'timeout' nor 'gtimeout' found (brew install coreutils)"; exit 2
+fi
+export TIMEOUT_BIN
 
 [ -f "$MANIFEST" ] || { echo "FATAL: $MANIFEST not found"; exit 2; }
 
@@ -91,7 +110,7 @@ tier_timeout() {            # per-tier per-file wall-clock cap (seconds), x host
   esac
   echo $(( base * ${TEST_TIME_SCALE:-1} ))
 }
-tier_jobs() {               # fast/medium parallel; slow opt-in via TEST_JOBS_SLOW; bench always serial
+tier_jobs() {               # fast/medium parallel; slow via TEST_JOBS_SLOW (default 4); bench always serial
   case "$1" in
     core|fast|medium) echo "$JOBS" ;;
     slow)             echo "$JOBS_SLOW" ;;
@@ -110,7 +129,10 @@ manifest_files_for_tier() {
   fi
 }
 manifest_all_files()      { awk '!/^#/ && NF>=2 {print $2}' "$MANIFEST"; }
-disk_all_files()          { find test -name '*.cljs' -type f | sort; }
+# LC_ALL=C: the manifest is a cross-host artifact — collation must not depend
+# on the generating host's locale (en_US ignores '_' in ordering, C does not;
+# a locale mismatch makes `check` diff-fail on a byte-identical tag set).
+disk_all_files()          { find test -name '*.cljs' -type f | LC_ALL=C sort; }
 
 # ---- in-file @tier tags (the source of truth) -------------------------------
 # Each test file carries  ';; @tier <tier> [core]'  near the top. tiers.txt is a
@@ -182,18 +204,18 @@ do_check() {
   local fail=0
   # 1. duplicate manifest entries
   local dups
-  dups="$(manifest_all_files | sort | uniq -d)"
+  dups="$(manifest_all_files | LC_ALL=C sort | uniq -d)"
   if [ -n "$dups" ]; then echo "DUPLICATE manifest entries:"; echo "$dups" | sed 's/^/  /'; fail=1; fi
   # 2. files on disk missing from the manifest  (the anti-rot guarantee)
   local missing
-  missing="$(comm -23 <(disk_all_files) <(manifest_all_files | sort -u))"
+  missing="$(comm -23 <(disk_all_files) <(manifest_all_files | LC_ALL=C sort -u))"
   if [ -n "$missing" ]; then
     echo "UNCLASSIFIED — on disk but not in $MANIFEST (add a tier line):"
     echo "$missing" | sed 's/^/  /'; fail=1
   fi
   # 3. manifest entries whose file no longer exists
   local stale
-  stale="$(comm -13 <(disk_all_files) <(manifest_all_files | sort -u))"
+  stale="$(comm -13 <(disk_all_files) <(manifest_all_files | LC_ALL=C sort -u))"
   if [ -n "$stale" ]; then echo "STALE — in $MANIFEST but not on disk:"; echo "$stale" | sed 's/^/  /'; fail=1; fi
   # 4. no excluded helper may contain a real test (would be silently never-run)
   local f
@@ -256,7 +278,10 @@ do_one() {
   set -m
   local attempt
   for attempt in 1 2 3; do
-    timeout -k 10 "$to" $NBB_CMD "$file" > "$log" 2>&1 &
+    # TEST_PAR: the tier's parallel degree, for in-test absolute-ms assertions
+    # (test_helpers wall-scale) — the same J-fold contention allowance this
+    # worker already applies to its cap above (genmlx-7yam).
+    TEST_PAR="$j" "$TIMEOUT_BIN" -k 10 "$to" $NBB_CMD "$file" > "$log" 2>&1 &
     pid=$!
     trap 'kill -KILL -'"$pid"' 2>/dev/null' TERM INT
     wait "$pid"; code=$?

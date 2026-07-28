@@ -90,8 +90,13 @@ done
 # is the SURFACE drift guard (genmlx-0vwn): it partitions every @mlx-node/core
 # function export into wrapped ∪ intentional-omissions (both directions), so an
 # upstream add/delete/rename surfaces as a red test naming exactly what moved.
-# See docs/membrane-coverage.md for the matrix.
-for f in exact_test gradient_fd_test score_gradient_test clip_contract_test membrane_coverage_test; do
+# See docs/membrane-coverage.md for the matrix. parallel_stress_test is the
+# Metal buffer-count-wall guard (genmlx-7yam): 8 concurrent processes drive the
+# genmlx-5ucd wall workload — a native/mlx bump that reintroduces an unwrapped
+# alloc site (or breaks the per-process wall assumption) turns RED here instead
+# of SIGTRAP-ing a future battery. Off-Metal it self-gates to a fast negative
+# contract, so it is cheap to include unconditionally.
+for f in exact_test gradient_fd_test score_gradient_test clip_contract_test membrane_coverage_test parallel_stress_test; do
   bun run --bun nbb "test/genmlx/${f}.cljs"
 done
 
@@ -114,28 +119,46 @@ bun run --bun nbb test/genmlx/vectorized_benchmark.cljs
 
 # Tiered runner (per-file process isolation; see the test/run.sh header).
 # Per-tier wall-clock caps and the absolute-ms perf assertions (fused_mcmc_test)
-# are tuned on Apple Silicon. Slower hosts scale BOTH with the host-speed knob
-# instead of retagging tiers (genmlx-9ox0). Measured per-host values:
-TEST_TIME_SCALE=1 test/run.sh all   # Apple Silicon (the calibration host)
+# are per-HOST: scale with the TEST_TIME_SCALE host-speed knob instead of
+# retagging tiers (genmlx-9ox0). Absolute-ms assertions additionally scale by
+# the tier's parallel degree (TEST_PAR, passed by run.sh; test_helpers
+# wall-scale — genmlx-7yam), since J-way GPU contention inflates wall-clock
+# just like run.sh's own J-scaled caps. Requires GNU timeout (macOS: brew
+# coreutils; run.sh resolves timeout|gtimeout). Measured per-host values:
+TEST_TIME_SCALE=3 test/run.sh all   # M2 Max (measured 2026-07-28: fused_mcmc
+                                    # 284/1046ms vs the 200/500ms budgets at
+                                    # scale 1 — budgets validated on other hosts)
 TEST_TIME_SCALE=8 test/run.sh all   # Jetson AGX Thor (aarch64, sm_110)
 TEST_TIME_SCALE=6 test/run.sh all   # RTX PRO 6000 (x86_64, sm_120; measured 2026-07-26,
                                     # binding ratio llm/token_mcmc 206s vs 45s fast cap)
+# M4 mini: scale not yet measured (separate arch column — do not assume the
+# M2 Max value).
 
-# On the CUDA boxes, ALSO parallelize the slow tier (the standing way to run
-# the battery there — the serial-slow policy exists for Metal wedge history,
-# not CUDA; slow files measured ~600 MiB VRAM each under 4 lanes on sm_120):
-TEST_TIME_SCALE=6 TEST_JOBS_SLOW=4 test/run.sh all   # RTX; Thor: scale 8
-# Mac stays TEST_JOBS_SLOW unset (serial) until validated there. Thor VALIDATED
-# 2026-07-27 (fresh boot): 110 min vs 175 serial (slow tier ~51 min at 4-way,
-# ~2.3x), 428/3 with all 3 misses re-passing solo (band flakes, none
-# parallel-only); min MemAvailable grazed 26 GB vs the 20 GB h3p5 floor —
-# run batteries under the floor-guard wrapper on Thor.
+# The slow tier runs TEST_JOBS_SLOW-way (default 4) on ALL hosts. The old
+# serial-slow-on-Mac precaution (Metal wedge history) is RETIRED (genmlx-7yam):
+# the ~499000 Metal buffer-count wall is PER-PROCESS (proven: 8 workers held
+# 800k live buffers fleet-wide, zero failures — parallel_stress_test), and both
+# crash defenses (5ucd catchable Layer 1 + x7cl proactive sweep) hold at 8-way.
+# TEST_JOBS_SLOW=1 is the escape hatch.
+# Thor VALIDATED 2026-07-27 (fresh boot): 110 min vs 175 serial (slow tier
+# ~51 min at 4-way, ~2.3x), 428/3 with all 3 misses re-passing solo (band
+# flakes, none parallel-only); min MemAvailable grazed 26 GB vs the 20 GB h3p5
+# floor — run batteries under the floor-guard wrapper on Thor.
 # RTX VALIDATED 2026-07-28 (genmlx-ehni): two back-to-back full batteries at
 # scale 6 / 4-way slow measured 76m14s (430/1 — one pre-existing band flake)
 # and 73m21s (431/0 PASS); fast tier ~4 min of that. No serial baseline was
 # taken on this box, so the 4-way SPEEDUP is unmeasured here — only the wall.
 # Peak VRAM stayed far under the 96 GB card (sampled ~3 GB mid-medium-tier);
 # no floor-guard needed, unlike Thor's unified memory.
+# M2 Max VALIDATED 2026-07-28 (genmlx-7yam): two full batteries at
+# TEST_JOBS=8 TEST_JOBS_SLOW=4. Battery 2 (scale 3, LLM fixtures live):
+# 27.7 min wall, 432/2 with both misses re-passing solo (band flakes, none
+# parallel-only; slow tier 82/82 in ~15 min vs the ~71 min serial-era
+# baseline). Battery 1's 11 misses were all env drift (missing fixtures, no
+# timeout binary) or pre-existing per-arch reds — none parallel-only.
+# M4 mini: NOT yet validated (32 GB — watch RAM; LLM/35B fixtures are
+# M2-Max-only); use TEST_JOBS_SLOW=1 there until a session on that box
+# validates it.
 ```
 
 No build step for the ClojureScript — nbb interprets it directly. The **native

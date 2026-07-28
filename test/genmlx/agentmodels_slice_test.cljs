@@ -182,9 +182,17 @@
         s0   (:start-idx eq-mdp)]
     (assert-true (str "  " label ": recursive EU matches tensor Q (max err < 1e-4)")
                  (< (apply max errs) 1e-4))
-    (assert-equal (str "  " label ": first action agrees at start")
-                  (argmax-idx (get Qh s0))
-                  (argmax-idx (mapv #(eu s0 %) (range (:A eq-mdp)))))))
+    ;; First-action agreement UP TO VALUE TIES: this grid is symmetric, so two
+    ;; actions at the start tie EXACTLY (measured M2 Max: tensor float32 splits
+    ;; them by ~1e-7 toward one index, recursive float64 by ~1e-15 toward the
+    ;; other). Index equality over an exact tie is arch-noise; assert the CHOSEN
+    ;; actions have equivalent Q instead (same 1e-4 the row check uses).
+    (let [qrow (get Qh s0)
+          ia (argmax-idx qrow)
+          ib (argmax-idx (mapv #(eu s0 %) (range (:A eq-mdp))))]
+      (assert-true (str "  " label ": first action agrees at start up to value ties"
+                        " (tensor " ia " vs recursive " ib ")")
+                   (< (Math/abs (- (nth qrow ia) (nth qrow ib))) 1e-4)))))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
 (when (pos? @failed) (js/process.exit 1))
