@@ -1575,7 +1575,11 @@
                 (if @degraded
                   (vgenerate gf args constraints n key)
                   (try
-                    (let [out (mx/compiled-call1 handle (rng/ensure-key key))]
+                    ;; Captured replay (genmlx-7prh): outputs come back
+                    ;; EVALUATED; after the first call the native side is
+                    ;; launch-only (retained CUDA graph execs).
+                    (let [out (mx/compiled-call-captured
+                               handle #js [(rng/ensure-key key)])]
                       (assoc vt-template
                              :choices (rebuild out)
                              :score   (aget out 1)

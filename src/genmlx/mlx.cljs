@@ -889,6 +889,35 @@
    everywhere the call is not per-iteration hot."
   [handle arr] (.compiledCall c handle #js [arr]))
 
+(defn compiled-call-captured
+  "Captured-replay call (genmlx-7prh): like compiled-call, but outputs come
+   back EVALUATED (fresh arrays — later eval!/materialize! are no-ops), and
+   after the first successful capture every later call is LAUNCH-ONLY in the
+   CUDA engine: the retained cudaGraphExecs re-launch with the new inputs
+   memcpy'd into staged buffers — no tape clone, no per-op scheduler walk,
+   the ~2-3 orders of magnitude of host work the plain replay still pays on
+   fixed-structure hot loops. Takes the raw JS inputs array; returns the raw
+   JS outputs array (hot-loop convention, cf. compiled-call1).
+
+   Falls back PERMANENTLY (per handle) to trace-cache replay + eval when
+   capture is unsupported (Metal, CPU-only builds, MLX_USE_CUDA_GRAPHS=0)
+   or the tape cannot capture (a CPU-stream op, a graph fallback, foreign
+   GPU work interleaving the capture window) — behaviorally identical,
+   just slower. compiled-captured? reports which path a handle is on.
+
+   The capture window contract: the FIRST call per handle must run with no
+   concurrent GPU work in the process (GenMLX's synchronous single-threaded
+   model satisfies this everywhere; do not call it from a server handler
+   racing an LLM decode). The capture binds to the first call's input
+   shapes/dtypes; drifting shapes fall back per call to the plain path."
+  [handle inputs-js-array] (.compiledCallCaptured c handle inputs-js-array))
+
+(defn compiled-captured?
+  "True when the handle completed a replay capture and its
+   compiled-call-captured calls are launch-only — the honesty probe: tests
+   and benches assert the path instead of guessing from timings."
+  [handle] (.compiledIsCaptured c handle))
+
 (defn compiled-free!
   "Free a persistent compiled handle: drops its cached graphs and releases
    the builder reference. Effectful; idempotent (false when already freed)."

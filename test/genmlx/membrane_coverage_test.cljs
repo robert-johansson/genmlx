@@ -262,10 +262,11 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 230 (count exported-fns))
+      (is (= 232 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 230; 2026-07-28 genmlx-cqgx added the persistent-"
-               "compile trio compileCreate/compiledCall/compiledFree) "
+               " fns (pinned at 232; 2026-07-28 genmlx-cqgx added the persistent-"
+               "compile trio compileCreate/compiledCall/compiledFree, then "
+               "genmlx-7prh added compiledCallCaptured/compiledIsCaptured) "
                "— the partition test above pinpoints what moved."))
       (is (= 49 (count omitted))
           (str "intentional-omissions size changed: " (count omitted) " (pinned at 49)."))

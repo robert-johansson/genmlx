@@ -101,6 +101,38 @@ report both.
   failing on closure params is a real conjugacy-coverage gap (cf. the
   genmlx-7zuq class).
 
+### Post-Phase-3.5 (wrapper hoist + captured-exec replay — genmlx-w9mz/7prh, 2026-07-28)
+
+Two levers landed the same night, driven by a stage profile of the 0.52 ms
+call (genmlx-w9mz: ~0.19 ms SCI wrapper + ~0.31 ms replay/eval, of which
+67 us is the FIXED eval! floor and ~5 us/op the scheduler walk):
+
+1. **Wrapper hoist** (genmlx 99f4cec): per-call-invariant work moved to
+   factory time (transient choicemap rebuild, pre-tagged trace template,
+   raw-array NAPI returns, shape-raw key check). 0.52 -> 0.42 ms.
+2. **Captured-exec replay** (genmlx-7prh, the engine-side lever): the
+   persistent CompiledFn's FIRST call now captures its eval into retained
+   CUDA graph execs with retained buffers; every later call memcpys the key
+   into a staged buffer, relaunches the retained execs, and returns
+   evaluated output copies — no tape clone, no per-op scheduler walk, no
+   separate eval round-trip. Found and fixed en route: the CUDA fork's
+   Buffer::raw_ptr() migrates device-pool buffers to unified memory on any
+   host read, orphaning (and use-after-freeing) the captured params — the
+   capture paths now use the no-migrate gpu_ptr accessor.
+
+| N | GenJAX | pre (2b) | **post-3.5** | gap now |
+|---|---|---|---|---|
+| any of 1–30000 | 0.019 ms | 0.52 ms | **0.29 ms** (p10 0.28) | **~15x** |
+
+logZ at N=30000: −18.76 (unchanged, MC noise vs GenJAX −18.72). Equivalence
+pinned by capture_replay_test (same-key bitwise vs the plain replay,
+aliasing tripwire, shape-drift fallback) and the untouched
+vgenerate_compiled_test suite. Residual 0.29 ms: ~0.12 ms SCI wrapper
+(ensure-key + rebuild + record assoc) + ~0.15 ms captured call (memcpy +
+launches + sync + 4 output-copy allocations). Next levers: per-call output
+clone allocation (double-buffer), the remaining SCI wrapper, or accept —
+the row is now within 2x of the pip-MLX Phase-0 floor measurement.
+
 ## linreg_mala — single-chain joint MALA, same posterior, sweep over chain length
 
 sm_120, measured 2026-07-28. Pins: genmlx `4518858` src tree (bench's mala
@@ -176,3 +208,31 @@ alongside the vgenerate/IS row.
   the fallback's honest `:acceptance-rate nil` through CLJS `+` (nil→0).
   Bench now reports null; `fused-mala`/`fused-hmc` docstrings state the nil.
   The block path itself still does not track acceptance.
+
+### Post-Phase-3.5 (captured-exec replay — genmlx-7prh, 2026-07-28)
+
+The chain replay's 223 ms at S=1000 split (genmlx-w9mz) as 58 ms tape clone
++ ~158 ms per-op eval walk + ~8 ms scaffolding — 97% exactly what the
+captured-exec replay eliminates. With `persist-chain`/`persist-chain1` on
+the captured path (first call captures the chain eval into ~hundreds of
+retained CUDA graph execs at the 100-node commit cadence; replays are
+memcpy + launches + sync):
+
+| S | GenJAX | post-2a | **post-3.5** | gap now |
+|---|---|---|---|---|
+| 10 | 0.21 ms | 6.8 ms | 7.6 ms | 36x (scaffolding-bound) |
+| 100 | 1.62 ms | 23.5 ms | **10.7 ms** | 6.6x |
+| 1000 | 15.6 ms | 229 ms | **42.6 ms** | **2.7x** |
+
+Acceptance 0.80–0.82 (GenJAX 0.80–0.89 at the same eps), slope-tails
+bracket the analytic posterior mean — chain behavior bit-identical to the
+pre-capture path (fused_mcmc + warmup-reproducibility pins unchanged).
+
+Reading the residual: the S=1000 captured replay itself measures ~34 ms —
+now plausibly EXECUTION-bound (~30k sequential tiny kernels; XLA fuses the
+step body into far fewer) — with ~8 ms per-call scaffolding on top (scalar
+init generate in SCI + noise pre-gen + marshaling, the h5wg remnant). At
+S=10 the scaffolding IS the number. Next levers, in expected order: the
+h5wg scaffolding (dominates S<=100), fewer/larger kernels per step (engine
+fusion — the first lever that would need MORE than launch amortization),
+and the adaptive-warmup path (still eager).

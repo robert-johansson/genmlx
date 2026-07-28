@@ -276,7 +276,12 @@
     (mx/compile-fn chain-fn)
     (let [h (mx/compile-create chain-fn)]
       (with-meta
-        (fn [& args] (to-array (apply mx/compiled-call h args)))
+        ;; Captured replay (genmlx-7prh): the first call traces AND captures
+        ;; the eval into retained CUDA graph execs; later calls are
+        ;; launch-only, returning EVALUATED outputs (callers' materialize!
+        ;; becomes a no-op). Uncapturable tapes (cpu device, graph fallback)
+        ;; latch the plain trace-cache replay inside the native handle.
+        (fn [& args] (mx/compiled-call-captured h (to-array args)))
         {:genmlx/compiled-handle h}))))
 
 (defn- persist-chain1
@@ -294,7 +299,10 @@
     (mx/compile-fn chain-fn)
     (let [h (mx/compile-create chain-fn)]
       (with-meta
-        (fn [& args] (nth (apply mx/compiled-call h args) 0))
+        ;; Captured replay (genmlx-7prh) — see persist-chain. Blocks 2..K of
+        ;; a single sampler run launch retained execs instead of re-cloning
+        ;; and re-walking the block tape.
+        (fn [& args] (aget (mx/compiled-call-captured h (to-array args)) 0))
         {:genmlx/compiled-handle h}))))
 
 (defn- persist-point-fn
