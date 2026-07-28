@@ -224,14 +224,37 @@ layer.** This is a decision, not an omission. Grounds:
 Until one of those happens, "compile" work belongs to the ladder (L4 fused
 graphs), not to `mx/compile-fn`.
 
-## Other arches
+## Consolidated per-arch table (genmlx-sv3z)
 
-| | Metal (M4) | sm_120 (RTX PRO 6000) |
-|---|---|---|
-| status | not yet run | **done 2026-07-28** — see the sm_120 section above |
+The POST-milestone state — one fresh full bench run per arch at (or after)
+genmlx `6e2fc61`, so columns are comparable. The sections above are the
+historical inventory + before/after record and the per-arch detail (the
+sm_120 caveats live there — its batched totals are timer-noise-scale, read
+those speedups as order-of-magnitude). This table is the current state.
+`bun run --bun nbb cost_per_particle.cljs` from bench/, strictly serial.
 
-Run `bun run --bun nbb bench/cost_per_particle.cljs` (bench tier, strictly
-serial, nothing else on the GPU) and add a section like the ones above.
+| measurement | sm_110 (Thor) | Metal (M4) | sm_120 (RTX) |
+|---|---|---|---|
+| provenance | 2026-07-28, 6e2fc61 | — | 2026-07-28, 6e2fc61 |
+| membrane eval (tiny add+eval!) | 0.105 ms (0.05–0.11 across runs) | | 0.0169 ms |
+| scalar `p/generate` loop | 1.8–2.7 ms/p flat | | ~4.9 ms/p flat |
+| scalar `importance-sampling` | 3.8–3.9 ms/p flat | | ~4.1 ms/p flat |
+| scalar `mh` (post-k1z7, S=10) | 11.1 ms/chain-step; 5.66 long-chain | | ~5.0 ms/chain-step |
+| scalar `smc` | 4.2 ms/p-step flat | | ~3.6 ms/p-step flat |
+| scalar `smcp3` | 2.1–2.2 ms/p-step flat | | ~6.0 ms/p-step flat |
+| `vgenerate` N=3000 | 6.8 ms total → 0.0023 ms/p | | 1.6 ms → 0.0005 |
+| — build/eval split at N=3000 | 4.4 host / 1.4 GPU (76% host) | | 1.2 / 0.2 (86% host) |
+| `vectorized-importance` N=3000 | 5.7 ms → 0.0019 | | 1.8 ms → 0.0006 |
+| `vmh` N=3000 (10 sweeps) | 70.9 ms → 0.0024 /chain-step | | 35.7 ms → 0.0012 |
+| `vsmc` N=3000 (5 steps) | 34.0 ms → 0.0023 /p-step | | 18.6 ms → 0.0012 |
+| `vsmcp3` N=3000 (3 steps) | 21.7 ms → 0.0024 /p-step | | 8.2 ms → 0.0009 |
+| spliced-Map plate N=3000 | 5.7 ms → 0.0019 /p | | 9.3 ms → 0.0031 |
+
+Both measured columns are now at the SAME pin, so the sm_120 section's
+"confounded until Thor re-runs at this pin" caveat is resolved: the remaining
+scalar-row differences (e.g. generate 2.4 vs 4.9, smcp3 2.2 vs 6.0 — Thor
+FASTER despite the slower GPU; mh 5.66 vs 5.0) are host-side arch/toolchain
+effects, consistent with these paths being host-bound.
 
 Metal is the remaining gap, and it carries an extra obligation the CUDA boxes
 do not (genmlx-sv3z): the k1z7/ugq9 tidy cadences were sized against Metal's
