@@ -101,8 +101,22 @@
                        (count mala-samples))
           hmc-mean (/ (reduce + (mapv extract-mu hmc-samples))
                       (count hmc-samples))]
-      ;; Both should be near the same posterior mean
-      (close? mala-mean hmc-mean 0.5))))
+      ;; Each sampler against the ANALYTIC posterior mean, not against the other
+      ;; (genmlx-crdf). `(close? mala-mean hmc-mean 0.5)` spent the band on the
+      ;; SUM of two independent errors: measured over 20 keys at this budget,
+      ;; each estimator is individually accurate (max |mala - 2.8846| = 0.256,
+      ;; max |hmc - 2.8846| = 0.307) but their errors point opposite ways often
+      ;; enough that |mala - hmc| crossed 0.5 in 1 of 20 — a 5% flake with both
+      ;; samplers behaving correctly. The failing key had mala 2.629 and hmc
+      ;; 3.191, i.e. both within 0.31 of truth.
+      ;;
+      ;; Asserting each against truth is also STRICTLY STRONGER: the pair form
+      ;; passes when both samplers drift the same way, which is exactly the
+      ;; shared-bug case this law exists to catch. Same tolerance (0.5), now
+      ;; carrying one error instead of two — measured margin 0.307/0.5, 20/20.
+      ;; GM1/GM2 above already assert this way; only GM3 compared the pair.
+      (and (close? mala-mean posterior-mean 0.5)
+           (close? hmc-mean posterior-mean 0.5)))))
 
 ;; ---------------------------------------------------------------------------
 ;; GM4. MALA samples are finite and in reasonable range
