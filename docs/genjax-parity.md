@@ -260,3 +260,66 @@ wall now wins at S=10/100 from call one AND in steady state the gap is
 2-3x everywhere. The row's remaining levers are all engine-side kernel
 economics (fewer/larger kernels per step — XLA-class step fusion), plus
 the eager adaptive-warmup path if a spec ever pins it.
+
+## linreg_hmc — single-chain joint HMC, same posterior, sweep over chain length × leapfrog steps
+
+sm_120, measured 2026-07-29 (bean genmlx-klwf). Pins: genmlx `ed2be85` src
+tree (bench's hmc support + the :hmc limit changes land in this doc's
+commit), mlx-node `885c2ee`, genjax 1.0.13, jax 0.7.2/cuda13, driver
+595.71.05. Both sides: identical algorithm — genjax's `inference.hmc` and
+GenMLX's `fused-hmc` implement the same leapfrog scheme (merged half-kicks,
+L+1 gradient evals per step), same MH criterion on −ΔH, identity mass,
+N(0,1) momentum; eps 0.08 frozen in the spec after a genjax probe showed
+non-saturated acceptance there (0.84–0.93). GenMLX rides the whole-call
+factory (`fused-hmc-compiled`) from the start — this row is the first
+measured END-TO-END on the post-3.5b machinery rather than iterated onto
+it. Timed unit both sides: init (constrained generate, latents from prior)
++ S-step chain of L-leapfrog HMC, materialized.
+
+| S | L | GenJAX median | GenMLX median | steady gap | GenJAX warmup | GenMLX warmup |
+|---|---|---|---|---|---|---|
+| 10 | 8 | 0.363 ms | 2.52 ms | 7.0x | 1404 ms | **235 ms** |
+| 100 | 8 | 3.67 ms | 15.5 ms | 4.2x | 1436 ms | 4755 ms |
+| 1000 | 8 | 32.6 ms | 198 ms | 6.1x | 1474 ms | 220 s |
+| 10 | 32 | 1.06 ms | 5.50 ms | 5.2x | 1434 ms | 1429 ms |
+| 100 | 32 | 10.5 ms | 66.3 ms | 6.3x | 1465 ms | 44.8 s |
+| 1000 | 32 | 100.8 ms | **7234 ms** | **72x** * | 1487 ms | 16.3 s |
+
+\* block-compiled fallback, not the captured factory — see below.
+
+**Algorithm identity held tightly across every cell**: acceptance
+0.995/1.000, 0.914/0.915, 0.902/0.900, 0.930/0.910, 0.836/0.841 (GenJAX/
+GenMLX; the 72x cell's block path doesn't track acceptance — genmlx-d62h —
+reported null). Slope-tails at S=1000: 1.997/2.001 (L=8) and 1.987/1.996
+(L=32) against the analytic posterior mean 1.9917.
+
+**Reading the steady gaps.** The five captured-factory cells sit at
+4.2–7.0x — the MALA row's 2.2–3.2x scaled up by HMC's heavier per-step
+kernel count (~L+1 gradient evals per step, each a multi-kernel
+score+vjp subgraph; XLA fuses the step body into a handful of kernels).
+Cause-bean: genmlx-lnzc (step fusion / kernel economics). The 72x cell is
+S×L = 32000 > the 16000 CUDA fused limit: it falls to block-compiled HMC
+at 226 µs/leapfrog vs the captured path's 25 µs/leapfrog — suspected
+per-call re-trace of block handles plus per-block sync cadence.
+Cause-bean: genmlx-dys7 (chunked captured chains / block-handle
+persistence).
+
+**The warmup story is this row's headline finding.** GenJAX's jit is
+1.40–1.49 s FLAT at every cell — lax.scan keeps the XLA program
+constant-size in S and L. GenMLX's whole-call trace cost is **quadratic
+in graph size**: 800 ops → 4.8 s, 3200 → 44.8 s, 8000 → 220 s (t ∝ ops²
+almost exactly), and the 32000-op trace was killed at a 30-minute wall
+cap (extrapolation: ~58 min). GenMLX still wins warmup where traces are
+small (S=10: 235 ms / 1429 ms vs ~1.4 s) — but past ~1000 ops the ledger
+inverts hard. Per the user directive recorded on epic genmlx-1ixc
+(2026-07-29), warmup gaps must approach zero too: the quadratic (an
+accidental O(n²), not fundamental unroll cost, which would be linear) and
+the missing loop/scan primitive are tracked as genmlx-geiw — the
+highest-leverage item this row produced.
+
+**Limits changed by this row** (`mcmc.cljs`): persist-trace-ops :hmc
+2500 → 8000 (measured-OK whole-call traces at 3200/8000; no SIGSEGV — the
+HMC boundary is trace TIME, not stack depth). CUDA fused :hmc stays
+16000: 32000 was attempted and REJECTED on the 30-min trace DNF. Both
+comments now state measured trace time as an acceptance criterion for any
+future raise.

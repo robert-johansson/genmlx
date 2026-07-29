@@ -51,7 +51,7 @@
 (assert (= "float32" (:float_dtype spec)))
 (assert (= "linear_regression" (get-in spec [:model :type])))
 (def alg-type (get-in spec [:algorithm :type]))
-(assert (contains? #{"importance_sampling" "mala"} alg-type))
+(assert (contains? #{"importance_sampling" "mala" "hmc"} alg-type))
 (when (= alg-type "importance_sampling")
   (assert (= "prior" (get-in spec [:algorithm :proposal]))))
 (doseq [site [:slope :intercept]]
@@ -286,6 +286,94 @@
      :mean_slope_tail (round-to (slope-tail-mean @last-r s) 4)}))
 
 ;; ---------------------------------------------------------------------------
+;; HMC sweep (fused-hmc / fused-hmc-compiled — the mala runner's shape with a
+;; leapfrog dimension; sweep is the cross product n_steps x leapfrog_steps).
+;; ---------------------------------------------------------------------------
+
+(defn hmc-one-call [s l device chain-fn-box k]
+  (let [alg (:algorithm spec)
+        r   (mcmc/fused-hmc
+             (cond-> {:samples s :burn (:burn_in alg) :thin (:thin alg)
+                      :step-size (:step_size alg) :leapfrog-steps l
+                      :addresses (mapv keyword (:selection alg))
+                      :key k :device device}
+               @chain-fn-box (assoc :chain-fn @chain-fn-box))
+             hmodel [xs] obs)]
+    (mx/eval! (:samples r))
+    (vreset! chain-fn-box (:chain-fn r))
+    r))
+
+(defn make-hmc-runner
+  "Per-(s, l, device) hmc runner. On :gpu the whole-call captured factory
+   (mcmc/fused-hmc-compiled); on :cpu the eager fused-hmc with :chain-fn
+   reuse. Factory creation OUTSIDE timing; the first call (trace + capture)
+   is the measured warmup, symmetric with jit. Cells past the fused or
+   trace-depth boundaries degrade LOUDLY (factory note / block-compiled
+   note) — the printed notes are part of the record."
+  [s l device]
+  (let [alg (:algorithm spec)]
+    (if (= device :gpu)
+      (let [f (mcmc/fused-hmc-compiled
+               {:samples s :burn (:burn_in alg) :thin (:thin alg)
+                :step-size (:step_size alg) :leapfrog-steps l
+                :addresses (mapv keyword (:selection alg))}
+               hmodel [xs] obs)]
+        (fn [k] (let [r ((:call f) k)] (mx/eval! (:samples r)) r)))
+      (let [box (volatile! nil)]
+        (fn [k] (hmc-one-call s l device box k))))))
+
+(defn probe-device-hmc [s l]
+  (into {}
+        (for [d [:cpu :gpu]]
+          (let [runner (make-hmc-runner s l d)
+                ks  (mapv (fn [k] (mx/eval! k) k)
+                          (rng/split-n (rng/fresh-key 99) 3))]
+            (runner (nth ks 0))
+            (mx/sweep-dead-arrays!)
+            [d (median (mapv (fn [i]
+                               (let [t (time-ms #(runner (nth ks i)))]
+                                 (mx/sweep-dead-arrays!) t))
+                             [1 2]))]))))
+
+(defn sweep-hmc [s l device]
+  (let [{:keys [warmup_runs timed_runs]} (:measurement spec)
+        run-keys (mapv (fn [k] (mx/eval! k) k)
+                       (rng/split-n (rng/fresh-key 0) (+ warmup_runs timed_runs)))
+        runner    (make-hmc-runner s l device)
+        t0        (js/performance.now)
+        _         (runner (nth run-keys 0))
+        warmup-ms (- (js/performance.now) t0)
+        _         (mx/sweep-dead-arrays!)
+        _         (doseq [r (range 1 warmup_runs)]
+                    (runner (nth run-keys r))
+                    (mx/sweep-dead-arrays!))
+        last-r    (volatile! nil)
+        accs      (volatile! [])
+        timings   (mapv (fn [r]
+                          (let [k  (nth run-keys (+ warmup_runs r))
+                                t0 (js/performance.now)
+                                res (runner k)
+                                ms (- (js/performance.now) t0)]
+                            (vreset! last-r res)
+                            (vswap! accs conj (:acceptance-rate res))
+                            (mx/sweep-dead-arrays!)
+                            ms))
+                        (range timed_runs))
+        sorted    (vec (sort timings))]
+    {:n_steps s
+     :leapfrog_steps l
+     :warmup_ms   (round-to warmup-ms 3)
+     :median_ms   (round-to (percentile sorted 0.5) 4)
+     :p10_ms      (round-to (percentile sorted 0.1) 4)
+     :p90_ms      (round-to (percentile sorted 0.9) 4)
+     ;; Block-compiled fallback: :acceptance-rate nil, reported as null
+     ;; (genmlx-d62h — never coerce nil through +).
+     :acceptance_rate (let [as (remove nil? @accs)]
+                        (when (seq as)
+                          (round-to (/ (reduce + as) (count as)) 4)))
+     :mean_slope_tail (round-to (slope-tail-mean @last-r s) 4)}))
+
+;; ---------------------------------------------------------------------------
 ;; Run + report
 ;; ---------------------------------------------------------------------------
 
@@ -351,4 +439,28 @@
                                               (.toFixed a 3) "nil(fallback)")
                                "   slope-tail " (.toFixed (:mean_slope_tail r) 3)))
                  r))
-             (get-in spec [:sweep :n_steps]))))))
+             (get-in spec [:sweep :n_steps]))))
+
+    "hmc"
+    (let [_      (assert (= "identity" (get-in spec [:algorithm :mass_matrix])))
+          ps     (second (get-in spec [:sweep :n_steps]))
+          pl     (first (get-in spec [:sweep :leapfrog_steps]))
+          probe  (probe-device-hmc ps pl)
+          device (key (apply min-key val probe))]
+      (println (str "device probe (median ms at S=" ps " L=" pl "): "
+                    (pr-str probe) " -> " device))
+      (write-result!
+       conv-diff {:device (name device)
+                  :device_probe (into {} (map (fn [[k v]] [k (round-to v 3)]) probe))}
+       (vec
+        (for [l (get-in spec [:sweep :leapfrog_steps])
+              s (get-in spec [:sweep :n_steps])]
+          (let [r (sweep-hmc s l device)]
+            (println (str "  S=" (.padStart (str s) 5)
+                          " L=" (.padStart (str l) 3)
+                          "  warmup " (.padStart (.toFixed (:warmup_ms r) 1) 9) " ms"
+                          "   median " (.padStart (.toFixed (:median_ms r) 3) 9) " ms"
+                          "   accept " (if-some [a (:acceptance_rate r)]
+                                         (.toFixed a 3) "nil(fallback)")
+                          "   slope-tail " (.toFixed (:mean_slope_tail r) 3)))
+            r)))))))

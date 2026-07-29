@@ -232,14 +232,22 @@
    leapfrog sub-steps):
      mala 2500 ops (1250 steps) OK / 5000 (2500 steps) SIGSEGV
      mh   1250 ops (1250 steps) OK / 2000 steps SIGSEGV
-     hmc  2500 ops (125 x 20)   OK / crash point not reached
+     hmc  8000 ops (1000 x 8) OK / 32000 DNF (2026-07-29, genmlx-klwf:
+          whole-call fused-hmc-compiled trace at S*L = 3200 and 8000 pass
+          on the 12-site GFI linreg — no SIGSEGV, HMC's per-op trace depth
+          is shallower than MH/MALA's. 32000 was killed at a 30-MINUTE
+          wall cap, still tracing at 200% CPU / 16 GB RSS: the boundary
+          here is superlinear TRACE TIME, not stack depth. Do not raise
+          past a point whose measured trace time is acceptable as a
+          per-shape warmup — trace cost is part of the contract, per the
+          near-zero-warmup-gap directive on the parity epic genmlx-1ixc)
    The same chains pass under ulimit -s 65536, confirming stack overflow in
    MLX's recursive compile passes (eval's scheduler is iterative — the
    identity path never overflows). Values sit AT measured-OK points; raise
    only WITH a new measurement. A much larger per-step score graph lowers
    the real boundary, so this is a guard, not a guarantee — the durable fix
    (iterative compile passes / big-stack trace thread) is beaned."
-  {:mh 1250 :mala 2500 :hmc 2500})
+  {:mh 1250 :mala 2500 :hmc 8000})
 
 (defn- persist-chain
   "Persistent-compile a pure fused chain builder (genmlx-z2gt Phase 2a,
@@ -808,10 +816,16 @@
 ;;   mala ops=16000 (8000 steps)      16.2 s/call, 3.5 GiB VRAM, accept 0.80
 ;;   mh   ops=16000 (16000 steps)     43.6 s/call, 12.4 GiB VRAM, accept 0.22
 ;;   hmc  ops=16000 (1600x10 leapfrog) 24.3 s/call, 12.2 GiB VRAM, accept 0.97
-;; All fused, all linear in size — no failures, no cliff. 16000 is where the
-;; probe stopped, not where CUDA broke; raise it WITH a new measurement, not
-;; by extrapolation. Both tiers share the value (probed at the heavier :gfi
-;; tier). VRAM at the boundary is <13 GiB on the 96 GB card.
+;; All fused, all linear in size — no failures, no cliff. The values are
+;; where the probes stopped, not where CUDA broke; raise WITH a new
+;; measurement, not by extrapolation. Both tiers share the value (probed at
+;; the heavier :gfi tier). VRAM at the boundary is <13 GiB on the 96 GB card.
+;;   hmc at 32000 was attempted 2026-07-29 (genmlx-klwf, linreg_hmc's
+;;   largest cell) and REJECTED: the whole-call captured trace at S*L =
+;;   32000 was still running at a 30-minute wall cap (superlinear trace
+;;   time, no crash). 16000 stands; past it HMC takes the block-compiled
+;;   fallback, which is the right trade under the near-zero-warmup-gap
+;;   directive (epic genmlx-1ixc).
 (def ^:private fused-ops-limits
   {:metal {:gfi    {:mh 2000 :mala 1500 :hmc 2000}
            :native {:mh 2000 :mala 1500 :hmc 2000}}
