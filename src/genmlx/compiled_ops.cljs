@@ -1328,37 +1328,45 @@
                :members (mapv :addr group)
                :lits-per-site (mapv :lits group)}))))
 
+(defn- compile-family-sig
+  "Compile a family's abstracted sig against the binding env. Literal
+   columns whose G values are all equal stay plain numbers (no [G] input
+   for constants); varying columns become materialized [G] constants
+   appended to the args vector, with the placeholder symbols bound as
+   synthetic :param entries — compile-expr is reused unchanged.
+   Returns {:cargs [fn-or-nil ...] :args+lits [...]}."
+  [sig lits-per-site binding-env mlx-args]
+  (let [n-args (count mlx-args)
+        n-lits (count (first lits-per-site))
+        lit-cols (mapv (fn [p]
+                         (let [col (mapv #(nth % p) lits-per-site)]
+                           (if (apply = col)
+                             (first col)
+                             (let [a (mx/array col)]
+                               (mx/materialize! a)
+                               a))))
+                       (range n-lits))
+        env' (reduce (fn [e p]
+                       (assoc e (str "ᐩfam" p)
+                              {:kind :param :index (+ n-args p)}))
+                     binding-env
+                     (range n-lits))]
+    {:cargs (mapv #(compiled/compile-expr % env' #{}) sig)
+     :args+lits (into mlx-args lit-cols)}))
+
 (defn- build-family-lp-fns
-  "Build one stacked log-prob closure per family. Literal columns whose G
-   values are all equal stay plain numbers (no [G] input for constants);
-   varying columns become materialized [G] constants appended to the args
-   vector, with the placeholder symbols bound as synthetic :param entries —
-   compile-expr is reused unchanged. reduce-fn folds the elementwise
+  "Build one stacked log-prob closure per family (see compile-family-sig
+   for the literal-column mechanics). reduce-fn folds the elementwise
    [.., G]-shaped lp to the score shape (full mx/sum for the scalar score;
    last-axis keepdims sum for the batched [N,1] score).
    Returns [lp-fns family-addrs]; a family whose sig fails to compile falls
    back to per-site scoring (dropped from family-addrs)."
   [families binding-env mlx-args obs-values reduce-fn]
-  (let [n-args (count mlx-args)
-        built
+  (let [built
         (keep (fn [{:keys [dist-type sig members lits-per-site]}]
                 (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
-                      n-lits (count (first lits-per-site))
-                      lit-cols (mapv (fn [p]
-                                       (let [col (mapv #(nth % p) lits-per-site)]
-                                         (if (apply = col)
-                                           (first col)
-                                           (let [a (mx/array col)]
-                                             (mx/materialize! a)
-                                             a))))
-                                     (range n-lits))
-                      args+lits (into mlx-args lit-cols)
-                      env' (reduce (fn [e p]
-                                     (assoc e (str "ᐩfam" p)
-                                            {:kind :param :index (+ n-args p)}))
-                                   binding-env
-                                   (range n-lits))
-                      cargs (mapv #(compiled/compile-expr % env' #{}) sig)
+                      {:keys [cargs args+lits]}
+                      (compile-family-sig sig lits-per-site binding-env mlx-args)
                       stacked (let [s (mx/stack (mapv obs-values members))]
                                 (mx/materialize! s)
                                 s)]
@@ -1370,6 +1378,117 @@
               families)]
     [(mapv :lp-fn built)
      (into #{} (mapcat :members) built)]))
+
+(def ^:private affine-family-disabled?
+  "Matmul-form family emission is OPT-IN via GENMLX_AFFINE_FAMILY=1
+   (genmlx-1fbs). Measured 2026-07-29 (sm_120): the emission alone is
+   net-NEGATIVE on kernel count — it adds the matmuls but the per-latent
+   index/one-hot extraction survives for the PRIOR sites, so the
+   gather/scatter tax it targets does not drop (MALA tape 4287 -> 4592,
+   HMC 16875 -> 19677 at S=100). Flip the default only together with
+   stacked latent-prior scoring (the rung-2 companion recorded on the
+   bean), re-measured by census."
+  (delay (not= "1" (aget (.-env js/process) "GENMLX_AFFINE_FAMILY"))))
+
+(defn- build-affine-family-lp-fns
+  "Matmul-form emission (genmlx-1fbs) for gaussian observed families whose
+   MEAN sig-arg is AFFINE in the latents and whose SIGMA is latent-free:
+
+     mean_g = Σ_k B[g,k]·latent_k + base_g
+     scalar:  mean = (matmul B q) + base          (B [G,K], q [K])
+     batched: mean = (matmul params Bᵀ) + base    (params [N,K])
+
+   One matmul forward and one matmul backward per grad eval — the vjp
+   Bᵀ·dmu also ABSORBS the per-family cotangent reduction — replacing the
+   per-latent index/one-hot extraction and the scatter-add gradient
+   assembly (the HMC-1.0x gather/scatter tax, ~4 kernels/eval).
+
+   Detection is by PROBE, not source walk: the compiled mean arg is
+   evaluated at zero, at each latent basis vector (column extraction), and
+   at a fixed pseudo-random point; affinity must hold at 1e-4 rel
+   (float32) and sigma must be bit-stable across every eval (latent-free
+   graphs are deterministic, so any drift is real latent dependence). A
+   failed probe falls back to the stacked emission — never an error.
+   B/base/sigma/stacked-obs are factory-time materialized constants, the
+   same lifecycle as the family lit-cols.
+
+   latent-order fixes B's column order: the scalar tensor layout, or the
+   batched caller's `addresses`. Returns [lp-fns handled-addrs]; each
+   lp-fn takes the latent tensor DIRECTLY ([K] scalar / [N,K] batched),
+   not a values-map."
+  [families binding-env mlx-args obs-values latent-order reduce-fn batched?]
+  (if (or @affine-family-disabled? (empty? latent-order))
+    [[] #{}]
+    (let [k-lat (count latent-order)
+          ;; |x| as a JS number for probe checks; eval results may be plain
+          ;; numbers (all-equal literal columns stay unboxed).
+          mag (fn [x] (if (number? x)
+                        (js/Math.abs x)
+                        (mx/item (mx/amax (mx/abs x)))))
+          built
+          (keep
+           (fn [{:keys [dist-type sig members lits-per-site]}]
+             (when (contains? #{:gaussian :normal} dist-type)
+               (let [{:keys [cargs args+lits]}
+                     (compile-family-sig sig lits-per-site binding-env mlx-args)
+                     [mean-c sigma-c] cargs
+                     g (count members)]
+                 (when (and (= 2 (count cargs)) mean-c sigma-c)
+                   (let [eval-at (fn [q]
+                                   (let [vm (reduce (fn [m [i a]]
+                                                      (assoc m a (mx/scalar (nth q i))))
+                                                    obs-values
+                                                    (map-indexed vector latent-order))]
+                                     [(mean-c vm args+lits) (sigma-c vm args+lits)]))
+                         zeros (vec (repeat k-lat 0.0))
+                         [base sigma0] (eval-at zeros)
+                         basis (mapv #(eval-at (assoc zeros % 1.0)) (range k-lat))
+                         cols (mapv (fn [[m _]] (mx/subtract m base)) basis)
+                         probe (mapv #(+ 0.5 (* 0.25 (js/Math.sin (* 12.9898 (inc %)))))
+                                     (range k-lat))
+                         [probe-mean probe-sigma] (eval-at probe)
+                         predicted (reduce (fn [acc k]
+                                             (mx/add acc (mx/multiply (nth cols k)
+                                                                      (mx/scalar (nth probe k)))))
+                                           base (range k-lat))
+                         sigma-stable? (every? #(zero? (mag (mx/subtract % sigma0)))
+                                               (conj (mapv second basis) probe-sigma))
+                         err (mag (mx/subtract probe-mean predicted))
+                         scale (max 1.0 (mag predicted))
+                         any-coeff? (boolean (some #(pos? (mag %)) cols))]
+                     (when (and sigma-stable? (<= err (* 1e-4 scale)) any-coeff?)
+                       (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
+                             bcast (fn [x]
+                                     (cond
+                                       (number? x) (mx/broadcast-to (mx/scalar x) [g])
+                                       (zero? (mx/ndim x)) (mx/broadcast-to x [g])
+                                       :else x))
+                             b-mat (let [b (mx/stack (mapv bcast cols) 1)
+                                         b (if batched? (mx/transpose b) b)]
+                                     (mx/materialize! b)
+                                     b)
+                             base-v (let [b (bcast base)] (mx/materialize! b) b)
+                             sigma-v (if (number? sigma0)
+                                       sigma0
+                                       (do (mx/materialize! sigma0) sigma0))
+                             stacked (let [s (mx/stack (mapv obs-values members))]
+                                       (mx/materialize! s)
+                                       s)]
+                         {:lp-fn (if batched?
+                                   (fn affine-batched-lp [params]
+                                     (reduce-fn
+                                      (log-prob-fn stacked
+                                                   (mx/add (mx/matmul params b-mat) base-v)
+                                                   sigma-v)))
+                                   (fn affine-lp [latent-tensor]
+                                     (reduce-fn
+                                      (log-prob-fn stacked
+                                                   (mx/add (mx/matmul b-mat latent-tensor) base-v)
+                                                   sigma-v))))
+                          :members members})))))))
+           families)]
+      [(mapv :lp-fn built)
+       (into #{} (mapcat :members) built)])))
 
 (defn make-tensor-score
   "Build a tensor-native score function: [K]-tensor → scalar log-prob.
@@ -1409,11 +1528,19 @@
                               all-addrs))
           ;; Vectorized family scoring (genmlx-yopl): observed homogeneous
           ;; families take a stacked lp; everything else stays per-site.
+          ;; Affine gaussian families further take the matmul form
+          ;; (genmlx-1fbs), consuming the latent tensor directly.
           static-sites (filterv :static? (:trace-sites schema))
           families (detect-observed-families
                     (filterv #(contains? obs-values (:addr %)) static-sites))
+          [affine-lp-fns affine-addrs]
+          (build-affine-family-lp-fns families binding-env mlx-args obs-values
+                                      latent-addrs mx/sum false)
           [family-lp-fns family-addrs]
-          (build-family-lp-fns families binding-env mlx-args obs-values mx/sum)
+          (build-family-lp-fns (remove #(contains? affine-addrs
+                                                   (first (:members %)))
+                                       families)
+                               binding-env mlx-args obs-values mx/sum)
           ;; Build per-site log-prob step functions
           ;; Each returns (fn [values-map] -> log-prob-scalar), ::family for
           ;; family-scored sites, or nil (unsupported → whole build declines)
@@ -1422,7 +1549,8 @@
             (fn [site-spec]
               (let [{:keys [addr compiled-args dist-type]} site-spec
                     nt (get compiled/noise-transforms-full dist-type)]
-                (if (contains? family-addrs addr)
+                (if (or (contains? family-addrs addr)
+                        (contains? affine-addrs addr))
                   ::family
                   (when nt
                     (let [log-prob-fn (:log-prob nt)]
@@ -1445,12 +1573,17 @@
                                (get obs-values addr))))
                     {}
                     dep-order)]
-              ;; Sum all site log-probs
+              ;; Sum all site log-probs; affine families read the latent
+              ;; tensor directly (no per-latent index).
               (reduce
                 (fn [score lp-fn]
-                  (mx/add score (lp-fn values-map)))
-                (mx/scalar 0.0)
-                site-lp-fns))))))))
+                  (mx/add score (lp-fn latent-tensor)))
+                (reduce
+                  (fn [score lp-fn]
+                    (mx/add score (lp-fn values-map)))
+                  (mx/scalar 0.0)
+                  site-lp-fns)
+                affine-lp-fns))))))))
 
 (defn make-tensor-score-with-index
   "Like make-tensor-score but also returns the latent addr-index.
@@ -1514,15 +1647,23 @@
                 static-sites (filterv :static? (:trace-sites schema))
                 families (detect-observed-families
                           (filterv #(contains? obs-values (:addr %)) static-sites))
+                [affine-lp-fns affine-addrs]
+                (build-affine-family-lp-fns families binding-env mlx-args
+                                            obs-values addresses
+                                            #(mx/sum % -1 true) true)
                 [family-lp-fns family-addrs]
-                (build-family-lp-fns families binding-env mlx-args obs-values
+                (build-family-lp-fns (remove #(contains? affine-addrs
+                                                         (first (:members %)))
+                                             families)
+                                     binding-env mlx-args obs-values
                                      #(mx/sum % -1 true))
                 per-site
                 (mapv
                   (fn [site-spec]
                     (let [{:keys [addr compiled-args dist-type]} site-spec
                           nt (get compiled/noise-transforms-full dist-type)]
-                      (if (contains? family-addrs addr)
+                      (if (or (contains? family-addrs addr)
+                              (contains? affine-addrs addr))
                         ::family
                         (when nt
                           (let [log-prob-fn (:log-prob nt)]
@@ -1546,11 +1687,16 @@
                            dep-order)
                          ;; Terms are [N,1] (latent-arg lps, family sums) or
                          ;; scalar-broadcastable; total [N,1] → squeeze → [N].
+                         ;; Affine families read the [N,K] params directly.
                          total (reduce
                                  (fn [score lp-fn]
-                                   (mx/add score (lp-fn values-map)))
-                                 (mx/scalar 0.0)
-                                 site-lp-fns)]
+                                   (mx/add score (lp-fn params)))
+                                 (reduce
+                                   (fn [score lp-fn]
+                                     (mx/add score (lp-fn values-map)))
+                                   (mx/scalar 0.0)
+                                   site-lp-fns)
+                                 affine-lp-fns)]
                      (mx/squeeze total [1])))
                  :latent-index latent-index}))))))))
 
