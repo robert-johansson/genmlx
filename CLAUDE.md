@@ -212,7 +212,9 @@ sm_120; bring-up record: bean `genmlx-1aea`, handoff
   other persistent branch — the pristine upstream tracker (`mirror/upstream`
   ← mlx-node/mlx-node on mlx-node, `mirror/ml-explore` ← ml-explore/mlx on
   mlx) — so our patch set vs upstream is always
-  `git log --no-merges mirror/<upstream>..main`. Per-fork sync strategy is
+  `git log --no-merges mirror/<upstream>..main`. Mirrors carry **zero own
+  commits, ever**; work flows mirror → `main`, never back. Per-fork sync
+  strategy is
   unchanged (mlx-node merge-forward, never rewound; mlx rebased patch stack
   with `pin/*` tags — see `docs/fork/`). Deleted branches that carried
   historical gitlink pins survive as `archive/*` tags. Trust the gitlink,
@@ -220,6 +222,30 @@ sm_120; bring-up record: bean `genmlx-1aea`, handoff
   cross-agent coordination channel — hooks pull at SessionStart and push at
   Stop; **never leave a machine with unpushed bean edits** (second pusher
   rebases: `git -C .beans pull --rebase && git -C .beans push`).
+- **mlx has TWO upstreams; we base on ml-explore.** `ml-explore/mlx` (remote
+  `upstream`) is canonical. `mlx-node/mlx` (remote `mlxnode`) is the "nax"
+  fork that upstream mlx-node actually pins — currently off the
+  **force-pushed** topic branch `perf/qwen-d256-sdpa`, not their `main`.
+  Standing policy (`docs/fork/README.md`), and the gitlink is the one thing no
+  merge driver can ever resolve: at a gitlink conflict **always keep ours**
+  (measured 2026-07-29 their pin was ml-explore **minus 3**, missing a CUDA fix
+  we need — #3893 gemm conv unfold grid overflow), **and always replay their
+  nax content** onto `mirror/ml-explore` via `nax-on-ml-explore` (runbook §1),
+  or mlx-node's Rust ends up calling C++ symbols our mlx lacks. Invariant to
+  check after any sync — our line is a strict SUPERSET of their pin:
+  `git cherry -v origin/main <their-pin> upstream/main` must return no `+`
+  (verified 2026-07-29: all 14 of theirs already ours). `mirror/nax` /
+  `nax-on-ml-explore` are per-sync **local scratch, never pushed** — a stale
+  local ref there is expected, not drift.
+- **Fetch before trusting any mirror-derived number.** A local `mirror/*` can
+  lag its own remote when another host did the last sync. Measured 2026-07-29:
+  a local `mirror/upstream` 4 commits behind `origin/mirror/upstream` inflated
+  everything downstream — "4 new upstream commits / 95 patches" when the truth
+  was 3 and 94, and it made an ALREADY-MERGED upstream commit look unmerged,
+  nearly costing a redundant sync. `git fetch up origin` first, compare local
+  vs `origin/` vs `up/`, then reason. Related footgun: `git branch -f <mirror>
+  up/main` sets `branch.<mirror>.remote=up`, so a bare `git push` would target
+  the REAL upstream — pin `branch.<mirror>.pushRemote origin`.
 - **Change discipline.** A CLJS-only change needs no build: verify with the
   impact-set method (reverse-transitive ns-`:require` closure of the changed
   namespaces → run just those test files + the contract guards; bean

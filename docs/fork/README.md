@@ -121,6 +121,33 @@ fabricated 10 phantom downstream conflicts and turned 9 stops into 19. The only 
 git update-index --cacheinfo "160000,$MLXSHA,crates/mlx-sys/mlx"
 ```
 
+**The gitlink resolution is always OURS — and their mlx content is always TAKEN.** No merge
+driver can decide a `160000` entry, so it is a standing policy rather than a per-sync judgement
+call (affirmed 2026-07-29):
+
+- *Never take upstream's mlx pin.* It lives on `mlx-node/mlx` `perf/qwen-d256-sdpa`, a
+  **force-pushed** topic branch. Ours is based on `ml-explore/main` — true upstream, and
+  fresher: measured 2026-07-29, their pin `fef8890f5` was ml-explore **minus 3**, and one of
+  those three was a **CUDA** fix (#3893, gemm conv unfold grid overflow at ≥ 65,536 output
+  positions) that matters on the Thor and RTX boxes. Taking their pin moves our base backwards,
+  off true upstream, and discards the patch stack.
+- *But never skip their mlx content either.* It is replayed onto `mirror/ml-explore` via
+  `nax-on-ml-explore` (runbook §1). Refusing the pin **and** skipping the replay would leave
+  mlx-node's Rust calling C++ symbols our mlx does not have.
+
+Together these give the invariant to check after any sync — **our line is a strict superset of
+their pin** (ml-explore tip + their nax content + our patches):
+
+```bash
+# every one of their nax-line commits must come back '-' (already ours, by patch-id)
+git -C $MLX cherry -v origin/main <their-pin-sha> upstream/main | grep '^+' || echo "superset OK"
+```
+
+Verified 2026-07-29: all 14 returned `-` (4 NAX/D256-SDPA + 10 K-quant, including the Metal
+kernels). This stays cheap only while their nax commits replay cleanly onto ml-explore — if
+upstream MLX ever refactors something the nax work depends on, that is a conscious
+re-decision point, not a silent drift.
+
 ## What is *not* the problem
 
 **`.gitmodules` is latent, not active.** Upstream has touched it exactly twice in the repo's
