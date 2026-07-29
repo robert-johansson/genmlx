@@ -335,7 +335,7 @@ Two levers landed hours after the row, driven by its findings:
    tensors). Fix: append-only input parents, pruning moved to merge time
    against `global_cache` (amortized linear). Chains bit-exact at the same
    keys; contract guards + full battery 434/434.
-2. **Chunked captured chains** (genmlx `67aec6c`): past the 16000 fused
+2. **Chunked captured chains** (genmlx `f15cc59`): past the 16000 fused
    limit, CUDA now decomposes the chain into persist-gate-sized chunks on
    captured replay instead of block-compiling — same chain to
    kernel-fusion rounding, reusable :chain-fn, and REAL acceptance (the
