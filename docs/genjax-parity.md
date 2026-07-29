@@ -332,6 +332,34 @@ standalone Sums) vs XLA's ≤4 — the remaining lever is fusable Reduce +
 view fusion (genmlx-7dm0). S=10/100 cells are scaffolding/floor-bound
 (the 819v compile-fn boundary), not kernel-bound.
 
+### Post-duplication (multi-consumer duplication in compile_fuse — genmlx-o0ek, 2026-07-29)
+
+HMC-1.0x rung 1: compile_fuse now clones cheap elementwise producer
+subtrees shared across fusion regions into their consumers (XLA
+kDuplicate; generalized split_one + clone registration), so the last
+consuming region absorbs the original and the standalone kernel
+disappears. ALL-OR-NOTHING per candidate over the full fusable subtree
+(a partial clone would chop shared chains at new materialization
+boundaries — measured +22% tape in the naive round); high-fanout
+producers are plan boundaries (they materialize regardless). CUDA-only,
+kill switch `MLX_DISABLE_DUP_FUSION`, knobs `MLX_DUP_FUSION_MAX`
+(default 16/region) / `MLX_DUP_FUSION_FANOUT` (16). Chain outputs
+BIT-IDENTICAL on/off at S=1 and S=100 (pinned at tolerance by
+dup_fusion_test, 9/9). Census: MALA tape 4820 → **4287** (~43/step);
+the stranded cotangent Sum and Select soup fused, and
+SubtractDivide+MultiplyDivideAdd pairs merged (404 → 202 kernels).
+
+| S | GenJAX | post-fusion | **post-dup** | gap now |
+|---|---|---|---|---|
+| 10 | 0.21 ms | 0.576 ms | **0.530 ms** | 2.5x |
+| 100 | 1.62 ms | 3.87 ms | **3.385 ms** | 2.1x |
+| 1000 | 15.6 ms | 24.6 ms | **21.3 ms** | **1.37x** |
+
+Residual decomposition (census, S=100): the remaining non-elementwise
+tape is Gather ×4/step + Scatter-Sum ×2/step + Reshape ×2/step — the
+per-grad-eval indexing tax that rung 2 (matmul-form affine emission,
+genmlx-1fbs) eliminates. Elementwise stranding is now largely gone.
+
 ## linreg_hmc — single-chain joint HMC, same posterior, sweep over chain length × leapfrog steps
 
 sm_120, measured 2026-07-29 (bean genmlx-klwf). Pins: genmlx `ed2be85` src
@@ -548,6 +576,31 @@ Tails correct and equal to whole-graph (2.009/1.988/1.988/1.989);
 +3–8% steady for ~15x warmup — S=1000 manychain warmup is now ~8x UNDER
 jit on the knob-routed path. Default-flip decision pending.
 
+### Post-duplication (genmlx-o0ek, 2026-07-29)
+
+The duplication pass (see the MALA section for the mechanism) on the
+default whole-graph route: census 18304 → **16875** (S=100 L=8; in
+LAUNCH terms ~119 → ~105/step — Squeeze/ExpandDims tape entries are
+zero-launch views). Wall tracks it:
+
+| cell | post-fusion | **post-dup** | GenJAX | gap now |
+|---|---|---|---|---|
+| 10×8 | 1.95 ms | **1.83 ms** | 0.363 | 5.0x |
+| 100×8 | 13.6 ms | **12.4 ms** | 3.67 | 3.4x |
+| 1000×8 | 160.5 ms | **145.1 ms** | 32.6 | **4.45x** |
+| 100×32 | 46.4 ms | **43.9 ms** | 10.5 | 4.2x |
+| 1000×32 | 527/448 ms | **485.8 ms** (chunk-routed) | 100.8 | 4.8x |
+
+The decisive census finding for the program: **59% of the HMC tape is
+Squeeze/Gather/ExpandDims/Scatter-Sum** (42+20+19+18 per step) — the
+per-grad-eval latent-extraction/gradient-assembly tax, unreachable by
+elementwise duplication. Rung 1's honest share of the HMC-1.0x ladder
+is ~−12% launches; the remaining ~38 real indexing launches/step are
+exactly rung 2's target (genmlx-1fbs), and the integrator-update fusion
+(rung 3) is expected free once the scatters are gone. Duplication
+diagnostics live in the census (`[compile] dup: ...` under
+MLX_COMPILE_DEBUG).
+
 ## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
 
 sm_120, measured 2026-07-29 (bean genmlx-zebd). Pins: genmlx `244aebd` src
@@ -644,6 +697,14 @@ noise at these sizes — notably N=4096 S=100 came back to **18.1 ms**
 and/or the smaller fused tape absorbed it). Warmups unchanged (~140–360 ms
 at S=100, ~2.8–3.1 s at S=1000 — the S=1000 trace remains ~1.7x over jit,
 geiw territory).
+
+### Post-duplication (genmlx-o0ek, 2026-07-29)
+
+S=1000: **41.0 / 38.0 / 52.3 / 91.7 ms** — small wins at N≤512, flat at
+N=4096 (the batched [N,D] tape has fewer scalar strandings for the dup
+pass to collapse; per-step cost there is bandwidth+indexing, not
+launches). S=100 cells 12.2/11.5/15.9/29.2 ms, within the documented
+noise bands.
 
 ## ndreg_is — bigger-model regime: importance sampling over the (D, M) grid
 
