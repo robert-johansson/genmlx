@@ -323,3 +323,37 @@ HMC boundary is trace TIME, not stack depth). CUDA fused :hmc stays
 16000: 32000 was attempted and REJECTED on the 30-min trace DNF. Both
 comments now state measured trace time as an acceptance criterion for any
 future raise.
+
+### Post-fix (compile_fuse quadratic killed + chunked chains — genmlx-geiw/dys7, same day)
+
+Two levers landed hours after the row, driven by its findings:
+
+1. **The trace quadratic, root-caused and fixed** (mlx fork `6c9d641`):
+   gdb sampling put 11/15 profiles inside `mlx::core::detail::compile_fuse`
+   — it rescanned each fusion input's FULL parents vector once per fusion,
+   O(tape²/depth) for tape-shared inputs (step-size scalars, noise
+   tensors). Fix: append-only input parents, pruning moved to merge time
+   against `global_cache` (amortized linear). Chains bit-exact at the same
+   keys; contract guards + full battery 434/434.
+2. **Chunked captured chains** (genmlx `67aec6c`): past the 16000 fused
+   limit, CUDA now decomposes the chain into persist-gate-sized chunks on
+   captured replay instead of block-compiling — same chain to
+   kernel-fusion rounding, reusable :chain-fn, and REAL acceptance (the
+   d62h nil is gone on this path).
+
+| S | L | GenJAX | pre | **post** | gap now | warmup pre → post |
+|---|---|---|---|---|---|---|
+| 100 | 8 | 3.67 ms | 15.5 ms | 16.2 ms | 4.4x | 4.8 s → **2.2 s** |
+| 1000 | 8 | 32.6 ms | 198 ms | 199 ms | 6.1x | 220 s → **55.6 s** |
+| 100 | 32 | 10.5 ms | 66.3 ms | 66.4 ms | 6.3x | 44.8 s → **11.1 s** |
+| 1000 | 32 | 100.8 ms | 7234 ms | **3127 ms** | **31x** | 16.3 s → 18.0 s |
+
+Acceptance on the chunked cell: **0.821 vs GenJAX 0.825** — the cell's
+first real cross-side agreement (it reported null before). All other
+cells bit-identical to the first measurement. Reading the residuals:
+warmups are ~4x cheaper everywhere but still ~n^1.7 above 8000 ops
+(geiw stays open — suspects: simplify CSE grouping, capture exec
+instantiation); the 31x cell runs 98 µs/leapfrog vs the captured path's
+25 µs — per-chunk sync/materialize overhead, the dys7 residual. The
+compile_fuse fix is upstream-relevant (ml-explore/mlx has the same
+quadratic; genmlx-xz93 batch).
