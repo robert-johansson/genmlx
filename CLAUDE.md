@@ -36,7 +36,7 @@ structure. No GPU work occurs until `mx/eval!` is called. This means most of
 (or wrappers like `item`, `->clj`, `materialize!`). Everything else — arithmetic,
 reductions, autograd, vmap, compile — builds lazy graphs.
 
-**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (230 @genmlx/core function exports, pinned by the coverage matrix; 5 crates)
+**mlx-node is at the heart of GenMLX.** The Rust/NAPI layer (237 @genmlx/core function exports, pinned by the coverage matrix; 5 crates)
 is not "mutable substrate we contain" — it is a functional graph engine that aligns
 naturally with ClojureScript's value semantics. `mlx.cljs` is the thin membrane
 between them; `Either<&MxArray, f64>` in Rust handles type coercion so CLJS
@@ -335,7 +335,7 @@ The implementation layers map onto the three-layer purity model:
 
 ```
 ── Layer C (GPU execution) ──────────────────────────────────────────────
-  mlx-node Rust/C++   5 crates; 230 @genmlx/core function exports (coverage-matrix-pinned). MxArray = Arc<lazy graph node>.
+  mlx-node Rust/C++   5 crates; 237 @genmlx/core function exports (coverage-matrix-pinned). MxArray = Arc<lazy graph node>.
                       eval! is the only operation that dispatches to Metal.
 
 ── Membrane (mlx.cljs) ─────────────────────────────────────────────────

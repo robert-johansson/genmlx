@@ -96,6 +96,17 @@
      "SftTrainingEngine" "NativeRewardRegistry"
      "Gradients" "OutputStore" "ResponseStore"}
 
+   ;; The `mlx agent` COLD KV TIER — process-wide telemetry and config for the
+   ;; CLI agent's disk-backed prefix cache (upstream PR #100, the dashboard +
+   ;; paged persist-cache drop; merged 2026-07-29). GenMLX never opens that
+   ;; tier: its branchable KV cache is the OWNED path in llm/backend.cljs
+   ;; (per-branch persistent cache values under with-llm-branches*), and the
+   ;; agent's cold tier is Metal-gated besides (agentPagedCacheSupported).
+   ;; Counters and a drain hook, not graph ops.
+   :agent-cold-tier
+   #{"coldCacheDrain" "coldCacheStats" "coldSidecarStats" "coldRestoreFamilies"
+     "gdnPrefixCheckpointLimit"}
+
    ;; offline weight/format conversion tooling — not graph ops
    :model-conversion
    #{"convertForeignWeights" "convertGgufToSafetensors" "convertModel" "convertParquetToJsonl"
@@ -262,14 +273,17 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 232 (count exported-fns))
+      (is (= 237 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 232; 2026-07-28 genmlx-cqgx added the persistent-"
+               " fns (pinned at 237; 2026-07-28 genmlx-cqgx added the persistent-"
                "compile trio compileCreate/compiledCall/compiledFree, then "
-               "genmlx-7prh added compiledCallCaptured/compiledIsCaptured) "
+               "genmlx-7prh added compiledCallCaptured/compiledIsCaptured; "
+               "2026-07-29 the upstream d0b608fa merge added the agent cold-tier "
+               "five — coldCacheDrain/coldCacheStats/coldSidecarStats/"
+               "coldRestoreFamilies/gdnPrefixCheckpointLimit, all omitted) "
                "— the partition test above pinpoints what moved."))
-      (is (= 49 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 49)."))
+      (is (= 54 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 54)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))

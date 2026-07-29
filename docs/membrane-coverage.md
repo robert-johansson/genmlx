@@ -77,7 +77,7 @@ omissions.
 Each export below is deliberately **not** in the pure compute membrane. The
 category records where the capability belongs instead.
 
-### Functions (21)
+### Functions (26)
 
 | Export | Category | Reason |
 |---|---|---|
@@ -87,6 +87,7 @@ category records where the capability belongs instead.
 | `convertForeignWeights`, `convertGgufToSafetensors`, `convertModel`, `convertParquetToJsonl` | `:model-conversion` | Offline weight/format conversion tooling — not graph ops. |
 | `createPaddleocrVlConfig`, `createQianfanOcrConfig`, `documentToXlsx`, `formatDocument`, `saveToXlsx`, `parsePaddleResponse`, `parseToolCallsFromText`, `parseVlmOutput` | `:ocr-vlm-document` | OCR / vision-language / document pipelines — bind via `@mlx-node/lm` vision (`llm/vision.cljs`). |
 | `compileFn` | `:compile-strategy-bypass` | Native MLX graph-caching compile, deliberately bypassed — GenMLX compilation uses noise transforms + the expression compiler (Level 1), not MLX's compile. |
+| `coldCacheDrain`, `coldCacheStats`, `coldSidecarStats`, `coldRestoreFamilies`, `gdnPrefixCheckpointLimit` | `:agent-cold-tier` | The `mlx agent` cold KV tier — process-wide counters, a family allowlist and a flush hook for the CLI agent's disk-backed prefix cache (upstream PR #100, merged 2026-07-29). GenMLX never opens that tier: its branchable KV cache is the owned path in `llm/backend.cljs` (per-branch persistent cache values under `with-llm-branches*`), and the agent tier is Metal-gated besides (`agentPagedCacheSupported`). Counters and a drain hook, not graph ops. |
 
 ### Classes (26)
 
