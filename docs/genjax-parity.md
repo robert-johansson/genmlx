@@ -361,6 +361,45 @@ captured calls standalone slice copies; engine-side durable fix beaned). The
 compile_fuse fix is upstream-relevant (ml-explore/mlx has the same
 quadratic; genmlx-xz93 batch).
 
+### Post-site-batching experiment (static-unrolled model — genmlx-kzoy, 2026-07-29)
+
+The lnzc census pivot's cheap half, run and REFUTED. The bench's linreg
+model switched from the doseq form to a GENERATED static-unrolled source
+(`dyn/make-gen-fn` with per-site literal forms — the gen macro's own
+expansion target; probe-verified `tensor-native? = true`, tensor score ==
+handler score exactly, weight convention intact). MLX_COMPILE_DEBUG census
+of the captured chain graphs, doseq vs unrolled:
+
+| regime | doseq tape | unrolled tape |
+|---|---|---|
+| fused-mala-compiled S=100 | 6554 (~65/step) | 6553 |
+| fused-vectorized-mala N=64 S=100 | 9256 (~92/step) | 9256 (byte-identical) |
+| fused-hmc-compiled S=100 L=8 | 25219 | 25219 |
+
+**The graph does not change.** The GFI-handler score and the tensor-native
+score build the SAME lazy MLX graph, and post-geiw `compile_fuse` already
+fuses the forward score into ONE Compiled kernel either way. The earlier
+census reading "18 per-site score kernels" was a misattribution: the
+per-site kernels in the tape are the BACKWARD (VJP) chains — ~10x
+`CompiledMultiplyAddSubtractDivide` + ~10x `CompiledMultiplyDivideNegative`
+per MALA step, plus Gather 4/step, Scatter-Sum 2/step, Squeeze 6/step,
+ExpandDims 3/step — which mirror the per-site forward structure regardless
+of which score path built it. Steady-state rows: unchanged (chains
+bit-identical, same acceptance/tails). What DID move is **warmup** — the
+tensor-native score is host-cheaper to trace: MALA S=1000 7.0 s → 3.9 s
+(combined with geiw round 2), HMC S=1000×L=8 55.6 s → 36.9 s, 100×32
+11.1 s → 9.3 s (post-geiw baselines). Bonus: literal dist params close the
+genmlx-bg67 detection gap for this bench — the unstripped generate weight
+is now key-independent (exact analytical logZ −18.6097 available as a
+correctness anchor).
+
+**Verdict:** score-PATH selection does nothing for steady state; ≤2x is
+NOT reachable this way. The kernel-economics lever is re-routed to
+emitting a VECTORIZED score graph — stack each homogeneous observed site
+family into one [G]-shaped lp so the VJP vectorizes to a handful of
+[G]-kernels (genmlx-yopl, re-scoped), then fusable-Reduce (genmlx-7dm0)
+for the remaining Sums.
+
 ## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
 
 sm_120, measured 2026-07-29 (bean genmlx-zebd). Pins: genmlx `244aebd` src

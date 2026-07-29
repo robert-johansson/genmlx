@@ -166,22 +166,53 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Model + constraints (one scalar site per observation, same as GenJAX side)
+;;
+;; STATIC-UNROLLED form (genmlx-kzoy): the source form is GENERATED from the
+;; spec with the obs sites unrolled and every dist parameter a literal, so
+;; schema extraction sees a static model and the fused chains ride the
+;; tensor-native score (one connected elementwise score graph) instead of the
+;; per-site GFI handler score (18 site kernels + 6 gathers per MALA step —
+;; the genmlx-lnzc census). GenJAX's model is itself effectively
+;; static-unrolled (python loop over the same spec literals), so this is
+;; same-model parity. dyn/make-gen-fn is the gen macro's own expansion
+;; target: the L1 pipeline analyzes the generated source exactly as if the
+;; unrolled text had been written by hand; the body-fn (handler ground
+;; truth) loops over the same spec data at runtime.
 ;; ---------------------------------------------------------------------------
 
 (def model
   (let [s-mu (get-in spec [:model :prior :slope :mu])
         s-sd (get-in spec [:model :prior :slope :sigma])
         i-mu (get-in spec [:model :prior :intercept :mu])
-        i-sd (get-in spec [:model :prior :intercept :sigma])]
-    (dyn/auto-key
-      (gen [xs]
-        (let [slope     (trace :slope (dist/gaussian s-mu s-sd))
-              intercept (trace :intercept (dist/gaussian i-mu i-sd))]
-          (doseq [[j x] (map-indexed vector xs)]
-            (trace (keyword (str "y" j))
-                   (dist/gaussian (mx/add (mx/multiply slope x) intercept)
-                                  lik-sigma)))
-          slope)))))
+        i-sd (get-in spec [:model :prior :intercept :sigma])
+        src  (list '[xs]
+                   (concat
+                    (list 'let
+                          ['slope     (list 'trace :slope
+                                            (list 'dist/gaussian s-mu s-sd))
+                           'intercept (list 'trace :intercept
+                                            (list 'dist/gaussian i-mu i-sd))])
+                    (map-indexed
+                     (fn [j x]
+                       (list 'trace (keyword (str "y" j))
+                             (list 'dist/gaussian
+                                   (list 'mx/add
+                                         (list 'mx/multiply 'slope x)
+                                         'intercept)
+                                   lik-sigma)))
+                     xs)
+                    (list 'slope)))
+        body-fn
+        (fn [rt _xs]
+          (let [trace-op  (.-trace rt)
+                slope     (trace-op :slope (dist/gaussian s-mu s-sd))
+                intercept (trace-op :intercept (dist/gaussian i-mu i-sd))]
+            (doseq [[j x] (map-indexed vector xs)]
+              (trace-op (keyword (str "y" j))
+                        (dist/gaussian (mx/add (mx/multiply slope x) intercept)
+                                       lik-sigma)))
+            slope))]
+    (dyn/auto-key (dyn/make-gen-fn body-fn src))))
 
 (def hmodel (dyn/strip-analytical-path model))
 
