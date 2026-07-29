@@ -2854,24 +2854,32 @@
                                       :hmc (* (+ b (* thin s)) leapfrog-steps))]))
                        (distinct plan))]
     (fn [start-q momentum-2d uniforms-1d]
-      (loop [q start-q, offset 0, chunks plan
-             sample-parts [], accept (mx/scalar 0.0)]
-        (if (empty? chunks)
-          #js [q
-               (cond (empty? sample-parts) (mx/zeros [0 n-params])
-                     (= 1 (count sample-parts)) (first sample-parts)
-                     :else (mx/concatenate sample-parts 0))
-               accept]
-          (let [[b s :as shape] (first chunks)
-                steps (+ b (* thin s))
-                m (mx/slice-nd momentum-2d [offset 0]
-                               [(+ offset steps) n-params])
-                u (mx/slice uniforms-1d offset (+ offset steps))
-                _ (mx/materialize! m u)
-                r ((get builders shape) q m u)]
-            (recur (aget r 0) (+ offset steps) (rest chunks)
-                   (if (pos? s) (conj sample-parts (aget r 1)) sample-parts)
-                   (mx/add accept (aget r 2)))))))))
+      (let [zero (mx/scalar 0.0)]
+        (loop [q start-q, offset 0, chunks plan
+               sample-parts [], accept (mx/scalar 0.0)]
+          (if (empty? chunks)
+            #js [q
+                 (cond (empty? sample-parts) (mx/zeros [0 n-params])
+                       (= 1 (count sample-parts)) (first sample-parts)
+                       :else (mx/concatenate sample-parts 0))
+                 accept]
+            (let [[b s :as shape] (first chunks)
+                  steps (+ b (* thin s))
+                  ;; add-0 COPIES the slices into standalone buffers: the
+                  ;; captured-call input staging slow-paths VIEW-backed
+                  ;; buffers (~187 ms per chunk measured on sm_120 — the
+                  ;; raw_ptr migration hazard class; genmlx-dys7 residual
+                  ;; round 2). Copied inputs replay at full speed.
+                  m (mx/add (mx/slice-nd momentum-2d [offset 0]
+                                         [(+ offset steps) n-params])
+                            zero)
+                  u (mx/add (mx/slice uniforms-1d offset (+ offset steps))
+                            zero)
+                  _ (mx/materialize! m u)
+                  r ((get builders shape) q m u)]
+              (recur (aget r 0) (+ offset steps) (rest chunks)
+                     (if (pos? s) (conj sample-parts (aget r 1)) sample-parts)
+                     (mx/add accept (aget r 2))))))))))
 
 (defn fused-hmc
   "Fully fused HMC: burn-in + thinned collection in one fused lazy-graph evaluation.

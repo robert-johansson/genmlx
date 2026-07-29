@@ -346,15 +346,18 @@ Two levers landed hours after the row, driven by its findings:
 | 100 | 8 | 3.67 ms | 15.5 ms | 16.2 ms | 4.4x | 4.8 s → **2.2 s** |
 | 1000 | 8 | 32.6 ms | 198 ms | 199 ms | 6.1x | 220 s → **55.6 s** |
 | 100 | 32 | 10.5 ms | 66.3 ms | 66.4 ms | 6.3x | 44.8 s → **11.1 s** |
-| 1000 | 32 | 100.8 ms | 7234 ms | **3127 ms** | **31x** | 16.3 s → 18.0 s |
+| 1000 | 32 | 100.8 ms | 7234 ms | **690 ms** | **6.8x** | 16.3 s → 16.0 s |
 
 Acceptance on the chunked cell: **0.821 vs GenJAX 0.825** — the cell's
 first real cross-side agreement (it reported null before). All other
 cells bit-identical to the first measurement. Reading the residuals:
 warmups are ~4x cheaper everywhere but still ~n^1.7 above 8000 ops
 (geiw stays open — suspects: simplify CSE grouping, capture exec
-instantiation); the 31x cell runs 98 µs/leapfrog vs the captured path's
-25 µs — per-chunk sync/materialize overhead, the dys7 residual. The
+instantiation); the chunked cell now runs 21.5 µs/leapfrog — FASTER than the
+single-graph captured path's 25 (dys7 residual CLOSED, same day: the
+capture sink's input staging slow-paths VIEW-backed buffers at ~187 ms
+per chunk — the raw_ptr migration hazard class — fixed by handing the
+captured calls standalone slice copies; engine-side durable fix beaned). The
 compile_fuse fix is upstream-relevant (ml-explore/mlx has the same
 quadratic; genmlx-xz93 batch).
 
