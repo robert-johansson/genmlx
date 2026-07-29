@@ -133,6 +133,21 @@ launches + sync + 4 output-copy allocations). Next levers: per-call output
 clone allocation (double-buffer), the remaining SCI wrapper, or accept —
 the row is now within 2x of the pip-MLX Phase-0 floor measurement.
 
+### Floor decomposition + budget (genmlx-zco8/pqb5, 2026-07-29)
+
+Measure-first probe of the captured-call floor on minimal graphs: a
+3-in/4-out captured call costs **0.0295 ms** — per-output-clone ~5.1 µs,
+per-input staging ~0.4 µs. The bean's double-buffer and batched-memcpy
+levers were therefore REJECTED with numbers (combined ceiling ~20 µs of a
+~290 µs call); the residual is ~2/3 SCI wrapper + ~1/3 the real graph's
+launches — the 819v compile-fn boundary. Fresh row stamp (post-family/
+fusion binary): 0.289–0.297 ms at every N, logZ agreement intact, and the
+bench now also prints the EXACT analytical logZ (−18.6097, L3
+elimination on the literal-param model — the kzoy anchor). Robert
+approved **0.35 ms/captured-call** as the floor-regime budget
+(genmlx-pqb5); the orchestrator asserts it as an absolute ceiling for
+floor-bound cells.
+
 ## linreg_mala — single-chain joint MALA, same posterior, sweep over chain length
 
 sm_120, measured 2026-07-28. Pins: genmlx `4518858` src tree (bench's mala
@@ -499,9 +514,23 @@ Chunked wins BOTH warmup and steady at large S (the small-chunk graphs
 fuse better per-kernel and replay identically), but loses mid-size cells
 where the whole-call factory's in-graph init (~10 ms/call, SCI) matters.
 Chains bit-equal per-cell across routings (same acceptance/tails).
+Reproduced with a warm NVRTC cache (second run): 1000×8 warmup 916 ms /
+steady 134.4 ms; 100×32 warmup 3.24 s (the trace itself — NVRTC was not
+the cost), 1000×32 2.09 s. So chunk routing puts 1000×8 durably under
+jit; 100×32 and 1000×32 warmups remain over (accepted residuals, geiw).
 Follow-up design recorded on geiw: compose the whole-call factory WITH
 chunked internals ("capture-through") — the outer capture records the
 inner chunks' replayed kernels, giving flat warmup AND in-graph init.
+
+**The manychain analog was built and withdrawn the same day**
+(genmlx-b1gx): a chunked captured N-chain MALA runner is bit-exact vs
+the whole sweep with capture disabled, but captured REPLAYS of the
+[N,D] chunk graph compute wrong post-seam dynamics (staged inputs
+verified correct by readback; kernels reference staged buffers; the
+identical clone→copy_into cycle works for 1-D HMC chunks and for
+whole-graph [N,D] replays). Until that capture-layer bug is closed, the
+manychain S=1000 warmup (~2.8–3.1 s vs jit ~1.6–1.9 s) stays an
+accepted residual; the withdrawn runner had measured 177–184 ms.
 
 ## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
 

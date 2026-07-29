@@ -265,6 +265,14 @@
   (and hmc-chunk-ops-override
        (> (* total-steps leapfrog-steps) hmc-chunk-ops-override)))
 
+;; NOTE (genmlx-geiw round 3): a chunked captured N-chain MALA runner was
+;; built and REMOVED the same day — its logic is bit-exact vs the whole
+;; sweep with capture disabled, but captured REPLAYS of the [N,D] chunk
+;; graph compute wrong post-seam dynamics (staged inputs verified correct
+;; by readback; kernels reference staged buffers; the identical
+;; clone->copy_into cycle works for the 1-D HMC chunks). Tracked as a
+;; capture-layer bug bean; do not reintroduce without closing it.
+
 (defn- persist-chain
   "Persistent-compile a pure fused chain builder (genmlx-z2gt Phase 2a,
    genmlx-0vwj): the first call traces — the builder runs once, inside MLX
