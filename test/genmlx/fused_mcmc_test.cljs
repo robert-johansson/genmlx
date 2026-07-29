@@ -788,7 +788,14 @@
                      linreg-model [xs] obs)]
         (is (some? (:samples result)) "HMC fallback has :samples")
         (is (some? (:final-params result)) "HMC fallback has :final-params")
-        (is (nil? (:chain-fn result)) "HMC fallback :chain-fn is nil")
+        ;; Backend-split contract (genmlx-dys7): CUDA's too-large fallback is
+        ;; the CHUNKED captured chain — reusable :chain-fn, real acceptance.
+        ;; Metal still takes block-compiled HMC: :chain-fn/:acceptance nil.
+        (if (mx/metal-is-available?)
+          (do (is (nil? (:chain-fn result)) "Metal HMC fallback :chain-fn is nil")
+              (is (nil? (:acceptance-rate result)) "Metal block path tracks no acceptance"))
+          (do (is (some? (:chain-fn result)) "CUDA HMC fallback returns chunked :chain-fn")
+              (is (some? (:acceptance-rate result)) "CUDA chunked path tracks acceptance")))
         (let [samples-js (mx/->clj (:samples result))
               mean-slope (/ (reduce + (mapv first samples-js)) (count samples-js))]
           (is (h/close? 2.0 mean-slope 0.5) "HMC fallback posterior slope ~ 2")))

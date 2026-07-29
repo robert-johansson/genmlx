@@ -56,11 +56,13 @@ bench test/genmlx/benchmark.cljs
 fast test/genmlx/branch_rewrite_test.cljs
 fast test/genmlx/branching_property_test.cljs
 medium test/genmlx/bugfix_test.cljs
+fast test/genmlx/capture_replay_test.cljs
 fast test/genmlx/categorical_batched_logprob_test.cljs
 fast test/genmlx/choicemap_algebra_test.cljs core
 fast test/genmlx/choicemap_algebra_test2.cljs
 fast test/genmlx/choicemap_property_test.cljs
 fast test/genmlx/choicemap_test.cljs core
+medium test/genmlx/chunked_hmc_test.cljs
 fast test/genmlx/clip_contract_test.cljs core
 slow test/genmlx/co_refine_accept_test.cljs
 fast test/genmlx/combinator_compile_test.cljs core
@@ -92,6 +94,7 @@ medium test/genmlx/compiled_loss_grad_test.cljs
 medium test/genmlx/compiled_optimizer_test.cljs
 medium test/genmlx/compiled_parity_test.cljs
 medium test/genmlx/compiled_path_equivalence_test.cljs
+fast test/genmlx/compiled_persistent_test.cljs
 medium test/genmlx/compiled_pf_test.cljs
 fast test/genmlx/compiled_schema_test2.cljs
 bench test/genmlx/compiled_simulate_benchmark.cljs
@@ -468,6 +471,7 @@ fast test/genmlx/vectorized_property_test.cljs
 fast test/genmlx/vectorized_shape_test.cljs
 medium test/genmlx/vectorized_test.cljs
 fast test/genmlx/verify_test.cljs
+fast test/genmlx/vgenerate_compiled_test.cljs
 medium test/genmlx/vi_learning_honesty_test.cljs
 slow test/genmlx/vi_property_test.cljs
 medium test/genmlx/vimco_test.cljs

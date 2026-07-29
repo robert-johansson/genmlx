@@ -2724,6 +2724,64 @@
                              eps half-eps half n-params leapfrog-steps)
    :hmc (* (+ n-burn (* thin n-samples)) leapfrog-steps)))
 
+(defn- make-chunked-hmc-runner
+  "Chunked captured HMC chain (genmlx-dys7): for chains past the
+   single-graph fused limit, decompose the T-step chain into chunks of at
+   most ~half the :hmc persist gate in estimate-fused-ops units, each built
+   by make-fused-hmc-chain-raw and persist-chain'd — so every chunk rides
+   trace-once/captured-replay, and one traced chunk shape is replayed
+   across the whole chain (at most four distinct shapes: full/partial burn,
+   full/partial sampling). Returns a runner with the SAME signature as the
+   fused chain-fn: (start-q, momentum [T,D], uniforms [T]) ->
+   #js [final-q, samples [S,D], accept-count []] — a drop-in :chain-fn.
+   The runner slices the full noise tensors per chunk, so the chain equals
+   the single-graph fused chain at the same key to kernel-fusion rounding
+   (fusion boundaries differ at chunk seams). Sampling-chunk boundaries are
+   multiples of `thin`, so the global record cadence is preserved exactly.
+   Identity mass matrix only (the raw builder's contract)."
+  [n-burn n-samples thin neg-U-fn grad-neg-U eps half-eps half n-params leapfrog-steps]
+  (let [target-ops (max leapfrog-steps
+                        (quot (get persist-trace-ops-limits :hmc 0) 2))
+        raw-cs (max 1 (quot target-ops leapfrog-steps))
+        cs-sample (* thin (max 1 (quot raw-cs thin)))
+        spc (quot cs-sample thin)
+        burn-plan (loop [b n-burn, acc []]
+                    (cond (zero? b) acc
+                          (>= b raw-cs) (recur (- b raw-cs) (conj acc [raw-cs 0]))
+                          :else (conj acc [b 0])))
+        sample-plan (loop [s n-samples, acc []]
+                      (cond (zero? s) acc
+                            (>= s spc) (recur (- s spc) (conj acc [0 spc]))
+                            :else (conj acc [0 s])))
+        plan (into burn-plan sample-plan)
+        builders (into {}
+                       (map (fn [[b s :as shape]]
+                              [shape (persist-chain
+                                      (make-fused-hmc-chain-raw
+                                       b s thin neg-U-fn grad-neg-U
+                                       eps half-eps half n-params leapfrog-steps)
+                                      :hmc (* (+ b (* thin s)) leapfrog-steps))]))
+                       (distinct plan))]
+    (fn [start-q momentum-2d uniforms-1d]
+      (loop [q start-q, offset 0, chunks plan
+             sample-parts [], accept (mx/scalar 0.0)]
+        (if (empty? chunks)
+          #js [q
+               (cond (empty? sample-parts) (mx/zeros [0 n-params])
+                     (= 1 (count sample-parts)) (first sample-parts)
+                     :else (mx/concatenate sample-parts 0))
+               accept]
+          (let [[b s :as shape] (first chunks)
+                steps (+ b (* thin s))
+                m (mx/slice-nd momentum-2d [offset 0]
+                               [(+ offset steps) n-params])
+                u (mx/slice uniforms-1d offset (+ offset steps))
+                _ (mx/materialize! m u)
+                r ((get builders shape) q m u)]
+            (recur (aget r 0) (+ offset steps) (rest chunks)
+                   (if (pos? s) (conj sample-parts (aget r 1)) sample-parts)
+                   (mx/add accept (aget r 2)))))))))
+
 (defn fused-hmc
   "Fully fused HMC: burn-in + thinned collection in one fused lazy-graph evaluation.
    Pre-generates all momentum and acceptance noise upfront, compiles the
@@ -2731,10 +2789,15 @@
    Returns {:samples MLX-array [S,D] :final-params MLX-array [D]
             :chain-fn compiled-fn :acceptance-rate float}.
 
-   Auto-falls back to block-compiled HMC when chain is too large for a
-   single fused graph, per-backend limit (estimated from total-steps * leapfrog-steps).
-   On that fallback :chain-fn AND :acceptance-rate are nil — the block path
-   does not track acceptance (genmlx-d62h).
+   When the chain is too large for a single fused graph (per-backend limit,
+   estimated from total-steps * leapfrog-steps), CUDA falls back to the
+   CHUNKED captured chain (genmlx-dys7): the chain is decomposed into
+   persist-gate-sized chunks, each trace-once/captured-replay, producing
+   the same chain as the fused path to kernel-fusion rounding — with a
+   reusable :chain-fn and a real :acceptance-rate. Metal (and CUDA under
+   :adapt-step-size) still falls back to block-compiled HMC, where
+   :chain-fn AND :acceptance-rate are nil — the block path does not track
+   acceptance (genmlx-d62h).
 
    When :adapt-step-size is true, runs a short eager warmup phase using
    dual averaging (Hoffman & Gelman 2014) to tune the step-size, then
@@ -2771,10 +2834,45 @@
               {:keys [score-fn init-params n-params tensor-native?]}
               (u/prepare-mcmc-score model args observations addresses trace)]
           ;; Auto-fallback: when chain is too large for a single fused graph
-          (if (and (nil? chain-fn)
-                   (not (can-fuse? :hmc total-steps
-                                   {:tensor-native? tensor-native?
-                                    :leapfrog-steps leapfrog-steps})))
+          (cond
+            ;; Chunked captured chain (genmlx-dys7): same chain as the fused
+            ;; path to kernel-fusion rounding, every chunk on captured
+            ;; replay, acceptance tracked for real. CUDA-only (persist
+            ;; capture) and not under step-size adaptation (the adaptive
+            ;; warmup is a host loop over the block machinery).
+            (and (nil? chain-fn)
+                 (not (can-fuse? :hmc total-steps
+                                 {:tensor-native? tensor-native?
+                                  :leapfrog-steps leapfrog-steps}))
+                 (not (mx/metal-is-available?))
+                 (not adapt-step-size))
+            (let [_ (println (str "Note: chain too large for a single fused "
+                                  "graph — using chunked captured HMC."))
+                  neg-U-fn (fn [q] (mx/negative (score-fn q)))
+                  grad-neg-U-raw (mx/grad neg-U-fn)
+                  eps (mx/scalar step-size)
+                  half-eps (mx/scalar (* 0.5 step-size))
+                  half (mx/scalar 0.5)
+                  rk (rng/ensure-key stream-key)
+                  [k1 k2] (rng/split rk)
+                  momentum (rng/normal k1 [total-steps n-params])
+                  uniforms (rng/uniform k2 [total-steps])
+                  _ (mx/materialize! momentum uniforms)
+                  runner (make-chunked-hmc-runner
+                          burn samples thin neg-U-fn grad-neg-U-raw
+                          eps half-eps half n-params leapfrog-steps)
+                  result (runner init-params momentum uniforms)]
+              (validate-compiled-result result "chunked-hmc" total-steps)
+              (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
+              {:samples (aget result 1)
+               :final-params (aget result 0)
+               :chain-fn runner
+               :acceptance-rate (/ (mx/item (aget result 2)) total-steps)})
+
+            (and (nil? chain-fn)
+                 (not (can-fuse? :hmc total-steps
+                                 {:tensor-native? tensor-native?
+                                  :leapfrog-steps leapfrog-steps})))
             (do (println "Note: chain too large for a single fused graph — using block-compiled HMC.")
                 (block-result->fused-format
                  (hmc {:samples samples :burn burn :thin thin :addresses addresses
@@ -2782,6 +2880,8 @@
                        :key stream-key :device device :compile? true
                        :adapt-step-size adapt-step-size :target-accept target-accept}
                       model args observations)))
+
+            :else
             ;; Fused path (with validation)
             (let [neg-U-fn (fn [q] (mx/negative (score-fn q)))
                   grad-neg-U-raw (mx/grad neg-U-fn)
