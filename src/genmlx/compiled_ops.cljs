@@ -1252,10 +1252,134 @@
 ;; - Compiled MCMC inner loops use tensor-score instead of p/generate
 ;; - Compiled SMC extend steps use tensor-score for weight computation
 
+;; ---------------------------------------------------------------------------
+;; Vectorized family scoring (genmlx-yopl)
+;; ---------------------------------------------------------------------------
+;; A homogeneous OBSERVED site family — same dist-type, dist-arg source forms
+;; identical up to numeric literals — is scored as ONE stacked [G] log-prob
+;; (per-literal-position [G] constant columns, one arg graph, elementwise lp,
+;; mx/sum) instead of G scalar per-site subgraphs. The value of this is not
+;; the forward pass (compile_fuse already fuses that into one kernel): it is
+;; the VJP, which mirrors the forward structure — per-site scalar scoring
+;; put ~2 backward kernels + gather/scatter/squeeze plumbing PER SITE in
+;; every fused MCMC step (the genmlx-kzoy census); the stacked form
+;; vectorizes the backward into a handful of [G]-shaped kernels.
+
+(def ^:private family-elementwise-dists
+  "Dist types whose :log-prob closure is elementwise MLX math that
+   broadcasts over stacked [G] value/arg tensors — eligible for vectorized
+   family scoring. Excludes :delta (no lp term) and vector-valued iid types
+   (their lp reduces internally)."
+  #{:gaussian :normal :uniform :bernoulli :flip :exponential :log-normal
+    :laplace :cauchy})
+
+(defn- abstract-dist-args
+  "Abstract a site's dist-arg source forms for family matching: every
+   numeric literal becomes a positional placeholder symbol ᐩfam<i>; the
+   literal values are collected in walk order. Declines (nil) forms that
+   embed a (trace ...) call (an inline site definition must never be
+   family-merged) or map literals (walk-order stability).
+   Returns {:sig [forms'] :lits [numbers]} or nil."
+  [dist-args]
+  (let [counter (volatile! 0)
+        lits (volatile! [])
+        ok? (volatile! true)
+        walk (fn walk [form]
+               (cond
+                 (number? form)
+                 (let [i @counter]
+                   (vswap! counter inc)
+                   (vswap! lits conj form)
+                   (symbol (str "ᐩfam" i)))
+
+                 (and (seq? form) (seq form))
+                 (if (and (symbol? (first form)) (= "trace" (name (first form))))
+                   (do (vreset! ok? false) form)
+                   (doall (map walk form)))
+
+                 (vector? form) (mapv walk form)
+                 (map? form) (do (vreset! ok? false) form)
+                 :else form))
+        sig (mapv walk dist-args)]
+    (when @ok?
+      {:sig sig :lits @lits})))
+
+(defn- detect-observed-families
+  "Group observed static sites into homogeneous families. sites: source-order
+   static trace-sites (schema maps with :addr :dist-type :dist-args) whose
+   values are present in the observations. Only groups of >= 2 vectorize.
+   Returns a seq of {:dist-type kw :sig forms :members [addr...]
+                     :lits-per-site [[num...]...]}."
+  [sites]
+  (->> sites
+       (keep (fn [site]
+               (when (contains? family-elementwise-dists (:dist-type site))
+                 (when-let [{:keys [sig lits]} (abstract-dist-args (:dist-args site))]
+                   {:dist-type (:dist-type site)
+                    :sig sig
+                    :addr (:addr site)
+                    :lits lits}))))
+       (group-by (juxt :dist-type :sig))
+       vals
+       (filter #(>= (count %) 2))
+       (map (fn [group]
+              {:dist-type (:dist-type (first group))
+               :sig (:sig (first group))
+               :members (mapv :addr group)
+               :lits-per-site (mapv :lits group)}))))
+
+(defn- build-family-lp-fns
+  "Build one stacked log-prob closure per family. Literal columns whose G
+   values are all equal stay plain numbers (no [G] input for constants);
+   varying columns become materialized [G] constants appended to the args
+   vector, with the placeholder symbols bound as synthetic :param entries —
+   compile-expr is reused unchanged. reduce-fn folds the elementwise
+   [.., G]-shaped lp to the score shape (full mx/sum for the scalar score;
+   last-axis keepdims sum for the batched [N,1] score).
+   Returns [lp-fns family-addrs]; a family whose sig fails to compile falls
+   back to per-site scoring (dropped from family-addrs)."
+  [families binding-env mlx-args obs-values reduce-fn]
+  (let [n-args (count mlx-args)
+        built
+        (keep (fn [{:keys [dist-type sig members lits-per-site]}]
+                (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
+                      n-lits (count (first lits-per-site))
+                      lit-cols (mapv (fn [p]
+                                       (let [col (mapv #(nth % p) lits-per-site)]
+                                         (if (apply = col)
+                                           (first col)
+                                           (let [a (mx/array col)]
+                                             (mx/materialize! a)
+                                             a))))
+                                     (range n-lits))
+                      args+lits (into mlx-args lit-cols)
+                      env' (reduce (fn [e p]
+                                     (assoc e (str "ᐩfam" p)
+                                            {:kind :param :index (+ n-args p)}))
+                                   binding-env
+                                   (range n-lits))
+                      cargs (mapv #(compiled/compile-expr % env' #{}) sig)
+                      stacked (let [s (mx/stack (mapv obs-values members))]
+                                (mx/materialize! s)
+                                s)]
+                  (when (every? some? cargs)
+                    {:lp-fn (fn [values-map]
+                              (let [eval-args (mapv #(% values-map args+lits) cargs)]
+                                (reduce-fn (apply log-prob-fn stacked eval-args))))
+                     :members members})))
+              families)]
+    [(mapv :lp-fn built)
+     (into #{} (mapcat :members) built)]))
+
 (defn make-tensor-score
   "Build a tensor-native score function: [K]-tensor → scalar log-prob.
    Bypasses GFI protocol — uses L1 noise-transform log-prob closures directly.
    Observations are baked in as constants. Only latent values come from the tensor.
+
+   Homogeneous observed site families are scored as one stacked [G]
+   log-prob (genmlx-yopl — see the family helpers above); all other sites
+   keep per-site lp subgraphs. The total is the same joint score up to
+   float32 summation order.
 
    Returns (fn [latent-tensor] -> MLX scalar) or nil if model can't be compiled.
 
@@ -1267,7 +1391,7 @@
    args: argument vector (will be converted to MLX arrays)
    observations: ChoiceMap of observed values"
   [schema source args observations]
-  (when-let [{:keys [site-specs addrs]}
+  (when-let [{:keys [site-specs addrs binding-env]}
              (compiled/prepare-static-sites schema source)]
     (let [mlx-args (compiled/ensure-mlx-args (vec args))
           ;; Separate observed vs latent using source-order static-sites
@@ -1283,22 +1407,33 @@
                                           (when (cm/has-value? sub)
                                             [addr (cm/get-value sub)]))))
                               all-addrs))
+          ;; Vectorized family scoring (genmlx-yopl): observed homogeneous
+          ;; families take a stacked lp; everything else stays per-site.
+          static-sites (filterv :static? (:trace-sites schema))
+          families (detect-observed-families
+                    (filterv #(contains? obs-values (:addr %)) static-sites))
+          [family-lp-fns family-addrs]
+          (build-family-lp-fns families binding-env mlx-args obs-values mx/sum)
           ;; Build per-site log-prob step functions
-          ;; Each returns (fn [values-map] -> log-prob-scalar) or nil
-          site-lp-fns
+          ;; Each returns (fn [values-map] -> log-prob-scalar), ::family for
+          ;; family-scored sites, or nil (unsupported → whole build declines)
+          per-site
           (mapv
             (fn [site-spec]
               (let [{:keys [addr compiled-args dist-type]} site-spec
                     nt (get compiled/noise-transforms-full dist-type)]
-                (when nt
-                  (let [log-prob-fn (:log-prob nt)]
-                    (fn [values-map]
-                      (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
-                        (apply log-prob-fn (get values-map addr) eval-args)))))))
+                (if (contains? family-addrs addr)
+                  ::family
+                  (when nt
+                    (let [log-prob-fn (:log-prob nt)]
+                      (fn [values-map]
+                        (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
+                          (apply log-prob-fn (get values-map addr) eval-args))))))))
             site-specs)]
-      (when (every? some? site-lp-fns)
+      (when (every? some? per-site)
         ;; Build the tensor-score closure
-        (let [dep-order (:dep-order schema)]
+        (let [site-lp-fns (into (filterv fn? per-site) family-lp-fns)
+              dep-order (:dep-order schema)]
           (fn tensor-score [latent-tensor]
             ;; Build values-map: latent from tensor, observed baked in
             (let [values-map
@@ -1333,6 +1468,91 @@
       (when score-fn
         {:score-fn score-fn
          :latent-index latent-index}))))
+
+(defn make-batched-tensor-score-with-index
+  "Batched (shape-based) tensor-native score: (fn [[N,K] params] -> [N])
+   joint log-prob, one graph for all N chains — the tensor-native analog of
+   u/make-batched-score-fn, with the same family vectorization as
+   make-tensor-score (family lps broadcast [N,1] × [G] → [N,G], last-axis
+   keepdims sum). Column k of params carries `(nth addresses k)` — the
+   CALLER's ordering, matching the [N,D] state the fused vectorized chains
+   build from `addresses`. Latent columns are extracted with one-hot
+   matmuls ([N,K]×[K,1] → [N,1]) because MLX's transpose+index does not
+   differentiate (see u/make-differentiable-vectorized-score-fn).
+   Returns {:score-fn fn :latent-index {addr -> int}} or nil when the model
+   doesn't tensor-compile or `addresses` doesn't cover exactly the
+   non-observed static sites."
+  [schema source args observations addresses]
+  (when (and schema (:static? schema)
+             (seq (:trace-sites schema))
+             (empty? (:splice-sites schema))
+             (empty? (:param-sites schema)))
+    (when-let [{:keys [site-specs addrs binding-env]}
+               (compiled/prepare-static-sites schema source)]
+      (let [mlx-args (compiled/ensure-mlx-args (vec args))
+            obs-addrs (set (map first (cm/addresses observations)))
+            latent-addrs (vec (remove obs-addrs addrs))
+            addresses (vec addresses)]
+        ;; The caller's addresses must be exactly the latent set — a subset
+        ;; would leave sites unvalued (the scalar path samples the full
+        ;; joint instead; here we decline to the GFI batched score).
+        (when (= (set addresses) (set latent-addrs))
+          (let [k (count addresses)
+                latent-index (into {} (map-indexed (fn [i a] [a i]) addresses))
+                one-hots (mapv (fn [i]
+                                 (let [v (vec (repeat k 0.0))
+                                       a (mx/array (assoc v i 1.0) [k 1])]
+                                   (mx/materialize! a)
+                                   a))
+                               (range k))
+                obs-values (into {} (keep (fn [addr]
+                                            (when (obs-addrs addr)
+                                              (let [sub (cm/get-submap observations addr)]
+                                                (when (cm/has-value? sub)
+                                                  [addr (cm/get-value sub)]))))
+                                          addrs))
+                static-sites (filterv :static? (:trace-sites schema))
+                families (detect-observed-families
+                          (filterv #(contains? obs-values (:addr %)) static-sites))
+                [family-lp-fns family-addrs]
+                (build-family-lp-fns families binding-env mlx-args obs-values
+                                     #(mx/sum % -1 true))
+                per-site
+                (mapv
+                  (fn [site-spec]
+                    (let [{:keys [addr compiled-args dist-type]} site-spec
+                          nt (get compiled/noise-transforms-full dist-type)]
+                      (if (contains? family-addrs addr)
+                        ::family
+                        (when nt
+                          (let [log-prob-fn (:log-prob nt)]
+                            (fn [values-map]
+                              (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
+                                (apply log-prob-fn (get values-map addr) eval-args))))))))
+                  site-specs)]
+            (when (every? some? per-site)
+              (let [site-lp-fns (into (filterv fn? per-site) family-lp-fns)
+                    dep-order (:dep-order schema)]
+                {:score-fn
+                 (fn batched-tensor-score [params]
+                   (let [values-map
+                         (reduce
+                           (fn [vm addr]
+                             (assoc vm addr
+                                    (if-let [idx (get latent-index addr)]
+                                      (mx/matmul params (nth one-hots idx))
+                                      (get obs-values addr))))
+                           {}
+                           dep-order)
+                         ;; Terms are [N,1] (latent-arg lps, family sums) or
+                         ;; scalar-broadcastable; total [N,1] → squeeze → [N].
+                         total (reduce
+                                 (fn [score lp-fn]
+                                   (mx/add score (lp-fn values-map)))
+                                 (mx/scalar 0.0)
+                                 site-lp-fns)]
+                     (mx/squeeze total [1])))
+                 :latent-index latent-index}))))))))
 
 ;; =========================================================================
 ;; Compiled SMC extend step (L2 WP-2)

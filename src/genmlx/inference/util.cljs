@@ -237,10 +237,24 @@
 
 (defn make-compiled-vectorized-score-and-grad
   "Vectorized score fn + vectorized gradient fn, both compiled.
-   Returns {:score-fn ([N,D]->[N]), :grad-fn ([N,D]->[N,D])}."
+   Returns {:score-fn ([N,D]->[N]), :grad-fn ([N,D]->[N,D]),
+            :tensor-native? bool}.
+   Tries the batched tensor-native score first (genmlx-yopl: bypasses the
+   GFI handler and vectorizes homogeneous observed site families — the
+   score value matches the handler score up to float32 summation order);
+   falls back to the batched-handler score. Column order is `addresses` on
+   both paths; the tensor path declines (nil) unless `addresses` covers
+   exactly the non-observed static sites."
   [model args observations addresses]
-  {:score-fn (make-vectorized-score-fn model args observations addresses)
-   :grad-fn (mx/compile-fn (make-vectorized-grad-score model args observations addresses))})
+  (if-let [{:keys [score-fn]}
+           (cops/make-batched-tensor-score-with-index
+            (:schema model) (:source model) (vec args) observations addresses)]
+    {:score-fn (mx/compile-fn score-fn)
+     :grad-fn (mx/compile-fn (mx/grad (fn [params] (mx/sum (score-fn params)))))
+     :tensor-native? true}
+    {:score-fn (make-vectorized-score-fn model args observations addresses)
+     :grad-fn (mx/compile-fn (make-vectorized-grad-score model args observations addresses))
+     :tensor-native? false}))
 
 (defn make-compiled-vectorized-val-grad
   "Compiled vectorized value-and-grad via sum trick.

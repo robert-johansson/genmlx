@@ -261,6 +261,38 @@ wall now wins at S=10/100 from call one AND in steady state the gap is
 economics (fewer/larger kernels per step — XLA-class step fusion), plus
 the eager adaptive-warmup path if a spec ever pins it.
 
+### Post-family-scoring (vectorized family score — genmlx-yopl, 2026-07-29)
+
+The census-driven lever that came out of the kzoy refutation: the
+tensor-native score (and a new batched variant) now detects homogeneous
+OBSERVED site families — same dist type, dist-arg source forms identical
+up to numeric literals — and scores each family as ONE stacked [G]
+log-prob (per-literal [G] constant columns, one arg graph, elementwise lp,
+sum). The forward was already fused; the point is the VJP, which now
+vectorizes to a handful of [G]-kernels instead of ~2 scalar backward
+kernels + gather/scatter/squeeze plumbing per site. Census:
+fused-mala-compiled S=100 tape 6553 → **5025** (~50/step; the 20 per-site
+backward kernels/step are gone). Equivalence pinned by
+`family_score_test` (tensor == handler score and grads to ~1e-7 rel;
+batched == GFI batched; heterogeneous/subset declines) — scores match the
+handler up to float32 summation order; chains statistically identical
+(same acceptance/tails at every cell).
+
+| S | GenJAX | post-3.5b | **post-family** | gap now | warmup now |
+|---|---|---|---|---|---|
+| 10 | 0.21 ms | 0.67 ms | **0.599 ms** | 2.9x | 23.9 ms |
+| 100 | 1.62 ms | 4.40 ms | **4.04 ms** | 2.5x | 69.6 ms |
+| 1000 | 15.6 ms | 34.5 ms | **26.2 ms** | **1.68x** | **1449 ms** |
+
+**GenMLX now wins warmup at every S on this row** (jit is ~1.65 s flat;
+the family-scored whole-call trace is 24 ms–1.4 s) — the first row where
+both total-wall AND per-shape warmup favor GenMLX while steady state is
+under 2x. Residual at S=1000: ~36 launches/step (proposal/accept
+machinery ~12-15, val-grad ~12-15 incl. 2 gathers + 2 scatters + 3
+standalone Sums) vs XLA's ≤4 — the remaining lever is fusable Reduce +
+view fusion (genmlx-7dm0). S=10/100 cells are scaffolding/floor-bound
+(the 819v compile-fn boundary), not kernel-bound.
+
 ## linreg_hmc — single-chain joint HMC, same posterior, sweep over chain length × leapfrog steps
 
 sm_120, measured 2026-07-29 (bean genmlx-klwf). Pins: genmlx `ed2be85` src
@@ -400,6 +432,28 @@ family into one [G]-shaped lp so the VJP vectorizes to a handful of
 [G]-kernels (genmlx-yopl, re-scoped), then fusable-Reduce (genmlx-7dm0)
 for the remaining Sums.
 
+### Post-family-scoring (vectorized family score — genmlx-yopl, 2026-07-29)
+
+Same lever as the MALA row (family-vectorized tensor score; census
+25219 → 19407 at S=100 L=8 — the per-grad-eval backward now a handful of
+[G]-kernels). Chains statistically identical (acceptance/tails equal).
+
+| S | L | GenJAX | pre | **post-family** | gap now | warmup pre → post |
+|---|---|---|---|---|---|---|
+| 10 | 8 | 0.363 ms | 2.52 ms | **2.02 ms** | 5.6x | 235 → **63 ms** |
+| 100 | 8 | 3.67 ms | 16.2 ms | **13.5 ms** | 3.7x | 2.2 s → **512 ms** |
+| 1000 | 8 | 32.6 ms | 199 ms | **171 ms** | 5.2x | 36.9 s → 11.1 s |
+| 10 | 32 | 1.06 ms | 5.50 ms | **5.99 ms** | 5.6x | 1.0 s → **329 ms** |
+| 100 | 32 | 10.5 ms | 66.4 ms | **50.2 ms** | 4.8x | 9.3 s → 2.6 s |
+| 1000 | 32 | 100.8 ms | 690 ms | **565 ms** | 5.6x | 13.2 s → 4.0 s |
+
+GenMLX now wins warmup at 10×8, 100×8, 10×32; the 8000+ op cells (11.1 s,
+2.6 s, 4.0 s vs jit's ~1.45 s) remain geiw's residual. The steady
+residual is per-grad-eval plumbing the family lever cannot reach — per
+step: ~2 gathers + 2 scatters + ~2 sums PER grad eval (× L+1 evals) plus
+the 2L unfused integrator updates — squarely the fusable-Reduce +
+view-fusion territory (genmlx-7dm0).
+
 ## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
 
 sm_120, measured 2026-07-29 (bean genmlx-zebd). Pins: genmlx `244aebd` src
@@ -451,6 +505,41 @@ with its cleanest datapoint. Warmup: at S=100 GenMLX now BEATS JAX's jit
 S=1000 the 23–34 s trace is the genmlx-geiw ~n^1.7 residual, unchanged
 priority. The eager→fused delta (80–2000x) is the single largest
 one-lever improvement in the parity suite so far.
+
+### Post-family-scoring (batched tensor score — genmlx-yopl, 2026-07-29)
+
+`fused-vectorized-mala` now rides a batched tensor-native score
+(`make-batched-tensor-score-with-index`: one-hot matmul column extraction
+— transpose+index does not differentiate — family lps broadcast
+[N,1]×[G] → [N,G], keepdims sum; equivalence vs the batched-handler score
+and its grads pinned to ~1e-7 rel in `family_score_test`). Census at
+N=64 S=100: tape 9256 → **5736**. Isolated eval cost ([N,2] score+grad
+pair, eager): 1.6–2.2 ms (GFI) → **0.35–0.38 ms** (tensor) at every N up
+to 4096.
+
+| N | S | GenJAX | pre | **post-family** | gap now | warmup pre → post |
+|---|---|---|---|---|---|---|
+| 8 | 100 | 1.54 ms | 10.4 ms | **10.2 ms** | 6.6x | 45.2 s* → 366 ms |
+| 64 | 100 | 1.45 ms | 9.8 ms | **10.0 ms** | 6.9x | 843 ms → **154 ms** |
+| 512 | 100 | 1.45 ms | 11.4 ms | **12.3 ms** | 8.5x | 913 ms → **141 ms** |
+| 4096 | 100 | 1.57 ms | 17.4 ms | **26.2 ms** † | 17x | 914 ms → **143 ms** |
+| 8 | 1000 | 11.2 ms | 57.3 ms | **43.7 ms** | 3.9x | 23.1 s → **2.8 s** |
+| 64 | 1000 | 11.1 ms | 66.7 ms | **43.9 ms** | 4.0x | 23.7 s → **2.9 s** |
+| 512 | 1000 | 13.2 ms | 75.5 ms | **55.8 ms** | 4.2x | 34.0 s → **3.1 s** |
+| 4096 | 1000 | 13.2 ms | 142 ms | **89.9 ms** | 6.8x | 31.4 s → **3.1 s** |
+
+Acceptance/tails identical to the pre-family row at every cell. Warmups
+collapsed ~7-11x (the batched tensor score bypasses the batched-handler
+trace): S=100 cells now warm up in ~140-370 ms vs jit's 1.5-1.9 s, and
+the S=1000 cells' 23-34 s traces are down to ~3 s — still ~2x over jit
+(genmlx-geiw's scan-primitive territory), no longer 15-20x.
+
+† The one regression, REPRODUCED twice and isolated: at N=4096 S=100 the
+median rose 17.4 → 26.2 ms (p10 16.1 → 19.5) while the same shape at
+S=1000 improved 38% and the isolated per-eval cost improved 6x — the
+extra cost is in the capture/replay layer for that (largest-N,
+shortest-S) shape, not the score graph. Filed with the capture-sink bean
+(genmlx-qkx6) to attribute alongside the input-staging work.
 
 ## ndreg_is — bigger-model regime: importance sampling over the (D, M) grid
 
