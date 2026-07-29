@@ -531,11 +531,12 @@
                 (recur new-p (inc i) new-count new-samples)))))]
     (mx/compile-fn collect-fn)))
 
-(defn- make-fused-burn-and-collect
-  "Compile a single function for burn-in + thinned collection.
-   Runs n-burn MH steps (discarded), then thin*n-samples steps (recorded).
-   Returns #js [final-params, samples [S,D], accept-count []].
-   one fused lazy-graph evaluation for the entire chain."
+(defn- make-fused-mh-chain-raw
+  "RAW MH burn-in + thinned-collection chain builder — the pure graph fn
+   (init-params [D], noise [T,D], uniforms [T])
+     → #js [final-params, samples [S,D], accept-count []].
+   NOT persisted — see make-fused-mala-chain-raw for the raw/persisted
+   split rationale."
   [n-burn n-samples thin score-fn proposal-std n-params]
   (let [total-steps (+ n-burn (* thin n-samples))
         chain-fn
@@ -561,7 +562,17 @@
                                 (mx/add sample-count (mx/astype (mx/array [1]) mx/int32))
                                 sample-count)]
                 (recur new-p (inc i) new-count new-samples new-accept-count)))))]
-    (persist-chain chain-fn :mh (+ n-burn (* thin n-samples)))))
+    chain-fn))
+
+(defn- make-fused-burn-and-collect
+  "Persisted (captured-replay) wrapper of make-fused-mh-chain-raw — one
+   fused lazy-graph evaluation for the entire MH chain, trace-once/
+   replay-many across fused-mh calls that reuse :chain-fn."
+  [n-burn n-samples thin score-fn proposal-std n-params]
+  (persist-chain
+   (make-fused-mh-chain-raw n-burn n-samples thin score-fn proposal-std
+                            n-params)
+   :mh (+ n-burn (* thin n-samples))))
 
 (defn- make-compiled-trajectory
   "Build a compiled K-step MH chain that returns the FULL trajectory [K,D].
@@ -898,6 +909,98 @@
                :final-params (aget result 0)
                :chain-fn cfn
                :acceptance-rate (/ (mx/item (aget result 2)) total-steps)})))))))
+
+(defn fused-mh-compiled
+  "Whole-call captured fused MH — the fused-mala-compiled analog (see its
+   docstring for the full contract): fixes (opts, model, args,
+   observations) and returns {:call (fn [key] -> {:samples :final-params
+   :acceptance-rate}) :free! ...}. The ENTIRE per-call unit — initial
+   constrained generate, chain-noise pre-generation, and the S-step
+   random-walk MH chain — is traced ONCE as a pure function of the PRNG
+   key and replayed launch-only. Stream layout replicates eager fused-mh
+   ([init-key stream-key] = split(k); noise/uniforms split off
+   stream-key): same chain to kernel-fusion rounding, repeat calls
+   bit-exact. CUDA only; untraceable models degrade loudly to eager
+   fused-mh per call."
+  [{:keys [samples burn thin addresses proposal-std]
+    :or {burn 0 samples 1000 thin 1 proposal-std 0.1}}
+   model args observations]
+  (when (mx/metal-is-available?)
+    (throw (ex-info "fused-mh-compiled: unmeasured on Metal — use fused-mh (genmlx-7prh)"
+                    {:genmlx/error :unmeasured-backend})))
+  (let [total-steps (+ burn (* thin samples))
+        {:keys [trace]} (p/generate (dyn/with-key model (rng/fresh-key 0))
+                                    args observations)
+        {:keys [score-fn n-params tensor-native? layout latent-index]}
+        (u/prepare-mcmc-score model args observations addresses trace)
+        extract-start-q
+        (fn [tr]
+          (if tensor-native?
+            (u/extract-params-by-index tr latent-index)
+            (let [ch (:choices tr)
+                  entries (:layout layout)]
+              (if (:array-valued? layout)
+                (mx/concatenate
+                 (mapv (fn [{:keys [addr]}]
+                         (mx/reshape (cm/get-choice ch [addr]) [-1]))
+                       entries))
+                (mx/stack
+                 (mapv (fn [{:keys [addr]}] (cm/get-choice ch [addr]))
+                       entries))))))
+        std (mx/scalar proposal-std)
+        chain-raw (make-fused-mh-chain-raw
+                   burn samples thin score-fn std n-params)
+        traceable? (and (can-fuse? :mh total-steps
+                                   {:tensor-native? tensor-native?})
+                        (<= total-steps
+                            (get persist-trace-ops-limits :mh 0)))
+        trace-fn
+        (fn [key]
+          (let [[init-key stream-key] (rng/split key)
+                {:keys [trace]} (p/generate (dyn/with-key model init-key)
+                                            args observations)
+                start-q (extract-start-q trace)
+                [k1 k2] (rng/split (rng/ensure-key stream-key))
+                noise (rng/normal k1 [total-steps n-params])
+                uniforms (rng/uniform k2 [total-steps])
+                r (chain-raw start-q noise uniforms)]
+            #js [(aget r 1) (aget r 0) (aget r 2)]))
+        handle (when traceable? (mx/compile-create trace-fn))
+        degraded (volatile! (not traceable?))
+        eager-box (volatile! nil)
+        eager-call
+        (fn [key]
+          (let [r (fused-mh (cond-> {:samples samples :burn burn
+                                     :thin thin :proposal-std proposal-std
+                                     :addresses addresses :key key
+                                     :device :gpu}
+                              @eager-box (assoc :chain-fn @eager-box))
+                            model args observations)]
+            (vreset! eager-box (:chain-fn r))
+            (select-keys r [:samples :final-params :acceptance-rate])))]
+    (when-not traceable?
+      (println (str "Note: fused-mh-compiled — chain too large for a single "
+                    "traced graph; using eager fused-mh per call.")))
+    {:call (fn [key]
+             (let [key (rng/ensure-key key)]
+               (if @degraded
+                 (eager-call key)
+                 (try
+                   (let [out (mx/compiled-call-captured handle #js [key])]
+                     {:samples (aget out 0)
+                      :final-params (aget out 1)
+                      :acceptance-rate (/ (mx/item (aget out 2)) total-steps)})
+                   (catch :default e
+                     (if (re-find #"during function transformations"
+                                  (str (.-message e)))
+                       (do (vreset! degraded true)
+                           (println (str "Note: fused-mh-compiled — model is "
+                                         "not traceable; degrading to eager "
+                                         "fused-mh per call. Cause: "
+                                         (.-message e)))
+                           (eager-call key))
+                       (throw e)))))))
+     :free! (fn [] (when handle (mx/compiled-free! handle)))}))
 
 ;; ---------------------------------------------------------------------------
 ;; Vectorized GFI MH (N parallel chains over a VectorizedTrace, genmlx-js93)

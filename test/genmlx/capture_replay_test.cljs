@@ -270,6 +270,32 @@
           "same key reproduces BIT-exactly")
       ((:free! f)))))
 
+(deftest fused-mh-compiled-matches-eager
+  ;; The MH analog — completes the whole-call factory trio (MH/MALA/HMC).
+  (when cuda?
+    (let [opts {:samples 40 :burn 5 :thin 1 :proposal-std 0.4
+                :addresses [:slope :intercept]}
+          f (mcmc/fused-mh-compiled opts linreg-h [] linreg-obs)
+          k1 (rng/fresh-key 61)
+          k2 (rng/fresh-key 62)
+          r1 ((:call f) k1)
+          r2 ((:call f) k2)
+          r1b ((:call f) k1)
+          eager (mcmc/fused-mh (assoc opts :key k1 :device :gpu)
+                               linreg-h [] linreg-obs)
+          flat (fn [r] (flatten (->v (:samples r))))]
+      (is (every? true? (map #(th/close? %1 %2 (max 1e-3 (* 1e-4 (js/Math.abs %1))))
+                             (flat eager) (flat r1)))
+          "factory follows the eager MH chain (same stream, fusion tolerance)")
+      (is (< (js/Math.abs (- (:acceptance-rate eager) (:acceptance-rate r1)))
+             0.051)
+          "acceptance agrees")
+      (is (not= (->v (:samples r1)) (->v (:samples r2)))
+          "different key, different chain")
+      (is (= (->v (:samples r1)) (->v (:samples r1b)))
+          "same key reproduces BIT-exactly")
+      ((:free! f)))))
+
 (deftest captured-point-fn-value-and-grad
   ;; persist-point-fn now rides the captured path: a value-and-grad handle
   ;; must return correct (value, grad) pairs across DIFFERENT inputs.
