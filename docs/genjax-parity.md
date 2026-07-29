@@ -284,6 +284,30 @@ handler up to float32 summation order; chains statistically identical
 | 100 | 1.62 ms | 4.40 ms | **4.04 ms** | 2.5x | 69.6 ms |
 | 1000 | 15.6 ms | 34.5 ms | **26.2 ms** | **1.68x** | **1449 ms** |
 
+### Post-reduce-fusion (fused Sum epilogues — genmlx-7dm0, 2026-07-29)
+
+The engine half of the kernel-economics ladder: MLX's compile_fuse now
+admits a float32 Sum as a fusion ROOT (full 1-D or last-axis 2-D domains;
+CUDA-only, MLX_DISABLE_REDUCE_FUSION kill switch), pulling its exclusive
+elementwise producer chain into one fused reduce kernel (block per row,
+per-input stride pairs, cg block reduction — new FusedReduceKernelBuilder,
+NVRTC-jitted). Fused == eager at ≤2.2e-7 rel (1-D bit-identical); guards
+12/12 + the 10-suite MCMC/capture batch green, chains statistically
+identical. Census: MALA tape 5025 → **4623** (~46/step).
+
+| S | GenJAX | post-family | **post-fusion** | gap now |
+|---|---|---|---|---|
+| 10 | 0.21 ms | 0.599 ms | **0.576 ms** | 2.7x |
+| 100 | 1.62 ms | 4.04 ms | **3.87 ms** | 2.4x |
+| 1000 | 15.6 ms | 26.2 ms | **24.6 ms** | **1.58x** |
+
+Warmup 23/79/1366 ms — still under jit at every S. Residual at S=1000:
+~30 launches/step (proposal/accept machinery + per-eval gather/scatter
+pairs + shared-producer Sums that multi-parent chains keep unfused) vs
+XLA's ≤4 — the next levers are cross-shape fusion / redundant-producer
+duplication (XLA-style) and gather/scatter elimination, recorded on the
+milestone.
+
 **GenMLX now wins warmup at every S on this row** (jit is ~1.65 s flat;
 the family-scored whole-call trace is 24 ms–1.4 s) — the first row where
 both total-wall AND per-shape warmup favor GenMLX while steady state is
@@ -454,6 +478,31 @@ step: ~2 gathers + 2 scatters + ~2 sums PER grad eval (× L+1 evals) plus
 the 2L unfused integrator updates — squarely the fusable-Reduce +
 view-fusion territory (genmlx-7dm0).
 
+### Post-reduce-fusion + chunk routing (genmlx-7dm0 + geiw experiment, 2026-07-29)
+
+Reduce fusion (see the MALA section) shaved every cell (census
+19407 → 18107): 171 → **160.5** (4.9x), 50.2 → **46.4** (4.4x),
+565 → **527** (5.2x chunked); chains identical. Then the
+`GENMLX_HMC_CHUNK_OPS` routing experiment — route large chains through
+the chunked captured runner with SMALL chunks instead of one whole-graph
+trace:
+
+| cell | whole-graph | **chunks=1000 ops** | GenJAX / jit |
+|---|---|---|---|
+| 1000×8 warmup | 11.1 s | **928 ms — UNDER jit** | 1.45 s |
+| 1000×8 steady | 160.5 ms | **133.0 ms (4.1x)** | 32.6 ms |
+| 1000×32 warmup | 4.0 s | 2.1 s | 1.49 s |
+| 1000×32 steady | 527 ms | **448 ms (4.4x)** | 100.8 ms |
+| 100×32 steady | 46.4 ms | 56.0 ms (worse) | 10.5 ms |
+
+Chunked wins BOTH warmup and steady at large S (the small-chunk graphs
+fuse better per-kernel and replay identically), but loses mid-size cells
+where the whole-call factory's in-graph init (~10 ms/call, SCI) matters.
+Chains bit-equal per-cell across routings (same acceptance/tails).
+Follow-up design recorded on geiw: compose the whole-call factory WITH
+chunked internals ("capture-through") — the outer capture records the
+inner chunks' replayed kernels, giving flat warmup AND in-graph init.
+
 ## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
 
 sm_120, measured 2026-07-29 (bean genmlx-zebd). Pins: genmlx `244aebd` src
@@ -541,6 +590,16 @@ extra cost is in the capture/replay layer for that (largest-N,
 shortest-S) shape, not the score graph. Filed with the capture-sink bean
 (genmlx-qkx6) to attribute alongside the input-staging work.
 
+### Post-reduce-fusion + qkx6 (2026-07-29, same binary)
+
+Census 5736 → 5036. S=1000: **42.8 / 42.7 / 56.2 / 90.3 ms**
+(3.8x/3.8x/4.3x/6.8x); S=100 cells 11.6–18.1 ms with ±30% run-to-run
+noise at these sizes — notably N=4096 S=100 came back to **18.1 ms**
+(from the 25–26 ms family-scoring regression; the qkx6 staging relax
+and/or the smaller fused tape absorbed it). Warmups unchanged (~140–360 ms
+at S=100, ~2.8–3.1 s at S=1000 — the S=1000 trace remains ~1.7x over jit,
+geiw territory).
+
 ## ndreg_is — bigger-model regime: importance sampling over the (D, M) grid
 
 sm_120, measured 2026-07-29 (bean genmlx-1s7i, IS row). Pins: genmlx
@@ -561,6 +620,23 @@ references; tensor files regenerable, gitignored. N=1000 particles.
 | 10 | 10000 | 0.159 ms | 0.293 ms | **1.8x** | 296 ms | **1.1 ms** |
 | 100 | 10000 | 0.229 ms | 0.297 ms | **1.3x** | 404 ms | **2.7 ms** |
 | 1000 | 10000 | 0.194 ms | 0.882 ms | 4.5x | 996 ms | **2.1 ms** |
+
+### Post-analysis (genmlx-hhnc census + reduce fusion re-measure, 2026-07-29)
+
+The D=1000 residual is attributed: the cell's tape is only 28 entries
+(~13 launches — kernel count is NOT the cause here), the cost scales with
+N×D (the [N,D] prior-site pipeline; M-independent, collapses to the floor
+at N=100), and the slow piece is the threefry RandomBits kernel
+(~30–45 GB/s effective, ~15x under elementwise bandwidth) plus
+RandomBits/Reduce acting as fusion barriers (~6 passes over the [N,D]
+buffers where XLA pays ~2). Post-reduce-fusion re-measure: D=1000 cells
+0.90–0.94 ms — unchanged, as predicted (rng-bound). Routed:
+genmlx-nznb (threefry throughput + bits→transform fusion). Floor-gating
+note: GenJAX does these cells in 0.097–0.194 ms, so 1.2×GenJAX is BELOW
+GenMLX's ~0.28 ms captured-call floor — the D=1000 cells (and the
+currently-green D≤100 M=10000 cells, which sit AT the floor) belong to
+the floor-budget regime (genmlx-pqb5), with nznb/7dm0 closing only the
+over-floor part.
 
 **The ecsi hypothesis, confirmed.** GenMLX's ~0.3 ms captured-call floor
 is flat in D and M; as real per-particle GPU work grows into it the gap

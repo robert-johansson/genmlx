@@ -154,6 +154,7 @@ bench test/genmlx/eval_cost_model.cljs
 bench test/genmlx/eval_cost_model_2.cljs
 medium test/genmlx/exact_test.cljs
 slow test/genmlx/external_env_test.cljs
+fast test/genmlx/family_score_test.cljs
 medium test/genmlx/fisher_test.cljs
 medium test/genmlx/fit_test.cljs
 medium test/genmlx/fused_inference_test.cljs

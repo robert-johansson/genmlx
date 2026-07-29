@@ -249,6 +249,22 @@
    (iterative compile passes / big-stack trace thread) is beaned."
   {:mh 1250 :mala 2500 :hmc 8000})
 
+(def ^:private hmc-chunk-ops-override
+  "GENMLX_HMC_CHUNK_OPS (int, estimate-fused-ops units — steps x leapfrog):
+   opt-in routing knob (genmlx-geiw): HMC chains whose total ops exceed it
+   take the CHUNKED captured runner with chunks of this size instead of a
+   whole-graph trace. Hypothesis under measurement: warmup becomes near-flat
+   in S (one small chunk shape traces instead of the unrolled chain, and the
+   chunked path already measured FASTER per-leapfrog than the single graph —
+   genmlx-dys7's 21.5 vs 25 us) at ~1% steady cost from per-chunk call
+   overhead. Unset = the measured-default routing."
+  (let [v (aget (.-env js/process) "GENMLX_HMC_CHUNK_OPS")]
+    (when v (js/parseInt v 10))))
+
+(defn- prefer-chunked-hmc? [total-steps leapfrog-steps]
+  (and hmc-chunk-ops-override
+       (> (* total-steps leapfrog-steps) hmc-chunk-ops-override)))
+
 (defn- persist-chain
   "Persistent-compile a pure fused chain builder (genmlx-z2gt Phase 2a,
    genmlx-0vwj): the first call traces — the builder runs once, inside MLX
@@ -2832,7 +2848,8 @@
    Identity mass matrix only (the raw builder's contract)."
   [n-burn n-samples thin neg-U-fn grad-neg-U eps half-eps half n-params leapfrog-steps]
   (let [target-ops (max leapfrog-steps
-                        (quot (get persist-trace-ops-limits :hmc 0) 2))
+                        (or hmc-chunk-ops-override
+                            (quot (get persist-trace-ops-limits :hmc 0) 2)))
         raw-cs (max 1 (quot target-ops leapfrog-steps))
         cs-sample (* thin (max 1 (quot raw-cs thin)))
         spc (quot cs-sample thin)
@@ -2854,32 +2871,29 @@
                                       :hmc (* (+ b (* thin s)) leapfrog-steps))]))
                        (distinct plan))]
     (fn [start-q momentum-2d uniforms-1d]
-      (let [zero (mx/scalar 0.0)]
-        (loop [q start-q, offset 0, chunks plan
-               sample-parts [], accept (mx/scalar 0.0)]
-          (if (empty? chunks)
-            #js [q
-                 (cond (empty? sample-parts) (mx/zeros [0 n-params])
-                       (= 1 (count sample-parts)) (first sample-parts)
-                       :else (mx/concatenate sample-parts 0))
-                 accept]
-            (let [[b s :as shape] (first chunks)
-                  steps (+ b (* thin s))
-                  ;; add-0 COPIES the slices into standalone buffers: the
-                  ;; captured-call input staging slow-paths VIEW-backed
-                  ;; buffers (~187 ms per chunk measured on sm_120 — the
-                  ;; raw_ptr migration hazard class; genmlx-dys7 residual
-                  ;; round 2). Copied inputs replay at full speed.
-                  m (mx/add (mx/slice-nd momentum-2d [offset 0]
-                                         [(+ offset steps) n-params])
-                            zero)
-                  u (mx/add (mx/slice uniforms-1d offset (+ offset steps))
-                            zero)
-                  _ (mx/materialize! m u)
-                  r ((get builders shape) q m u)]
-              (recur (aget r 0) (+ offset steps) (rest chunks)
-                     (if (pos? s) (conj sample-parts (aget r 1)) sample-parts)
-                     (mx/add accept (aget r 2))))))))))
+      (loop [q start-q, offset 0, chunks plan
+             sample-parts [], accept (mx/scalar 0.0)]
+        (if (empty? chunks)
+          #js [q
+               (cond (empty? sample-parts) (mx/zeros [0 n-params])
+                     (= 1 (count sample-parts)) (first sample-parts)
+                     :else (mx/concatenate sample-parts 0))
+               accept]
+          (let [[b s :as shape] (first chunks)
+                steps (+ b (* thin s))
+                ;; Row-contiguous slice VIEWS stage device-side directly —
+                ;; the capture sink handles offset views since genmlx-qkx6
+                ;; (the earlier add-0 standalone-copy workaround from the
+                ;; genmlx-dys7 round, ~187 ms/chunk on the slow path, is
+                ;; retired; chunked_hmc_test pins the cost).
+                m (mx/slice-nd momentum-2d [offset 0]
+                               [(+ offset steps) n-params])
+                u (mx/slice uniforms-1d offset (+ offset steps))
+                _ (mx/materialize! m u)
+                r ((get builders shape) q m u)]
+            (recur (aget r 0) (+ offset steps) (rest chunks)
+                   (if (pos? s) (conj sample-parts (aget r 1)) sample-parts)
+                   (mx/add accept (aget r 2)))))))))
 
 (defn fused-hmc
   "Fully fused HMC: burn-in + thinned collection in one fused lazy-graph evaluation.
@@ -2940,13 +2954,17 @@
             ;; capture) and not under step-size adaptation (the adaptive
             ;; warmup is a host loop over the block machinery).
             (and (nil? chain-fn)
-                 (not (can-fuse? :hmc total-steps
-                                 {:tensor-native? tensor-native?
-                                  :leapfrog-steps leapfrog-steps}))
+                 (or (prefer-chunked-hmc? total-steps leapfrog-steps)
+                     (not (can-fuse? :hmc total-steps
+                                     {:tensor-native? tensor-native?
+                                      :leapfrog-steps leapfrog-steps})))
                  (not (mx/metal-is-available?))
                  (not adapt-step-size))
-            (let [_ (println (str "Note: chain too large for a single fused "
-                                  "graph — using chunked captured HMC."))
+            (let [_ (println (str "Note: "
+                                  (if (prefer-chunked-hmc? total-steps leapfrog-steps)
+                                    "GENMLX_HMC_CHUNK_OPS routing"
+                                    "chain too large for a single fused graph")
+                                  " — using chunked captured HMC."))
                   neg-U-fn (fn [q] (mx/negative (score-fn q)))
                   grad-neg-U-raw (mx/grad neg-U-fn)
                   eps (mx/scalar step-size)
@@ -3082,7 +3100,10 @@
                                    {:tensor-native? tensor-native?
                                     :leapfrog-steps leapfrog-steps})
                         (<= (* total-steps leapfrog-steps)
-                            (get persist-trace-ops-limits :hmc 0)))
+                            (get persist-trace-ops-limits :hmc 0))
+                        ;; GENMLX_HMC_CHUNK_OPS routing (genmlx-geiw): decline
+                        ;; the whole-call trace so the eager path chunks.
+                        (not (prefer-chunked-hmc? total-steps leapfrog-steps)))
         trace-fn
         (fn [key]
           (let [[init-key stream-key] (rng/split key)
