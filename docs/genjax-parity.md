@@ -522,15 +522,31 @@ Follow-up design recorded on geiw: compose the whole-call factory WITH
 chunked internals ("capture-through") — the outer capture records the
 inner chunks' replayed kernels, giving flat warmup AND in-graph init.
 
-**The manychain analog was built and withdrawn the same day**
-(genmlx-b1gx): a chunked captured N-chain MALA runner is bit-exact vs
-the whole sweep with capture disabled, but captured REPLAYS of the
-[N,D] chunk graph compute wrong post-seam dynamics (staged inputs
-verified correct by readback; kernels reference staged buffers; the
-identical clone→copy_into cycle works for 1-D HMC chunks and for
-whole-graph [N,D] replays). Until that capture-layer bug is closed, the
-manychain S=1000 warmup (~2.8–3.1 s vs jit ~1.6–1.9 s) stays an
-accepted residual; the withdrawn runner had measured 177–184 ms.
+**The manychain analog was built, withdrawn, root-caused, and
+reinstated the same day** (genmlx-b1gx). The withdrawal: captured
+REPLAYS of the [N,D] chunk graph computed wrong post-seam dynamics
+(pooled tails 1.99 → 1.75). The root cause, isolated by a seven-variant
+minimal-repro ladder: `replay_capture_copy_into` is a RAW byte copy that
+checked only data_size+dtype — never layout. The old init-q was a
+TRANSPOSE-of-stack view, so the capture staged a column-major buffer;
+replays fed back row-major output clones, and every element landed in
+the wrong slot. (1-D HMC chunks are immune — no layout ambiguity;
+whole-graph replays are immune — every call feeds the same transposed
+construction.) Fix: a layout guard in copy_into (same shape+strides, or
+both row-contiguous, else decline to the plain path — mlx fork) and
+row-contiguous init-q construction (stack axis 1). Reinstated
+(`GENMLX_VMALA_CHUNK_OPS`), re-measured:
+
+| N | S | steady (whole → chunked) | warmup (whole → chunked) | jit |
+|---|---|---|---|---|
+| 8 | 1000 | 42.8 → 46.6 ms | 2.77 s → **188 ms** | 1.87 s |
+| 64 | 1000 | 42.7 → 46.3 ms | 2.87 s → **180 ms** | 1.88 s |
+| 512 | 1000 | 56.2 → 59.3 ms | 3.15 s → **191 ms** | 1.65 s |
+| 4096 | 1000 | 90.3 → 90.4 ms | 3.06 s → **221 ms** | 1.55 s |
+
+Tails correct and equal to whole-graph (2.009/1.988/1.988/1.989);
++3–8% steady for ~15x warmup — S=1000 manychain warmup is now ~8x UNDER
+jit on the knob-routed path. Default-flip decision pending.
 
 ## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
 
@@ -660,7 +676,14 @@ at N=100), and the slow piece is the threefry RandomBits kernel
 RandomBits/Reduce acting as fusion barriers (~6 passes over the [N,D]
 buffers where XLA pays ~2). Post-reduce-fusion re-measure: D=1000 cells
 0.90–0.94 ms — unchanged, as predicted (rng-bound). Routed:
-genmlx-nznb (threefry throughput + bits→transform fusion). Floor-gating
+genmlx-nznb (threefry throughput + bits→transform fusion). nznb round 1
+(same day): the byte-store threefry kernel rewritten with coalesced
+word stores (bit-identical output; −33% at 64 MB, bits kernel now at
+~elementwise bandwidth) — but the D=1000 cells did NOT move
+(0.95/0.97 ms): at this size the rng share is the captured split-ladder
++ transform + per-kernel dispatch, not raw store bandwidth. The cell
+now waits on rng FUSION (bits→transform as producer, split-ladder
+collapse) — nznb round 2. Floor-gating
 note: GenJAX does these cells in 0.097–0.194 ms, so 1.2×GenJAX is BELOW
 GenMLX's ~0.28 ms captured-call floor — the D=1000 cells (and the
 currently-green D≤100 M=10000 cells, which sit AT the floor) belong to

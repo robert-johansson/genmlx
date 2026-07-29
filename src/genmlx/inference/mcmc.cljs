@@ -265,13 +265,22 @@
   (and hmc-chunk-ops-override
        (> (* total-steps leapfrog-steps) hmc-chunk-ops-override)))
 
-;; NOTE (genmlx-geiw round 3): a chunked captured N-chain MALA runner was
-;; built and REMOVED the same day — its logic is bit-exact vs the whole
-;; sweep with capture disabled, but captured REPLAYS of the [N,D] chunk
-;; graph compute wrong post-seam dynamics (staged inputs verified correct
-;; by readback; kernels reference staged buffers; the identical
-;; clone->copy_into cycle works for the 1-D HMC chunks). Tracked as a
-;; capture-layer bug bean; do not reintroduce without closing it.
+(def ^:private vmala-chunk-ops-override
+  "GENMLX_VMALA_CHUNK_OPS (int, :mala estimate-fused-ops units = 2 x steps):
+   opt-in routing knob (genmlx-geiw round 3): N-chain fused-vectorized-mala
+   sweeps whose total ops exceed it ride the CHUNKED captured runner with
+   chunks of this size instead of one whole-sweep trace — near-flat warmup
+   in S at a few per-chunk captured-call overheads. Withdrawn once for the
+   genmlx-b1gx staging-layout corruption (transposed init-q vs row-major
+   replay-fed q); reinstated after the fix (row-contiguous init-q here +
+   the capture sink's layout guard). Unset = single-graph routing."
+  (let [v (aget (.-env js/process) "GENMLX_VMALA_CHUNK_OPS")]
+    (when v (js/parseInt v 10))))
+
+(defn- prefer-chunked-vmala? [total-steps]
+  (and vmala-chunk-ops-override
+       (not (mx/metal-is-available?))
+       (> (* 2 total-steps) vmala-chunk-ops-override)))
 
 (defn- persist-chain
   "Persistent-compile a pure fused chain builder (genmlx-z2gt Phase 2a,
@@ -2361,6 +2370,62 @@
                    (if keep? (conj kept new-q) kept)
                    new-accept)))))))
 
+(defn- make-chunked-vectorized-mala-runner
+  "Chunked captured N-chain MALA (genmlx-geiw round 3): decompose the
+   T-step [N,D] sweep into chunks so one small chunk shape traces and
+   replays across the whole sweep — near-flat warmup in S. Same signature
+   as the fused chain builder:
+     (init-q [N,D], noise [T,N,D], uniforms [T,N])
+       → #js [final-q [N,D], samples [S,N,D], accept-count []].
+   Chunk slices are row-contiguous first-axis VIEWS (staged device-side,
+   genmlx-qkx6) and init-q/replay-fed q share a row-contiguous layout
+   (genmlx-b1gx). Sampling-chunk boundaries are thin multiples (global
+   record cadence preserved); the chain equals the single-graph fused
+   sweep at the same key to kernel-fusion rounding (chunk seams)."
+  [n-burn n-samples thin score-fn grad-fn eps half-eps2 two-eps-sq n-chains n-params]
+  (let [target-ops (max 2 (or vmala-chunk-ops-override
+                              (quot (get persist-trace-ops-limits :mala 0) 2)))
+        raw-cs (max 1 (quot target-ops 2))
+        cs-sample (* thin (max 1 (quot raw-cs thin)))
+        spc (quot cs-sample thin)
+        burn-plan (loop [b n-burn, acc []]
+                    (cond (zero? b) acc
+                          (>= b raw-cs) (recur (- b raw-cs) (conj acc [raw-cs 0]))
+                          :else (conj acc [b 0])))
+        sample-plan (loop [s n-samples, acc []]
+                      (cond (zero? s) acc
+                            (>= s spc) (recur (- s spc) (conj acc [0 spc]))
+                            :else (conj acc [0 s])))
+        plan (into burn-plan sample-plan)
+        builders (into {}
+                       (map (fn [[b s :as shape]]
+                              [shape (persist-chain
+                                      (make-fused-vectorized-mala-chain-raw
+                                       b s thin score-fn grad-fn
+                                       eps half-eps2 two-eps-sq n-chains n-params)
+                                      :mala (* 2 (+ b (* thin s))))]))
+                       (distinct plan))]
+    (fn [init-q noise-3d uniforms-2d]
+      (loop [q init-q, offset 0, chunks plan
+             sample-parts [], accept (mx/scalar 0.0)]
+        (if (empty? chunks)
+          #js [q
+               (cond (empty? sample-parts) (mx/zeros [0 n-chains n-params])
+                     (= 1 (count sample-parts)) (first sample-parts)
+                     :else (mx/concatenate sample-parts 0))
+               accept]
+          (let [[b s :as shape] (first chunks)
+                steps (+ b (* thin s))
+                m (mx/slice-nd noise-3d [offset 0 0]
+                               [(+ offset steps) n-chains n-params])
+                u (mx/slice-nd uniforms-2d [offset 0]
+                               [(+ offset steps) n-chains])
+                _ (mx/materialize! m u)
+                r ((get builders shape) q m u)]
+            (recur (aget r 0) (+ offset steps) (rest chunks)
+                   (if (pos? s) (conj sample-parts (aget r 1)) sample-parts)
+                   (mx/add accept (aget r 2)))))))))
+
 (defn fused-vectorized-mala
   "Fused N-chain MALA (genmlx-zebd): the whole N-chain sweep as ONE fused
    lazy-graph evaluation on captured replay — the shape-based-batching
@@ -2390,8 +2455,12 @@
               vt (dyn/vgenerate model args observations n-chains
                                 (or init-key (rng/fresh-key)))
               ch (:choices vt)
-              init-q (mx/transpose
-                      (mx/stack (mapv #(cm/get-choice ch [%]) addresses)))
+              ;; Stack along axis 1 → [N,D] ROW-CONTIGUOUS (genmlx-b1gx: the
+              ;; old transpose-of-stack view captured column-major staged
+              ;; buffers, so replay-fed row-major q clones byte-copied into
+              ;; the wrong slots; the capture sink now also declines
+              ;; layout-mismatched staging outright).
+              init-q (mx/stack (mapv #(cm/get-choice ch [%]) addresses) 1)
               n-params (count addresses)
               eps (mx/scalar step-size)
               half-eps2 (mx/scalar (* 0.5 step-size step-size))
@@ -2402,13 +2471,19 @@
               uniforms (rng/uniform k2 [total-steps n-chains])
               _ (mx/materialize! init-q noise uniforms)
               cfn (or chain-fn
-                      (safe-compile-chain
-                       #(persist-chain
-                         (make-fused-vectorized-mala-chain-raw
-                          burn samples thin score-fn grad-fn
-                          eps half-eps2 two-eps-sq n-chains n-params)
-                         :mala (* 2 total-steps))
-                       "fused-vectorized-mala" total-steps))
+                      (if (prefer-chunked-vmala? total-steps)
+                        (do (println (str "Note: GENMLX_VMALA_CHUNK_OPS routing "
+                                          "— using chunked captured N-chain MALA."))
+                            (make-chunked-vectorized-mala-runner
+                             burn samples thin score-fn grad-fn
+                             eps half-eps2 two-eps-sq n-chains n-params))
+                        (safe-compile-chain
+                         #(persist-chain
+                           (make-fused-vectorized-mala-chain-raw
+                            burn samples thin score-fn grad-fn
+                            eps half-eps2 two-eps-sq n-chains n-params)
+                           :mala (* 2 total-steps))
+                         "fused-vectorized-mala" total-steps)))
               result (cfn init-q noise uniforms)]
           (validate-compiled-result result "fused-vectorized-mala" total-steps)
           (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
