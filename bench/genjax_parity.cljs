@@ -51,7 +51,7 @@
 (assert (= "float32" (:float_dtype spec)))
 (assert (= "linear_regression" (get-in spec [:model :type])))
 (def alg-type (get-in spec [:algorithm :type]))
-(assert (contains? #{"importance_sampling" "mala" "hmc"} alg-type))
+(assert (contains? #{"importance_sampling" "mala" "mala_manychain" "hmc"} alg-type))
 (when (= alg-type "importance_sampling")
   (assert (= "prior" (get-in spec [:algorithm :proposal]))))
 (doseq [site [:slope :intercept]]
@@ -286,6 +286,70 @@
      :mean_slope_tail (round-to (slope-tail-mean @last-r s) 4)}))
 
 ;; ---------------------------------------------------------------------------
+;; Many-chain MALA sweep (genmlx-zebd): N independent chains as [N,D] state
+;; via mcmc/vectorized-mala — shape-based batching vs GenJAX's
+;; jit(vmap(chain)). Timed as the full public call, INCLUDING the JS-array
+;; conversion the current API forces per kept sample (recorded in the table
+;; reading; the spec's sync rule requires only device-sync).
+;; ---------------------------------------------------------------------------
+
+(defn manychain-one-call
+  "One fused N-chain sweep (mcmc/fused-vectorized-mala — genmlx-zebd lever:
+   batched vgenerate init + whole sweep as one captured-replay graph,
+   samples stay device-side [S,N,D]). :chain-fn reused across calls."
+  [chain-fn-box n s k]
+  (let [alg (:algorithm spec)
+        r   (mcmc/fused-vectorized-mala
+             (cond-> {:samples s :burn (:burn_in alg) :thin (:thin alg)
+                      :step-size (:step_size alg)
+                      :addresses (mapv keyword (:selection alg))
+                      :n-chains n :key k :device :gpu}
+               @chain-fn-box (assoc :chain-fn @chain-fn-box))
+             hmodel [xs] obs)]
+    (mx/eval! (:samples r))
+    (vreset! chain-fn-box (:chain-fn r))
+    {:samples (:samples r) :acceptance (:acceptance-rate r)}))
+
+(defn pooled-slope-tail
+  "Mean of samples[S/2:, :, 0] — device-side, one item extraction."
+  [samples-3d n s]
+  (mx/item (mx/mean (mx/slice-nd samples-3d [(quot s 2) 0 0] [s n 1]))))
+
+(defn sweep-manychain [n s]
+  (let [{:keys [warmup_runs timed_runs]} (:measurement spec)
+        run-keys (mapv (fn [k] (mx/eval! k) k)
+                       (rng/split-n (rng/fresh-key 0) (+ warmup_runs timed_runs)))
+        box       (volatile! nil)
+        t0        (js/performance.now)
+        _         (manychain-one-call box n s (nth run-keys 0))
+        warmup-ms (- (js/performance.now) t0)
+        _         (mx/sweep-dead-arrays!)
+        _         (doseq [r (range 1 warmup_runs)]
+                    (manychain-one-call box n s (nth run-keys r))
+                    (mx/sweep-dead-arrays!))
+        last-r    (volatile! nil)
+        accs      (volatile! [])
+        timings   (mapv (fn [r]
+                          (let [k  (nth run-keys (+ warmup_runs r))
+                                t0 (js/performance.now)
+                                res (manychain-one-call box n s k)
+                                ms (- (js/performance.now) t0)]
+                            (vreset! last-r res)
+                            (vswap! accs conj (:acceptance res))
+                            (mx/sweep-dead-arrays!)
+                            ms))
+                        (range timed_runs))
+        sorted    (vec (sort timings))]
+    {:n_chains n
+     :n_steps s
+     :warmup_ms   (round-to warmup-ms 3)
+     :median_ms   (round-to (percentile sorted 0.5) 4)
+     :p10_ms      (round-to (percentile sorted 0.1) 4)
+     :p90_ms      (round-to (percentile sorted 0.9) 4)
+     :pooled_acceptance (round-to (/ (reduce + @accs) (count @accs)) 4)
+     :pooled_slope_tail (round-to (pooled-slope-tail (:samples @last-r) n s) 4)}))
+
+;; ---------------------------------------------------------------------------
 ;; HMC sweep (fused-hmc / fused-hmc-compiled — the mala runner's shape with a
 ;; leapfrog dimension; sweep is the cross product n_steps x leapfrog_steps).
 ;; ---------------------------------------------------------------------------
@@ -440,6 +504,21 @@
                                "   slope-tail " (.toFixed (:mean_slope_tail r) 3)))
                  r))
              (get-in spec [:sweep :n_steps]))))
+
+    "mala_manychain"
+    (write-result!
+     conv-diff {:device "gpu"}
+     (vec
+      (for [s (get-in spec [:sweep :n_steps])
+            n (get-in spec [:sweep :n_chains])]
+        (let [r (sweep-manychain n s)]
+          (println (str "  N=" (.padStart (str n) 5)
+                        " S=" (.padStart (str s) 5)
+                        "  warmup " (.padStart (.toFixed (:warmup_ms r) 1) 9) " ms"
+                        "   median " (.padStart (.toFixed (:median_ms r) 3) 9) " ms"
+                        "   accept " (.toFixed (:pooled_acceptance r) 3)
+                        "   slope-tail " (.toFixed (:pooled_slope_tail r) 3)))
+          r))))
 
     "hmc"
     (let [_      (assert (= "identity" (get-in spec [:algorithm :mass_matrix])))

@@ -2303,6 +2303,97 @@
             (vectorized-mala-step state score-fn grad-fn eps half-eps2 two-eps-sq
                                   n-chains step-key)))))))
 
+(defn- make-fused-vectorized-mala-chain-raw
+  "RAW N-chain MALA chain builder — the pure graph fn
+   (init-q [N,D], noise [T,N,D], uniforms [T,N])
+     → #js [final-q [N,D], samples [S,N,D], accept-count []].
+   The [N,D] analog of make-fused-mala-chain-raw: same proposal/accept math
+   as vectorized-mala-step but with zero host syncs — kept states are
+   collected and stacked in-graph. Per-chain graph size is N-INDEPENDENT
+   (broadcast ops), so the :mala persist gates apply unchanged."
+  [n-burn n-samples thin score-fn grad-fn eps half-eps2 two-eps-sq n-chains n-params]
+  (let [total-steps (+ n-burn (* thin n-samples))]
+    (fn [init-q noise-3d uniforms-2d]
+      (loop [q init-q, i 0, kept [], accept-count (mx/scalar 0.0)]
+        (if (>= i total-steps)
+          #js [q (mx/stack kept) accept-count]
+          (let [g (grad-fn q)
+                noise-t (noise-row noise-3d i [n-chains n-params])
+                q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise-t))
+                g' (grad-fn q')
+                fwd-mean (mx/add q (mx/multiply half-eps2 g))
+                bwd-mean (mx/add q' (mx/multiply half-eps2 g'))
+                log-fwd (vectorized-log-proposal-density q' fwd-mean two-eps-sq)
+                log-bwd (vectorized-log-proposal-density q bwd-mean two-eps-sq)
+                log-alpha (mx/add (mx/subtract (score-fn q') (score-fn q))
+                                  (mx/subtract log-bwd log-fwd))
+                u-t (noise-row uniforms-2d i [n-chains])
+                mask (mx/less (mx/log u-t) log-alpha)
+                new-q (mx/where (mx/expand-dims mask 1) q' q)
+                new-accept (mx/add accept-count
+                                   (mx/sum (mx/astype mask mx/float32)))
+                keep? (and (>= i n-burn) (zero? (mod (- i n-burn) thin)))]
+            (recur new-q (inc i)
+                   (if keep? (conj kept new-q) kept)
+                   new-accept)))))))
+
+(defn fused-vectorized-mala
+  "Fused N-chain MALA (genmlx-zebd): the whole N-chain sweep as ONE fused
+   lazy-graph evaluation on captured replay — the shape-based-batching
+   answer to jit(vmap(chain)). Init is a single batched vgenerate (one
+   handler run for all N chains — not N scalar generates), noise is
+   pre-generated [T,N,D]/[T,N], and the chain builder runs zero host syncs.
+   Returns {:samples [S,N,D] MLX array :final-params [N,D]
+            :chain-fn compiled-fn :acceptance-rate float}.
+   Pass :chain-fn from a previous call (same N, S shape) to reuse the
+   traced chain. Identity proposal covariance; no step-size adaptation.
+
+   opts: {:samples S :burn B :thin T :step-size eps :addresses [addr...]
+          :n-chains N :key prng-key :device :cpu|:gpu
+          :chain-fn compiled-fn-from-previous-call}
+   Default device: :gpu."
+  [{:keys [samples burn thin step-size addresses n-chains key device chain-fn]
+    :or {burn 0 thin 1 step-size 0.01 n-chains 10 device :gpu}}
+   model args observations]
+  (let [[init-key stream-key] (rng/split-or-nils (when key (rng/ensure-key key)))
+        total-steps (+ burn (* thin samples))]
+    (with-device device
+      (fn []
+        (let [model (if key model (dyn/auto-key model))
+              addresses (u/filter-addresses addresses (u/get-eliminated-addresses model))
+              {:keys [score-fn grad-fn]}
+              (u/make-compiled-vectorized-score-and-grad model args observations addresses)
+              vt (dyn/vgenerate model args observations n-chains
+                                (or init-key (rng/fresh-key)))
+              ch (:choices vt)
+              init-q (mx/transpose
+                      (mx/stack (mapv #(cm/get-choice ch [%]) addresses)))
+              n-params (count addresses)
+              eps (mx/scalar step-size)
+              half-eps2 (mx/scalar (* 0.5 step-size step-size))
+              two-eps-sq (mx/scalar (* 2.0 step-size step-size))
+              rk (rng/ensure-key stream-key)
+              [k1 k2] (rng/split rk)
+              noise (rng/normal k1 [total-steps n-chains n-params])
+              uniforms (rng/uniform k2 [total-steps n-chains])
+              _ (mx/materialize! init-q noise uniforms)
+              cfn (or chain-fn
+                      (safe-compile-chain
+                       #(persist-chain
+                         (make-fused-vectorized-mala-chain-raw
+                          burn samples thin score-fn grad-fn
+                          eps half-eps2 two-eps-sq n-chains n-params)
+                         :mala (* 2 total-steps))
+                       "fused-vectorized-mala" total-steps))
+              result (cfn init-q noise uniforms)]
+          (validate-compiled-result result "fused-vectorized-mala" total-steps)
+          (mx/materialize! (aget result 0) (aget result 1) (aget result 2))
+          {:samples (aget result 1)
+           :final-params (aget result 0)
+           :chain-fn cfn
+           :acceptance-rate (/ (mx/item (aget result 2))
+                               (* total-steps n-chains))})))))
+
 ;; ---------------------------------------------------------------------------
 ;; Mass matrix helpers for HMC / NUTS
 ;; ---------------------------------------------------------------------------

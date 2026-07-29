@@ -357,3 +357,55 @@ instantiation); the 31x cell runs 98 µs/leapfrog vs the captured path's
 25 µs — per-chunk sync/materialize overhead, the dys7 residual. The
 compile_fuse fix is upstream-relevant (ml-explore/mlx has the same
 quadratic; genmlx-xz93 batch).
+
+## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
+
+sm_120, measured 2026-07-29 (bean genmlx-zebd). Pins: genmlx `244aebd` src
+tree (fused-vectorized-mala + bench mode land in this doc's commit),
+mlx-node `b6a08a08` (incl. the compile_fuse quadratic fix), genjax 1.0.13,
+jax 0.7.2/cuda13, driver 595.71.05. Same model/data/eps as linreg_mala;
+N independent joint-MALA chains — GenJAX as `jit(vmap(seed(chain)))` over
+N keys, GenMLX as shape-based [N,D] batching. Sweep N ∈ {8,64,512,4096} ×
+S ∈ {100,1000}, per-chain acceptance pooled, tails judged at S=1000.
+
+**The eager baseline measured first** (`vectorized-mala`, the public API
+until today): host-bound at ~4 syncs/step plus N scalar generates at init —
+N=4096×S=100 measured **30.7 s vs JAX 1.6 ms (~19,500x)**; even N=8×S=100
+was ~1000x. Acceptance agreed to ±0.01 everywhere — right algorithm,
+wrong execution model. (Raw: `linreg_mala_manychain.genmlx.20260729-084714`.)
+
+**The lever, same day** (`fused-vectorized-mala`, the bean's named move):
+batched vgenerate init (one handler run for all N chains), [T,N,D] noise
+pre-generation, and the whole sweep as ONE captured-replay graph with zero
+host syncs — per-step graph size is N-independent, so the existing :mala
+persist gates apply unchanged. Statistical-agreement + determinism pins in
+`fused_vectorized_mala_test`. The row, fused:
+
+| N | S | GenJAX | GenMLX eager | **GenMLX fused** | gap now | GJ warmup | GM warmup |
+|---|---|---|---|---|---|---|---|
+| 8 | 100 | 1.54 ms | 866 ms | **10.4 ms** | 6.8x | 1870 ms | 45.2 s* |
+| 64 | 100 | 1.45 ms | 1101 ms | **9.8 ms** | 6.8x | 1825 ms | **843 ms** |
+| 512 | 100 | 1.45 ms | 3698 ms | **11.4 ms** | 7.9x | 1747 ms | **913 ms** |
+| 4096 | 100 | 1.57 ms | 30745 ms | **17.4 ms** | 11x | 1530 ms | **914 ms** |
+| 8 | 1000 | 11.2 ms | 9687 ms | **57.3 ms** | 5.1x | 1869 ms | 23.1 s |
+| 64 | 1000 | 11.1 ms | 10159 ms | **66.7 ms** | 6.0x | 1876 ms | 23.7 s |
+| 512 | 1000 | 13.2 ms | 13966 ms | **75.5 ms** | 5.7x | 1653 ms | 34.0 s |
+| 4096 | 1000 | 13.2 ms | 57247 ms | **142 ms** | 11x | 1551 ms | 31.4 s |
+
+\* first-in-process cell: cold NVRTC kernel bill for the new [N,D] shapes.
+
+Pooled acceptance 0.80–0.81 both sides at every cell; pooled slope-tails
+1.97–2.01 vs the analytic 1.9917 at S=1000. (N=8 S=100's tail 2.46 is
+8 chains × 50 samples of noise — the spec judges tails at S=1000 only.)
+
+**Reading the row.** Both sides are near-N-independent to 512 chains —
+vmap and [N,D] broadcasting amortize identically in shape. The steady gap
+in this regime is **5–8x, rising to 11x at N=4096**: per-step kernel
+COUNT (GenMLX's captured replay launches ~a dozen tiny kernels per MALA
+step where XLA fuses the step body; at 4096×2 floats per kernel the
+launch overhead still dominates) — the genmlx-lnzc step-fusion lever, now
+with its cleanest datapoint. Warmup: at S=100 GenMLX now BEATS JAX's jit
+(0.9 s vs 1.5–1.9 s, break-even 39–117 calls in GenMLX's favor); at
+S=1000 the 23–34 s trace is the genmlx-geiw ~n^1.7 residual, unchanged
+priority. The eager→fused delta (80–2000x) is the single largest
+one-lever improvement in the parity suite so far.

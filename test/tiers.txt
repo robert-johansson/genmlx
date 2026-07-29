@@ -160,6 +160,7 @@ medium test/genmlx/fused_inference_test.cljs
 fast test/genmlx/fused_map_state_test.cljs
 medium test/genmlx/fused_mcmc_test.cljs
 medium test/genmlx/fused_mh_api_test.cljs
+medium test/genmlx/fused_vectorized_mala_test.cljs
 medium test/genmlx/fused_vi_test.cljs
 medium test/genmlx/gamma_batch_test.cljs
 medium test/genmlx/gather_qmm_oracle_test.cljs
