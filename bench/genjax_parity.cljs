@@ -49,6 +49,108 @@
   (js->clj (js/JSON.parse (.readFileSync fs spec-path "utf8")) :keywordize-keys true))
 
 (assert (= "float32" (:float_dtype spec)))
+
+;; ---------------------------------------------------------------------------
+;; ndreg (bigger-model) flow — genmlx-1s7i. Vector sites (iid-gaussian [D]
+;; prior + iid-gaussian [M] obs over a matvec mean — plain gaussian vector
+;; sites keep per-component weights, see the spec's :sites note), per-(D,M)
+;; cell sweep on vgenerate-compiled at fixed N. Runs and exits before the
+;; linreg-specific top-level below.
+;; ---------------------------------------------------------------------------
+
+(when (= "linear_regression_nd" (get-in spec [:model :type]))
+  (let [{:keys [warmup_runs timed_runs]} (:measurement spec)
+        n        (get-in spec [:sweep :n_particles])
+        prior-sd (get-in spec [:model :prior_sd])
+        lik-sd   (get-in spec [:model :lik_sd])
+        data-dir (.join node-path (.dirname node-path spec-path) ".." "data")
+        round-to* (fn [x d] (let [f (js/Math.pow 10 d)]
+                              (/ (js/Math.round (* x f)) f)))
+        pct (fn [sorted q]
+              (let [i (* q (dec (count sorted)))
+                    lo (js/Math.floor i) hi (js/Math.ceil i) frac (- i lo)]
+                (+ (* (nth sorted lo) (- 1 frac)) (* (nth sorted hi) frac))))
+        rows
+        (vec
+         (for [[D M] (get-in spec [:sweep :cells])]
+           (let [stem (str "ndreg_D" D "_M" M)
+                 t (mx/load-safetensors (.join node-path data-dir (str stem ".safetensors")))
+                 ref (js->clj (js/JSON.parse (.readFileSync fs (.join node-path data-dir (str stem ".ref.json")) "utf8"))
+                              :keywordize-keys true)
+                 X (get t "X") y (get t "y")
+                 XT (mx/transpose X)   ;; w @ X^T broadcasts for [D] AND [N,D]
+                 _ (mx/materialize! X XT y)
+                 nd-model (dyn/auto-key
+                           (gen [XT]
+                             (let [w (trace :w (dist/iid-gaussian 0.0 prior-sd D))]
+                               (trace :y (dist/iid-gaussian (mx/matmul w XT) lik-sd M))
+                               w)))
+                 hmodel (dyn/strip-analytical-path nd-model)
+                 obs (cm/choicemap :y y)
+                 ;; weight-convention guard per cell
+                 {:keys [trace weight]} (p/generate (dyn/with-key hmodel (rng/fresh-key 7)) [XT] obs)
+                 wv (cm/get-choice (:choices trace) [:w])
+                 mean (mx/matmul wv XT)
+                 expected (mx/subtract
+                           (mx/multiply (mx/scalar -0.5)
+                                        (mx/sum (mx/square (mx/divide (mx/subtract y mean)
+                                                                      (mx/scalar lik-sd)))))
+                           (mx/scalar (* M (+ (js/Math.log lik-sd)
+                                              (* 0.5 (js/Math.log (* 2 js/Math.PI)))))))
+                 diff (js/Math.abs (- (mx/item weight) (mx/item expected)))
+                 _ (when-not (< diff (max 0.5 (* 1e-4 (js/Math.abs (mx/item expected)))))
+                     (throw (ex-info "nd weight convention mismatch" {:diff diff})))
+                 run-keys (mapv (fn [k] (mx/eval! k) k)
+                                (rng/split-n (rng/fresh-key 0) (+ warmup_runs timed_runs)))
+                 cf (dyn/vgenerate-compiled hmodel [XT] obs n)
+                 one-call (fn [k] (let [vt ((:call cf) k)] (mx/eval! (:weight vt)) vt))
+                 t0 (js/performance.now)
+                 _ (one-call (nth run-keys 0))
+                 warmup-ms (- (js/performance.now) t0)
+                 _ (mx/sweep-dead-arrays!)
+                 _ (doseq [r (range 1 warmup_runs)]
+                     (one-call (nth run-keys r)) (mx/sweep-dead-arrays!))
+                 last-vt (volatile! nil)
+                 timings (mapv (fn [r]
+                                 (let [k (nth run-keys (+ warmup_runs r))
+                                       t0 (js/performance.now)
+                                       vt (one-call k)
+                                       ms (- (js/performance.now) t0)]
+                                   (vreset! last-vt vt)
+                                   (mx/sweep-dead-arrays!) ms))
+                               (range timed_runs))
+                 sorted (vec (sort timings))
+                 lme (mx/item (vect/vtrace-log-ml-estimate @last-vt))
+                 row {:D D :M M
+                      :warmup_ms (round-to* warmup-ms 3)
+                      :median_ms (round-to* (pct sorted 0.5) 4)
+                      :p10_ms (round-to* (pct sorted 0.1) 4)
+                      :p90_ms (round-to* (pct sorted 0.9) 4)
+                      :logmeanexp_weight (round-to* lme 4)
+                      :exact_logZ (round-to* (:exact_logZ ref) 4)}]
+             (println (str "  D=" (.padStart (str D) 5) " M=" (.padStart (str M) 6)
+                           "  warmup " (.padStart (.toFixed (:warmup_ms row) 1) 9) " ms"
+                           "   median " (.padStart (.toFixed (:median_ms row) 3) 9) " ms"
+                           "   logZ~ " (.toFixed lme 1)
+                           "  (exact " (.toFixed (:exact_logZ ref) 1) ")"))
+             row)))
+        sh* (fn [cmd] (.trim (.toString (.execSync cp cmd))))
+        stamp (-> (.toISOString (js/Date.)) (.replace (js/RegExp. "[-:]" "g") "")
+                  (.replace (js/RegExp. "\\..*") "") (.replace "T" "-"))
+        result {:spec_id (:id spec) :side "genmlx"
+                :timestamp (.toISOString (js/Date.))
+                :versions {:genmlx (sh* "git rev-parse HEAD")
+                           :mlx_node (sh* "git -C mlx-node rev-parse HEAD")}
+                :host {:nvidia_smi (try (sh* "nvidia-smi --query-gpu=name,driver_version --format=csv,noheader")
+                                        (catch :default _ nil))}
+                :weight_convention "per-cell summed-vector guard asserted inline"
+                :results rows}
+        out-dir (.join node-path (.dirname node-path spec-path) ".." "results")
+        out-path (.join node-path out-dir (str (:id spec) ".genmlx." stamp ".json"))]
+    (.writeFileSync fs out-path (str (js/JSON.stringify (clj->js result) nil 2) "\n"))
+    (println (str "wrote " out-path))
+    (.exit js/process 0)))
+
 (assert (= "linear_regression" (get-in spec [:model :type])))
 (def alg-type (get-in spec [:algorithm :type]))
 (assert (contains? #{"importance_sampling" "mala" "mala_manychain" "hmc"} alg-type))

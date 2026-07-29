@@ -412,3 +412,38 @@ with its cleanest datapoint. Warmup: at S=100 GenMLX now BEATS JAX's jit
 S=1000 the 23–34 s trace is the genmlx-geiw ~n^1.7 residual, unchanged
 priority. The eager→fused delta (80–2000x) is the single largest
 one-lever improvement in the parity suite so far.
+
+## ndreg_is — bigger-model regime: importance sampling over the (D, M) grid
+
+sm_120, measured 2026-07-29 (bean genmlx-1s7i, IS row). Pins: genmlx
+`bf142ea` src tree (bench nd mode lands in this doc's commit), mlx-node
+`6dc7b5ee`, genjax 1.0.13, jax 0.7.2/cuda13. D-dimensional regression
+(w ~ iid N(0,100) [D], y ~ N(X·w, 1) [M]), ONE vector site each —
+GenMLX uses iid-gaussian both sites (plain gaussian vector sites keep
+per-component weights, the same broadcast convention genjax 1.0 has;
+both runners sum, guarded per cell). Data frozen by generator script +
+seed (`gen_ndreg_data.py`, numpy 20260729) with exact float64 conjugate
+references; tensor files regenerable, gitignored. N=1000 particles.
+
+| D | M | GenJAX | GenMLX | gap | GJ warmup | GM warmup |
+|---|---|---|---|---|---|---|
+| 10 | 1000 | 0.020 ms | 0.301 ms | 15x | 427 ms | **110 ms** |
+| 100 | 1000 | 0.037 ms | 0.293 ms | 7.9x | 367 ms | **2.5 ms** |
+| 1000 | 1000 | 0.097 ms | 0.892 ms | 9.2x | 485 ms | **1.2 ms** |
+| 10 | 10000 | 0.159 ms | 0.293 ms | **1.8x** | 296 ms | **1.1 ms** |
+| 100 | 10000 | 0.229 ms | 0.297 ms | **1.3x** | 404 ms | **2.7 ms** |
+| 1000 | 10000 | 0.194 ms | 0.882 ms | 4.5x | 996 ms | **2.1 ms** |
+
+**The ecsi hypothesis, confirmed.** GenMLX's ~0.3 ms captured-call floor
+is flat in D and M; as real per-particle GPU work grows into it the gap
+collapses — **1.3–1.8x at M=10000 with D ≤ 100**, against the 95x of the
+microbenchmark-sized linreg_is row. The "gap crosses under 2x" point the
+bean asked for: M=10000, D ≤ 100. GenMLX wins warmup at EVERY cell
+(vgenerate-compiled traces in 1–110 ms vs jit's 0.3–1.0 s), so total
+wall favors GenMLX from call one everywhere. Residual: the D=1000 cells
+sit at 0.88–0.89 ms (4.5–9.2x) — the [N,1000] site kernels lag XLA's;
+same kernel-economics family as lnzc. logZ estimates agree between sides
+in the same-order-of-badness sense the spec defines (prior-proposal IS
+degrades exponentially in D, identically on both sides; exact float64
+references reported per cell). MALA/HMC nd rows remain (per-D eps tuning
+needed).
