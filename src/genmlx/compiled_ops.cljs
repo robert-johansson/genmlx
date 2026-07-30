@@ -1653,13 +1653,87 @@
       [(mapv :lp-fn built)
        (into #{} (mapcat :members) built)])))
 
+(defn- build-scoring-plan
+  "Assemble the scoring plan shared by the scalar and batched tensor scores.
+   The two differ only in three things — the latent ordering (tensor layout
+   vs the caller's `addresses`), how an elementwise lp is reduced to the
+   score shape, and whether the affine basis is transposed — so they are
+   parameters here rather than two copies of the strategy stack.
+
+   Strategy order, first match wins per site: affine matmul family >
+   stacked observed family > stacked latent priors > per-site. Everything
+   is probe-detected and every detector may DECLINE, in which case the site
+   falls through to the next strategy; a site with no supported log-prob
+   declines the whole build (nil).
+
+   Returns {:site-lp-fns  fns taking a values-map
+            :tensor-lp-fns fns taking the latent tensor/params DIRECTLY
+            :vm-addrs     addresses the values-map must carry, or nil
+            :latent-index {addr -> column}
+            :emission     engagement report}
+   or nil."
+  [schema site-specs binding-env mlx-args obs-values latent-order
+   reduce-fn batched?]
+  (let [latent-index (into {} (map-indexed (fn [i a] [a i]) latent-order))
+        static-sites (filterv :static? (:trace-sites schema))
+        families (detect-observed-families
+                  (filterv #(contains? obs-values (:addr %)) static-sites))
+        [affine-lp-fns affine-addrs]
+        (build-affine-family-lp-fns families binding-env mlx-args obs-values
+                                    latent-order reduce-fn batched?)
+        [family-lp-fns family-addrs]
+        (build-family-lp-fns (remove #(contains? affine-addrs
+                                                 (first (:members %)))
+                                     families)
+                             binding-env mlx-args obs-values reduce-fn)
+        [prior-lp-fns prior-addrs]
+        (build-stacked-prior-lp-fns
+         (into {} (map (juxt :addr identity))
+               (filterv #(contains? latent-index (:addr %)) site-specs))
+         latent-order obs-values mlx-args reduce-fn)
+        per-site
+        (mapv
+         (fn [site-spec]
+           (let [{:keys [addr compiled-args dist-type]} site-spec
+                 nt (get compiled/noise-transforms-full dist-type)]
+             (if (or (contains? family-addrs addr)
+                     (contains? affine-addrs addr)
+                     (contains? prior-addrs addr))
+               ::family
+               (when nt
+                 (let [log-prob-fn (:log-prob nt)]
+                   (fn [values-map]
+                     (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
+                       (apply log-prob-fn (get values-map addr) eval-args))))))))
+         site-specs)]
+    (when (every? some? per-site)
+      (let [site-lp-fns (into (filterv fn? per-site) family-lp-fns)
+            ;; LAZY VALUES-MAP (genmlx-1fbs): the map exists only to feed
+            ;; values-map-based lp-fns. With no survivors — every site
+            ;; scored by an affine family or the stacked prior — nothing
+            ;; reads it, so the per-latent extraction (mx/index scalar,
+            ;; one-hot matmul batched) is never emitted at all. That is the
+            ;; step that makes the two rung-2 emissions pay. The rule is
+            ;; binary on purpose: an empty consumer list provably reads
+            ;; nothing, whereas a per-address consumption analysis would
+            ;; have to out-guess the compiled-arg closures.
+            vm-addrs (when (seq site-lp-fns) (:dep-order schema))]
+        {:site-lp-fns   site-lp-fns
+         :tensor-lp-fns (into (vec affine-lp-fns) prior-lp-fns)
+         :vm-addrs      vm-addrs
+         :latent-index  latent-index
+         ;; Engagement report. It exists so a silent decline is VISIBLE:
+         ;; every emission above is probe-detected and can fall back
+         ;; correctly and quietly, and then a kernel census reads as "the
+         ;; optimization did not pay" when the truth is "it never ran".
+         :emission {:affine-families   (count affine-lp-fns)
+                    :stacked-priors?   (boolean (seq prior-lp-fns))
+                    :per-site-lps      (count (filterv fn? per-site))
+                    :extracted-latents (count (filterv latent-index vm-addrs))}}))))
+
 (defn build-tensor-score
-  "make-tensor-score plus an :emission report — which of the vectorizing
-   emissions actually engaged. The report exists so a silent decline is
-   VISIBLE: every emission here is probe-detected, so it can fall back
-   correctly and quietly, and then a kernel census reads as 'the
-   optimization did not pay' when the truth is 'it never ran'
-   (genmlx-1fbs). Tests pin engagement through this.
+  "make-tensor-score plus an :emission report (see build-scoring-plan —
+   tests pin engagement through it).
 
    Returns {:score-fn f :emission {...}} or nil."
   [schema source args observations]
@@ -1671,7 +1745,6 @@
           all-addrs addrs
           obs-addrs (set (map first (cm/addresses observations)))
           latent-addrs (vec (remove obs-addrs all-addrs))
-          latent-index (into {} (map-indexed (fn [i a] [a i]) latent-addrs))
           ;; Pre-extract observed values
           obs-values (into {} (keep (fn [addr]
                                       (when (obs-addrs addr)
@@ -1679,65 +1752,12 @@
                                           (when (cm/has-value? sub)
                                             [addr (cm/get-value sub)]))))
                               all-addrs))
-          ;; Vectorized family scoring (genmlx-yopl): observed homogeneous
-          ;; families take a stacked lp; everything else stays per-site.
-          ;; Affine gaussian families further take the matmul form
-          ;; (genmlx-1fbs), consuming the latent tensor directly.
-          static-sites (filterv :static? (:trace-sites schema))
-          families (detect-observed-families
-                    (filterv #(contains? obs-values (:addr %)) static-sites))
-          [affine-lp-fns affine-addrs]
-          (build-affine-family-lp-fns families binding-env mlx-args obs-values
-                                      latent-addrs mx/sum false)
-          [family-lp-fns family-addrs]
-          (build-family-lp-fns (remove #(contains? affine-addrs
-                                                   (first (:members %)))
-                                       families)
-                               binding-env mlx-args obs-values mx/sum)
-          ;; Stacked latent priors (genmlx-1fbs): the K latent priors become
-          ;; ONE elementwise lp over the tensor, so no site opens with a
-          ;; gather of its own latent.
-          [prior-lp-fns prior-addrs]
-          (build-stacked-prior-lp-fns
-           (into {} (map (juxt :addr identity))
-                 (filterv #(contains? latent-index (:addr %)) site-specs))
-           latent-addrs obs-values mlx-args mx/sum)
-          ;; Build per-site log-prob step functions
-          ;; Each returns (fn [values-map] -> log-prob-scalar), ::family for
-          ;; family-scored sites, or nil (unsupported → whole build declines)
-          per-site
-          (mapv
-            (fn [site-spec]
-              (let [{:keys [addr compiled-args dist-type]} site-spec
-                    nt (get compiled/noise-transforms-full dist-type)]
-                (if (or (contains? family-addrs addr)
-                        (contains? affine-addrs addr)
-                        (contains? prior-addrs addr))
-                  ::family
-                  (when nt
-                    (let [log-prob-fn (:log-prob nt)]
-                      (fn [values-map]
-                        (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
-                          (apply log-prob-fn (get values-map addr) eval-args))))))))
-            site-specs)]
-      (when (every? some? per-site)
-        ;; Build the tensor-score closure
-        (let [site-lp-fns (into (filterv fn? per-site) family-lp-fns)
-              tensor-lp-fns (into (vec affine-lp-fns) prior-lp-fns)
-              ;; LAZY VALUES-MAP (genmlx-1fbs): the map exists only to feed
-              ;; values-map-based lp-fns. With no survivors — every site
-              ;; scored by an affine family or the stacked prior — there is
-              ;; nothing to read it, so the whole per-latent extraction
-              ;; (mx/index forward, scatter-add backward) is never emitted.
-              ;; That is the step that makes the two rung-2 emissions pay.
-              ;; The rule is binary on purpose: an empty consumer list
-              ;; provably reads nothing, whereas a per-address consumption
-              ;; analysis would have to out-guess the compiled-arg closures.
-              vm-addrs (when (seq site-lp-fns) (:dep-order schema))]
-          {:emission {:affine-families (count affine-lp-fns)
-                      :stacked-priors? (boolean (seq prior-lp-fns))
-                      :per-site-lps (count (filterv fn? per-site))
-                      :extracted-latents (count (filterv latent-index vm-addrs))}
+          plan (build-scoring-plan schema site-specs binding-env mlx-args
+                                   obs-values latent-addrs mx/sum false)]
+      (when plan
+        (let [{:keys [site-lp-fns tensor-lp-fns vm-addrs emission
+                      latent-index]} plan]
+          {:emission emission
            :score-fn
            (fn tensor-score [latent-tensor]
              ;; Build values-map: latent from tensor, observed baked in
@@ -1846,53 +1866,16 @@
                                                 (when (cm/has-value? sub)
                                                   [addr (cm/get-value sub)]))))
                                           addrs))
-                static-sites (filterv :static? (:trace-sites schema))
-                families (detect-observed-families
-                          (filterv #(contains? obs-values (:addr %)) static-sites))
-                [affine-lp-fns affine-addrs]
-                (build-affine-family-lp-fns families binding-env mlx-args
-                                            obs-values addresses
-                                            #(mx/sum % -1 true) true)
-                [family-lp-fns family-addrs]
-                (build-family-lp-fns (remove #(contains? affine-addrs
-                                                         (first (:members %)))
-                                             families)
-                                     binding-env mlx-args obs-values
-                                     #(mx/sum % -1 true))
-                ;; Stacked latent priors (genmlx-1fbs): one elementwise lp
-                ;; over the [N,K] params against broadcast [K] columns,
-                ;; replacing K one-hot extraction matmuls.
-                [prior-lp-fns prior-addrs]
-                (build-stacked-prior-lp-fns
-                 (into {} (map (juxt :addr identity))
-                       (filterv #(contains? latent-index (:addr %)) site-specs))
-                 addresses obs-values mlx-args #(mx/sum % -1 true))
-                per-site
-                (mapv
-                  (fn [site-spec]
-                    (let [{:keys [addr compiled-args dist-type]} site-spec
-                          nt (get compiled/noise-transforms-full dist-type)]
-                      (if (or (contains? family-addrs addr)
-                              (contains? affine-addrs addr)
-                              (contains? prior-addrs addr))
-                        ::family
-                        (when nt
-                          (let [log-prob-fn (:log-prob nt)]
-                            (fn [values-map]
-                              (let [eval-args (mapv #(% values-map mlx-args) compiled-args)]
-                                (apply log-prob-fn (get values-map addr) eval-args))))))))
-                  site-specs)]
-            (when (every? some? per-site)
-              (let [site-lp-fns (into (filterv fn? per-site) family-lp-fns)
-                    tensor-lp-fns (into (vec affine-lp-fns) prior-lp-fns)
-                    ;; Lazy values-map — see make-tensor-score. Here the
-                    ;; extraction being skipped is the one-hot matmul.
-                    vm-addrs (when (seq site-lp-fns) (:dep-order schema))]
-                {:emission {:affine-families (count affine-lp-fns)
-                                        :stacked-priors? (boolean (seq prior-lp-fns))
-                            :per-site-lps (count (filterv fn? per-site))
-                            :extracted-latents (count (filterv latent-index
-                                                               vm-addrs))}
+                ;; Same strategy stack as the scalar score; the batched
+                ;; differences are the caller's `addresses` ordering, the
+                ;; last-axis keepdims reduce ([N,1]), and the transposed
+                ;; affine basis.
+                plan (build-scoring-plan schema site-specs binding-env
+                                         mlx-args obs-values addresses
+                                         #(mx/sum % -1 true) true)]
+            (when plan
+              (let [{:keys [site-lp-fns tensor-lp-fns vm-addrs emission]} plan]
+                {:emission emission
                  :score-fn
                  (fn batched-tensor-score [params]
                    (let [values-map
