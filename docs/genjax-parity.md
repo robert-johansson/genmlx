@@ -133,6 +133,53 @@ launches + sync + 4 output-copy allocations). Next levers: per-call output
 clone allocation (double-buffer), the remaining SCI wrapper, or accept —
 the row is now within 2x of the pip-MLX Phase-0 floor measurement.
 
+### Saturation sweep — where vectorization stops being free (2026-07-30, genmlx-6q9o)
+
+The rows above all sit in the FLAT regime, so they only ever measured the
+floor. Pushing the particle ladder to 10^7 (spec `linreg_is_saturation`,
+same model/data/algorithm, EXPLORATORY — not in the asserted matrix) finds
+both knees and a **second, independent deficit**:
+
+| N | GenJAX | GenMLX | ratio |
+|---|---|---|---|
+| 1 – 100 000 | 0.016–0.021 ms *(flat)* | 0.301–0.313 ms *(flat)* | ~19x |
+| 300 000 | 0.026 *(still flat)* | **1.007** ← our knee | 38x |
+| 1 000 000 | **0.212** ← their knee | 1.988 | 9.4x |
+| 10 000 000 | 0.802 | 10.255 | 12.8x |
+
+Marginal cost per particle past the knee: GenJAX **0.079 ns**, GenMLX
+**0.995 ns** — **12.7x**, with our knee ~3x earlier. Both sides converge on
+the analytical exact logZ (−18.6097) at N=10^7, so the comparison is valid.
+
+**Cause (census, N=3·10^6):** we emit **one kernel per trace site** —
+9 identical `Compiled…MultiplyAddSubtract…SquareMultiplyAddNegative`
+kernels plus variants, each re-reading `slope[N]`/`intercept[N]` and writing
+its own `[N]` intermediate for the summation to re-read. XLA fuses the whole
+model body into one kernel. ~10x the memory traffic, the right order for the
+measured gap. MLX fuses *within* a site, not *across* sites.
+
+**This qualifies the genmlx-819v conclusion.** "The batched floor is 86% host
+graph-build; GPU headroom effectively unbounded" holds only BELOW the knee.
+Past ~3·10^5 particles there is a real GPU-side throughput deficit no
+host-floor work can reach.
+
+**The other half of the ledger is ours.** JAX pays 340–470 ms of jit *per
+shape*; GenMLX pays 2–12 ms:
+
+| N | GenJAX warmup | GenMLX warmup | break-even |
+|---|---|---|---|
+| 100 000 | 394.7 ms | **2.1 ms** | 1 395 calls |
+| 1 000 000 | 452.7 ms | **3.2 ms** | 253 calls |
+| 10 000 000 | 471.9 ms | **12.1 ms** | **49 calls** |
+
+One-shot at N=10^7: 472.7 ms vs **22.4 ms** — GenMLX **21x faster** in total
+wall. So the honest headline is a cost model, not a ratio: *GenJAX wins
+steady-state throughput 13–19x; GenMLX wins time-to-first-result 20–200x;
+crossover falls from ~1 400 calls at small N to ~49 at N=10^7.*
+
+Caveat: GenJAX's knee region is noisy (3·10^6 measured faster than 10^6,
+wide p10/p90), so the knee is bracketed, not pinned.
+
 ### Floor decomposition + budget (genmlx-zco8/pqb5, 2026-07-29)
 
 Measure-first probe of the captured-call floor on minimal graphs: a
