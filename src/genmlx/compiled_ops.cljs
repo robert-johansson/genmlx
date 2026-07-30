@@ -1380,15 +1380,173 @@
      (into #{} (mapcat :members) built)]))
 
 (def ^:private affine-family-disabled?
-  "Matmul-form family emission is OPT-IN via GENMLX_AFFINE_FAMILY=1
-   (genmlx-1fbs). Measured 2026-07-29 (sm_120): the emission alone is
-   net-NEGATIVE on kernel count — it adds the matmuls but the per-latent
-   index/one-hot extraction survives for the PRIOR sites, so the
-   gather/scatter tax it targets does not drop (MALA tape 4287 -> 4592,
-   HMC 16875 -> 19677 at S=100). Flip the default only together with
-   stacked latent-prior scoring (the rung-2 companion recorded on the
-   bean), re-measured by census."
-  (delay (not= "1" (aget (.-env js/process) "GENMLX_AFFINE_FAMILY"))))
+  "The rung-2 EMISSION PAIR — matmul-form affine families AND stacked
+   latent priors — is ON by default; GENMLX_AFFINE_FAMILY=0 is the kill
+   switch (genmlx-1fbs). One knob for both, because neither pays alone and
+   together they pay a lot. Measured on sm_120 at S=100, 2026-07-29:
+
+     affine emission alone   HMC 16875 -> 19677 tape  (NET NEGATIVE)
+     both + lazy values-map  HMC 104.84 -> 62.72 real launches/step
+
+   Alone, the affine matmul removes nothing because the per-latent
+   index/one-hot extraction survives for the PRIOR sites; the prior sites
+   are what keep the values-map alive, and the values-map is what forces
+   the extraction. Score all K priors as one stacked lp over the latent
+   tensor and the last consumer disappears, so the extraction is never
+   emitted: Gather 20 -> 2 per step (the irreducible noise-slot floor) and
+   Scatter Sum 18 -> 0. It also stranded the leapfrog integrator updates
+   no longer, since their backward no longer ends in a scatter — 18
+   standalone kernels per step fused into their neighbours with no engine
+   change (the program's rung 3, verified free).
+
+   The lazy values-map itself is NOT gated: with this knob off the consumed
+   set equals dep-order, making it a measured no-op."
+  (delay (= "0" (aget (.-env js/process) "GENMLX_AFFINE_FAMILY"))))
+
+;; WHY MATMUL AND NOT A FUSABLE REDUCE (measured 2026-07-29, sm_120,
+;; genmlx-1fbs). Matmul is a fusion barrier, so emitting mean_g = Σ_k
+;; B[g,k]·q_k as a broadcast-multiply plus a sum-reduce looks strictly
+;; better — reductions demonstrably DO fuse here (the census shows
+;; …MultiplyAddNegativeSum kernels). It measures WORSE and was reverted:
+;; HMC went 62.72 -> 71.71 real launches/step. The census says why. The
+;; forward did fuse, to one CompiledBroadcastMultiplySum, but the vjp
+;; split into CompiledBroadcastMultiply + a standalone Sum — 900 + 900
+;; kernels at S=100 — because the backward reduces over g, the LEADING
+;; axis, and only the trailing-axis reduction fused. So the reduce form
+;; costs 3 kernels per grad eval against the matmul's 2, and transposing
+;; the intermediate only moves the unfused reduction from the backward to
+;; the forward. Rung-4 candidate 2 ("the fwd matmul dissolves into the
+;; score kernel") therefore cannot pay off through this route either: the
+;; forward matmul is already the cheap half.
+
+(defn- mags
+  "|x| for each value, as host numbers, with a SINGLE device sync.
+   Values may be plain numbers (an all-equal literal column stays unboxed)
+   or MLX arrays; the array magnitudes are stacked and read back once.
+
+   One sync per comparison instead measurably dominates build time on a
+   cold context: the detectors below need ~11 magnitudes, which cost
+   ~1.3 s of the 1.44 s MALA S=10 warmup when read one at a time
+   (measured 2026-07-29, sm_120 — genmlx-1fbs). Warmup is a reported
+   parity metric with an enforced ceiling, so this is not micro-tuning."
+  [xs]
+  (let [xs (vec xs)
+        arr-idx (vec (keep-indexed (fn [i x] (when-not (number? x) i)) xs))
+        host (mapv #(when (number? %) (js/Math.abs %)) xs)]
+    (if (empty? arr-idx)
+      host
+      (let [stacked (mx/stack (mapv #(mx/amax (mx/abs (nth xs %))) arr-idx))]
+        (mx/materialize! stacked)
+        (let [hv (vec (js->clj (mx/->clj stacked)))]
+          (reduce (fn [acc [j i]] (assoc acc i (nth hv j)))
+                  host
+                  (map-indexed vector arr-idx)))))))
+
+
+(defn- eval-args-at-latents
+  "Evaluate a site's compiled dist-args with the latents bound to `q`
+   (positionally over latent-order) and observed values baked in. Returns
+   the evaluated args, or nil if any arg fails or comes back nil."
+  [compiled-args obs-values mlx-args latent-order q]
+  (try
+    (let [vm (reduce (fn [m [i a]] (assoc m a (mx/scalar (nth q i))))
+                     obs-values
+                     (map-indexed vector latent-order))
+          vals (mapv #(% vm mlx-args) compiled-args)]
+      (when (every? some? vals) vals))
+    (catch :default _ nil)))
+
+(defn- latent-free-args
+  "Evaluated dist-args if they are LATENT-FREE, else nil. Evidence is
+   bit-stability across two differing latent assignments: a latent-free
+   graph is deterministic, so any drift is real latent dependence. This is
+   the same standard the affine detector above applies to its sigma arg —
+   the alternative, the schema's :deps sets, is documented to
+   UNDER-approximate in some shapes (schema.cljs), and here that would
+   silently bake a stale constant into the score."
+  [compiled-args obs-values mlx-args latent-order]
+  (let [k (count latent-order)
+        probe-a (mapv #(+ 0.5 (* 0.25 (js/Math.sin (* 12.9898 (inc %)))))
+                      (range k))
+        probe-b (mapv #(- -1.25 (* 0.5 (js/Math.cos (* 7.3311 (inc %)))))
+                      (range k))
+        va (eval-args-at-latents compiled-args obs-values mlx-args
+                                 latent-order probe-a)
+        vb (eval-args-at-latents compiled-args obs-values mlx-args
+                                 latent-order probe-b)]
+    (when (and va vb (= (count va) (count vb)))
+      ;; All drifts in one sync (see `mags`).
+      (let [pairs (map vector va vb)
+            both-numbers? (mapv (fn [[a b]] (and (number? a) (number? b))) pairs)
+            drifts (mags (map (fn [[a b] nums?]
+                                (if nums? (- a b) (mx/subtract a b)))
+                              pairs both-numbers?))]
+        (when (every? zero? drifts) va)))))
+
+(defn- stack-arg-column
+  "Collapse one dist-arg position across a group of sites into a single
+   constant: a plain number when every site agrees (no [K] input for a
+   shared literal), else a materialized [K] column in group order. Returns
+   nil if any value is non-scalar (a stacked column would change meaning)."
+  [vals]
+  (cond
+    (and (every? number? vals) (apply = vals)) (first vals)
+    (some #(and (not (number? %)) (pos? (mx/ndim %))) vals) nil
+    :else (let [a (mx/stack (mapv #(if (number? %) (mx/scalar %) %) vals))]
+            (mx/materialize! a)
+            a)))
+
+(defn- build-stacked-prior-lp-fns
+  "Stacked latent-prior scoring (genmlx-1fbs): score ALL K latent priors as
+   ONE elementwise log-prob over the latent tensor itself —
+
+     lp = Σ_k log-prob(q_k; muCol_k, sigmaCol_k)
+
+   — instead of K per-site subgraphs each opening with a gather of its own
+   latent. The columns are factory-time constants (same lifecycle as the
+   family lit-cols), so the forward is one elementwise kernel chain over
+   [K] (scalar) / [N,K] (batched) and the backward is its elementwise
+   cotangent — no index forward, no scatter-add backward.
+
+   Requires FULL COVER: every latent site eligible, one shared dist-type,
+   equal arity, and every dist-arg latent-free (probe-proven). A partial
+   cover would have to slice the tensor, and a slice's vjp is a scatter —
+   exactly the tax this removes — so partial groups decline to per-site
+   scoring instead. Hierarchical priors (latent-dependent args) therefore
+   keep the per-site path, and the lazy values-map keeps them correct.
+
+   latent-order fixes the column order: the scalar tensor layout, or the
+   batched caller's `addresses`. Returns [lp-fns handled-addrs]; each
+   lp-fn takes the latent tensor DIRECTLY, not a values-map."
+  [latent-specs latent-order obs-values mlx-args reduce-fn]
+  (if (or @affine-family-disabled? (empty? latent-order))
+    [[] #{}]
+    (try
+      (let [specs (mapv latent-specs latent-order)
+            dts (into #{} (map :dist-type) specs)
+            arities (into #{} (map #(count (:compiled-args %))) specs)
+            dt (first dts)
+            ;; Latent-free evidence AND the column values in one pass.
+            arg-vals (when (every? some? specs)
+                       (mapv #(latent-free-args (:compiled-args %) obs-values
+                                                mlx-args latent-order)
+                             specs))]
+        (if-not (and (= 1 (count dts))
+                     (= 1 (count arities))
+                     (contains? family-elementwise-dists dt)
+                     (:log-prob (get compiled/noise-transforms-full dt))
+                     arg-vals
+                     (every? some? arg-vals))
+          [[] #{}]
+          (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dt))
+                cols (mapv (fn [j] (stack-arg-column (mapv #(nth % j) arg-vals)))
+                           (range (first arities)))]
+            (if-not (every? some? cols)
+              [[] #{}]
+              [[(fn stacked-prior-lp [latent-tensor]
+                  (reduce-fn (apply log-prob-fn latent-tensor cols)))]
+               (set latent-order)]))))
+      (catch :default _ [[] #{}]))))
 
 (defn- build-affine-family-lp-fns
   "Matmul-form emission (genmlx-1fbs) for gaussian observed families whose
@@ -1420,11 +1578,6 @@
   (if (or @affine-family-disabled? (empty? latent-order))
     [[] #{}]
     (let [k-lat (count latent-order)
-          ;; |x| as a JS number for probe checks; eval results may be plain
-          ;; numbers (all-equal literal columns stay unboxed).
-          mag (fn [x] (if (number? x)
-                        (js/Math.abs x)
-                        (mx/item (mx/amax (mx/abs x)))))
           built
           (keep
            (fn [{:keys [dist-type sig members lits-per-site]}]
@@ -1451,11 +1604,20 @@
                                              (mx/add acc (mx/multiply (nth cols k)
                                                                       (mx/scalar (nth probe k)))))
                                            base (range k-lat))
-                         sigma-stable? (every? #(zero? (mag (mx/subtract % sigma0)))
-                                               (conj (mapv second basis) probe-sigma))
-                         err (mag (mx/subtract probe-mean predicted))
-                         scale (max 1.0 (mag predicted))
-                         any-coeff? (boolean (some #(pos? (mag %)) cols))]
+                         ;; Every probe magnitude in ONE sync (see `mags`):
+                         ;; sigma drifts, then the affinity residual and
+                         ;; its scale, then the coefficient columns.
+                         sigma-diffs (mapv #(mx/subtract % sigma0)
+                                           (conj (mapv second basis) probe-sigma))
+                         n-sig (count sigma-diffs)
+                         ms (mags (concat sigma-diffs
+                                          [(mx/subtract probe-mean predicted)
+                                           predicted]
+                                          cols))
+                         sigma-stable? (every? zero? (take n-sig ms))
+                         err (nth ms n-sig)
+                         scale (max 1.0 (nth ms (inc n-sig)))
+                         any-coeff? (boolean (some pos? (drop (+ n-sig 2) ms)))]
                      (when (and sigma-stable? (<= err (* 1e-4 scale)) any-coeff?)
                        (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
                              bcast (fn [x]
@@ -1483,32 +1645,23 @@
                                    (fn affine-lp [latent-tensor]
                                      (reduce-fn
                                       (log-prob-fn stacked
-                                                   (mx/add (mx/matmul b-mat latent-tensor) base-v)
+                                                   (mx/add (mx/matmul b-mat latent-tensor)
+                                                           base-v)
                                                    sigma-v))))
                           :members members})))))))
            families)]
       [(mapv :lp-fn built)
        (into #{} (mapcat :members) built)])))
 
-(defn make-tensor-score
-  "Build a tensor-native score function: [K]-tensor → scalar log-prob.
-   Bypasses GFI protocol — uses L1 noise-transform log-prob closures directly.
-   Observations are baked in as constants. Only latent values come from the tensor.
+(defn build-tensor-score
+  "make-tensor-score plus an :emission report — which of the vectorizing
+   emissions actually engaged. The report exists so a silent decline is
+   VISIBLE: every emission here is probe-detected, so it can fall back
+   correctly and quietly, and then a kernel census reads as 'the
+   optimization did not pay' when the truth is 'it never ran'
+   (genmlx-1fbs). Tests pin engagement through this.
 
-   Homogeneous observed site families are scored as one stacked [G]
-   log-prob (genmlx-yopl — see the family helpers above); all other sites
-   keep per-site lp subgraphs. The total is the same joint score up to
-   float32 summation order.
-
-   Returns (fn [latent-tensor] -> MLX scalar) or nil if model can't be compiled.
-
-   latent-tensor: [K] MLX array where K = number of latent sites.
-   The addr-index for the tensor is returned as metadata via make-tensor-score-with-index.
-
-   schema: the :schema from a DynamicGF
-   source: the :source from a DynamicGF
-   args: argument vector (will be converted to MLX arrays)
-   observations: ChoiceMap of observed values"
+   Returns {:score-fn f :emission {...}} or nil."
   [schema source args observations]
   (when-let [{:keys [site-specs addrs binding-env]}
              (compiled/prepare-static-sites schema source)]
@@ -1541,6 +1694,14 @@
                                                    (first (:members %)))
                                        families)
                                binding-env mlx-args obs-values mx/sum)
+          ;; Stacked latent priors (genmlx-1fbs): the K latent priors become
+          ;; ONE elementwise lp over the tensor, so no site opens with a
+          ;; gather of its own latent.
+          [prior-lp-fns prior-addrs]
+          (build-stacked-prior-lp-fns
+           (into {} (map (juxt :addr identity))
+                 (filterv #(contains? latent-index (:addr %)) site-specs))
+           latent-addrs obs-values mlx-args mx/sum)
           ;; Build per-site log-prob step functions
           ;; Each returns (fn [values-map] -> log-prob-scalar), ::family for
           ;; family-scored sites, or nil (unsupported → whole build declines)
@@ -1550,7 +1711,8 @@
               (let [{:keys [addr compiled-args dist-type]} site-spec
                     nt (get compiled/noise-transforms-full dist-type)]
                 (if (or (contains? family-addrs addr)
-                        (contains? affine-addrs addr))
+                        (contains? affine-addrs addr)
+                        (contains? prior-addrs addr))
                   ::family
                   (when nt
                     (let [log-prob-fn (:log-prob nt)]
@@ -1561,33 +1723,72 @@
       (when (every? some? per-site)
         ;; Build the tensor-score closure
         (let [site-lp-fns (into (filterv fn? per-site) family-lp-fns)
-              dep-order (:dep-order schema)]
-          (fn tensor-score [latent-tensor]
-            ;; Build values-map: latent from tensor, observed baked in
-            (let [values-map
-                  (reduce
-                    (fn [vm addr]
-                      (assoc vm addr
-                             (if-let [idx (get latent-index addr)]
-                               (mx/index latent-tensor idx)
-                               (get obs-values addr))))
-                    {}
-                    dep-order)]
-              ;; Sum all site log-probs; affine families read the latent
-              ;; tensor directly (no per-latent index).
-              (reduce
-                (fn [score lp-fn]
-                  (mx/add score (lp-fn latent-tensor)))
-                (reduce
-                  (fn [score lp-fn]
-                    (mx/add score (lp-fn values-map)))
-                  (mx/scalar 0.0)
-                  site-lp-fns)
-                affine-lp-fns))))))))
+              tensor-lp-fns (into (vec affine-lp-fns) prior-lp-fns)
+              ;; LAZY VALUES-MAP (genmlx-1fbs): the map exists only to feed
+              ;; values-map-based lp-fns. With no survivors — every site
+              ;; scored by an affine family or the stacked prior — there is
+              ;; nothing to read it, so the whole per-latent extraction
+              ;; (mx/index forward, scatter-add backward) is never emitted.
+              ;; That is the step that makes the two rung-2 emissions pay.
+              ;; The rule is binary on purpose: an empty consumer list
+              ;; provably reads nothing, whereas a per-address consumption
+              ;; analysis would have to out-guess the compiled-arg closures.
+              vm-addrs (when (seq site-lp-fns) (:dep-order schema))]
+          {:emission {:affine-families (count affine-lp-fns)
+                      :stacked-priors? (boolean (seq prior-lp-fns))
+                      :per-site-lps (count (filterv fn? per-site))
+                      :extracted-latents (count (filterv latent-index vm-addrs))}
+           :score-fn
+           (fn tensor-score [latent-tensor]
+             ;; Build values-map: latent from tensor, observed baked in
+             (let [values-map
+                   (reduce
+                     (fn [vm addr]
+                       (assoc vm addr
+                              (if-let [idx (get latent-index addr)]
+                                (mx/index latent-tensor idx)
+                                (get obs-values addr))))
+                     {}
+                     vm-addrs)]
+               ;; Sum all site log-probs; affine families and stacked priors
+               ;; read the latent tensor directly (no per-latent index).
+               (reduce
+                 (fn [score lp-fn]
+                   (mx/add score (lp-fn latent-tensor)))
+                 (reduce
+                   (fn [score lp-fn]
+                     (mx/add score (lp-fn values-map)))
+                   (mx/scalar 0.0)
+                   site-lp-fns)
+                 tensor-lp-fns)))})))))
+
+(defn make-tensor-score
+  "Build a tensor-native score function: [K]-tensor → scalar log-prob.
+   Bypasses GFI protocol — uses L1 noise-transform log-prob closures directly.
+   Observations are baked in as constants. Only latent values come from the tensor.
+
+   Homogeneous observed site families are scored as one stacked [G]
+   log-prob (genmlx-yopl — see the family helpers above); all other sites
+   keep per-site lp subgraphs. The total is the same joint score up to
+   float32 summation order.
+
+   Returns (fn [latent-tensor] -> MLX scalar) or nil if model can't be compiled.
+
+   latent-tensor: [K] MLX array where K = number of latent sites.
+   The addr-index for the tensor is returned as metadata via make-tensor-score-with-index.
+
+   schema: the :schema from a DynamicGF
+   source: the :source from a DynamicGF
+   args: argument vector (will be converted to MLX arrays)
+   observations: ChoiceMap of observed values"
+  [schema source args observations]
+  (:score-fn (build-tensor-score schema source args observations)))
 
 (defn make-tensor-score-with-index
-  "Like make-tensor-score but also returns the latent addr-index.
-   Returns {:score-fn (fn [K-tensor] -> scalar) :latent-index {addr -> int}} or nil."
+  "Like make-tensor-score but also returns the latent addr-index and the
+   :emission report (see build-tensor-score).
+   Returns {:score-fn (fn [K-tensor] -> scalar) :latent-index {addr -> int}
+            :emission {...}} or nil."
   [schema source args observations]
   (when (and schema (:static? schema)
              (seq (:trace-sites schema))
@@ -1597,9 +1798,10 @@
           obs-addrs (set (map first (cm/addresses observations)))
           latent-addrs (vec (remove obs-addrs (mapv :addr static-sites)))
           latent-index (into {} (map-indexed (fn [i a] [a i]) latent-addrs))
-          score-fn (make-tensor-score schema source args observations)]
-      (when score-fn
-        {:score-fn score-fn
+          built (build-tensor-score schema source args observations)]
+      (when built
+        {:score-fn (:score-fn built)
+         :emission (:emission built)
          :latent-index latent-index}))))
 
 (defn make-batched-tensor-score-with-index
@@ -1657,13 +1859,22 @@
                                              families)
                                      binding-env mlx-args obs-values
                                      #(mx/sum % -1 true))
+                ;; Stacked latent priors (genmlx-1fbs): one elementwise lp
+                ;; over the [N,K] params against broadcast [K] columns,
+                ;; replacing K one-hot extraction matmuls.
+                [prior-lp-fns prior-addrs]
+                (build-stacked-prior-lp-fns
+                 (into {} (map (juxt :addr identity))
+                       (filterv #(contains? latent-index (:addr %)) site-specs))
+                 addresses obs-values mlx-args #(mx/sum % -1 true))
                 per-site
                 (mapv
                   (fn [site-spec]
                     (let [{:keys [addr compiled-args dist-type]} site-spec
                           nt (get compiled/noise-transforms-full dist-type)]
                       (if (or (contains? family-addrs addr)
-                              (contains? affine-addrs addr))
+                              (contains? affine-addrs addr)
+                              (contains? prior-addrs addr))
                         ::family
                         (when nt
                           (let [log-prob-fn (:log-prob nt)]
@@ -1673,8 +1884,16 @@
                   site-specs)]
             (when (every? some? per-site)
               (let [site-lp-fns (into (filterv fn? per-site) family-lp-fns)
-                    dep-order (:dep-order schema)]
-                {:score-fn
+                    tensor-lp-fns (into (vec affine-lp-fns) prior-lp-fns)
+                    ;; Lazy values-map — see make-tensor-score. Here the
+                    ;; extraction being skipped is the one-hot matmul.
+                    vm-addrs (when (seq site-lp-fns) (:dep-order schema))]
+                {:emission {:affine-families (count affine-lp-fns)
+                                        :stacked-priors? (boolean (seq prior-lp-fns))
+                            :per-site-lps (count (filterv fn? per-site))
+                            :extracted-latents (count (filterv latent-index
+                                                               vm-addrs))}
+                 :score-fn
                  (fn batched-tensor-score [params]
                    (let [values-map
                          (reduce
@@ -1684,10 +1903,11 @@
                                       (mx/matmul params (nth one-hots idx))
                                       (get obs-values addr))))
                            {}
-                           dep-order)
+                           vm-addrs)
                          ;; Terms are [N,1] (latent-arg lps, family sums) or
                          ;; scalar-broadcastable; total [N,1] → squeeze → [N].
-                         ;; Affine families read the [N,K] params directly.
+                         ;; Affine families and stacked priors read the
+                         ;; [N,K] params directly.
                          total (reduce
                                  (fn [score lp-fn]
                                    (mx/add score (lp-fn params)))
@@ -1696,7 +1916,7 @@
                                      (mx/add score (lp-fn values-map)))
                                    (mx/scalar 0.0)
                                    site-lp-fns)
-                                 affine-lp-fns)]
+                                 tensor-lp-fns)]
                      (mx/squeeze total [1])))
                  :latent-index latent-index}))))))))
 

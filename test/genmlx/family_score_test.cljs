@@ -118,6 +118,81 @@
                (some? (:samples r)))
   (assert-true "acceptance sane" (< 0.3 (:acceptance-rate r) 1.0)))
 
+;; ---------------------------------------------------------------------------
+;; Rung-2 emission pins (genmlx-1fbs): matmul-form affine families + stacked
+;; latent priors + the lazy values-map. Both emissions are PROBE-detected, so
+;; they can decline quietly — these pins therefore check ENGAGEMENT via the
+;; :emission report as well as equivalence, because a silent decline would
+;; otherwise pass every numeric assertion while emitting the old graph.
+;; The pair is ON by default with GENMLX_AFFINE_FAMILY=0 as the kill switch,
+;; so the assertions below branch on the knob and pin BOTH states.
+;; ---------------------------------------------------------------------------
+(def rung2-on? (not= "0" (aget (.-env js/process) "GENMLX_AFFINE_FAMILY")))
+
+(println (str "\n-- rung-2 emission (" (if rung2-on? "ON" "off") ") --"))
+(let [scalar (cops/make-tensor-score-with-index
+              (:schema hmodel) (:source hmodel) [] obs)
+      batched (cops/make-batched-tensor-score-with-index
+               (:schema hmodel) (:source hmodel) [] obs addresses)
+      es (:emission scalar)
+      eb (:emission batched)]
+  (assert-true "scalar path reports an emission" (map? es))
+  (assert-true "batched path reports an emission" (map? eb))
+  (if rung2-on?
+    (do
+      ;; The whole point of the rung: with both emissions live NOTHING reads
+      ;; the values-map, so no latent is ever extracted from the tensor —
+      ;; no mx/index forward, no scatter-add in the backward.
+      (assert-true "scalar: affine family engaged" (= 1 (:affine-families es)))
+      (assert-true "scalar: stacked priors engaged" (:stacked-priors? es))
+      (assert-true "scalar: no per-site lp survives" (zero? (:per-site-lps es)))
+      (assert-true "scalar: ZERO latents extracted" (zero? (:extracted-latents es)))
+      (assert-true "batched: affine family engaged" (= 1 (:affine-families eb)))
+      (assert-true "batched: stacked priors engaged" (:stacked-priors? eb))
+      (assert-true "batched: no per-site lp survives" (zero? (:per-site-lps eb)))
+      (assert-true "batched: ZERO latents extracted" (zero? (:extracted-latents eb))))
+    (do
+      (assert-true "off: no affine family" (zero? (:affine-families es)))
+      (assert-true "off: no stacked priors" (not (:stacked-priors? es)))
+      (assert-true "off: latents still extracted" (pos? (:extracted-latents es)))
+      (assert-true "off: batched latents still extracted"
+                   (pos? (:extracted-latents eb))))))
+
+(println "\n-- stacked priors decline on latent-dependent prior args --")
+;; A hierarchical prior (:x's args read the latent :mu) is NOT full-cover, so
+;; the stacked emission must decline and leave the per-site path — the case
+;; where dropping the values-map would silently bake a stale constant.
+(let [m (gen []
+          (let [mu (trace :mu (dist/gaussian 0 5))
+                x  (trace :x (dist/gaussian mu 1.0))]
+            (trace :o0 (dist/gaussian (mx/add (mx/multiply x 1.0) mu) 1.0))
+            (trace :o1 (dist/gaussian (mx/add (mx/multiply x 2.0) mu) 1.0))
+            (trace :o2 (dist/gaussian (mx/add (mx/multiply x 3.0) mu) 1.0))
+            mu))
+      hm (dyn/strip-analytical-path m)
+      ob (cm/choicemap :o0 (mx/scalar 1.0) :o1 (mx/scalar 2.5)
+                       :o2 (mx/scalar 3.5))
+      built (cops/make-tensor-score-with-index
+             (:schema hm) (:source hm) [] ob)
+      stripped (dyn/strip-alternate-paths m)
+      handler-score-fn (u/make-score-fn stripped [] ob [:mu :x])
+      q (mx/array [0.7 -0.4])]
+  (assert-true "hierarchical: stacked priors decline"
+               (not (:stacked-priors? (:emission built))))
+  (assert-true "hierarchical: values-map retained"
+               (pos? (:extracted-latents (:emission built))))
+  (mx/eval! q)
+  (let [ts (mx/item ((:score-fn built) q))
+        hs (mx/item (handler-score-fn q))]
+    (assert-rel-close "hierarchical: tensor == handler score" ts hs 1e-5))
+  (let [[_ tg] ((mx/value-and-grad (:score-fn built)) q)
+        [_ hg] ((mx/value-and-grad handler-score-fn) q)]
+    (mx/materialize! tg hg)
+    (doseq [[i [a b]] (map-indexed vector
+                                   (map vector (js->clj (mx/->clj tg))
+                                        (js->clj (mx/->clj hg))))]
+      (assert-rel-close (str "hierarchical grad[" i "]") a b 1e-4))))
+
 (println "\n-- heterogeneous sites do NOT family-merge (correct decline) --")
 ;; Same expression shape but different dist types — must stay per-site.
 (let [m (gen []

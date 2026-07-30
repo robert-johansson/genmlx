@@ -343,6 +343,7 @@ disappears. ALL-OR-NOTHING per candidate over the full fusable subtree
 boundaries — measured +22% tape in the naive round); high-fanout
 producers are plan boundaries (they materialize regardless). CUDA-only,
 kill switch `MLX_DISABLE_DUP_FUSION`, knobs `MLX_DUP_FUSION_MAX`
+(all removed when the pass was reverted — see "Duplication REVERTED" below)
 (default 16/region) / `MLX_DUP_FUSION_FANOUT` (16). Chain outputs
 BIT-IDENTICAL on/off at S=1 and S=100 (pinned at tolerance by
 dup_fusion_test, 9/9). Census: MALA tape 4820 → **4287** (~43/step);
@@ -599,7 +600,111 @@ is ~−12% launches; the remaining ~38 real indexing launches/step are
 exactly rung 2's target (genmlx-1fbs), and the integrator-update fusion
 (rung 3) is expected free once the scatters are gone. Duplication
 diagnostics live in the census (`[compile] dup: ...` under
-MLX_COMPILE_DEBUG).
+MLX_COMPILE_DEBUG). **Superseded:** the pass was reverted on 2026-07-30 —
+see "Duplication REVERTED" below — so current binaries emit no dup line.
+
+### Post-rung-2 (affine families + stacked priors + lazy values-map — genmlx-1fbs, 2026-07-29)
+
+The tax above is **gone**, and rung 3 came free exactly as predicted.
+Three CLJS changes in `compiled_ops.cljs`, one knob
+(`GENMLX_AFFINE_FAMILY=0` kills all three): observed affine gaussian
+families score through one matmul instead of per-latent slicing; the K
+latent priors score as ONE elementwise lp over the latent tensor; and
+the values-map — the only thing that still forced per-latent extraction
+— is built only when something survives to read it, which after the
+first two is nothing.
+
+Duplication was reverted the next day (see below), so the SHIPPED
+comparison below is measured with no duplication on either side — rung 2
+alone, apples to apples:
+
+| per HMC step | pre-rung-2 | **shipped** |
+|---|---|---|
+| Gather | 20.0 | **2.0** (noise slots — the floor) |
+| Scatter Sum | 18.0 | **0** |
+| integrator kernels | 18.0 | **0** (rung 3, free) |
+| Matmul | 0.1 | 18.1 |
+| **real launches/step** | **~119** | **65.14** |
+
+| cell | pre-rung-2 | **shipped** | GenJAX | gap now |
+|---|---|---|---|---|
+| 10×8 | 1.95 ms | **1.07 ms** | 0.363 | 2.93x |
+| 100×8 | 13.6 ms | **6.58 ms** | 3.67 | 1.79x |
+| 1000×8 | 160.5 ms | **62.9 ms** | 32.6 | **1.93x** (was 4.92x) |
+| 10×32 | — | **2.69 ms** | 1.06 | 2.53x |
+| 100×32 | 46.4 ms | **18.6 ms** | 10.5 | 1.77x |
+| 1000×32 | 527/448 ms | **193.9 ms** | 100.8 | 1.92x |
+
+(The intermediate figures measured while duplication was still enabled —
+62.72 launches/step, 1000×8 at 61.0 ms / 1.87x — are kept in the bean
+record but are NOT what ships.)
+
+Warmup improved at every non-row-0 cell too (1000×8: 11973 → **6752
+ms**). Two findings worth keeping, both from the census rather than from
+reasoning:
+
+**Matmul beats a "fusable" reduce here, against expectation.** Matmul is
+a fusion barrier, so emitting `mean_g = Σ_k B[g,k]·q_k` as
+broadcast-multiply + sum-reduce should be strictly better — and
+reductions demonstrably do fuse (`…MultiplyAddNegativeSum` kernels
+exist). Measured, it is worse: **62.72 → 71.71** launches/step. The
+forward fused to one `CompiledBroadcastMultiplySum`, but the vjp split
+into `CompiledBroadcastMultiply` + a standalone `Sum`, because the
+backward reduces over the LEADING axis and only trailing-axis
+reductions fused. Three kernels per grad eval against matmul's two;
+transposing only moves the unfused reduction to the forward. This also
+kills rung-4 candidate 2 (`genmlx-xtfr`) — the forward matmul was
+already the cheap half.
+
+**The residual is now the per-launch floor, not the op mix.** 62.72
+launches/step at ~0.97 µs each is essentially all of the 61 ms. Of
+those, ~47 are fused elementwise/reduce kernels along a sequentially
+dependent leapfrog chain, so nothing but a new fusion mode (rung 4
+candidate 1 or 3) or fewer grad evals can reach them.
+
+### Duplication REVERTED (2026-07-30, genmlx-1fbs)
+
+Chasing an odd warmup number in the rung-2 rows — MALA S=10 warmup
+35 → 1441 ms — turned up a defect in rung 1's duplication pass that its
+own validation could not have caught: it measured steady-state launches
+and wall, never per-GRAPH BUILD time. Measured with the rung-2 emission
+held constant, warm PTX cache, idle box, so the pass is the only
+variable:
+
+| build a fused MALA chain | dup ON | dup OFF |
+|---|---|---|
+| S=10 | 1343 / 1346 ms | **27 / 27 ms** |
+| S=20 | 1667 / 1668 ms | **51 / 51 ms** |
+| parity MALA S=10 warmup | 1441 ms | **22.4 ms** |
+
+Three runs each, reproducible to ±1 ms. Meanwhile rung 2 had subsumed
+most of what the pass was worth: it removed the gather/scatter tax the
+pass existed to work around, so its benefit fell from ~14 launches/step
+(119 → 105 pre-rung-2) to **2.4** (65.14 → 62.72), i.e. ~3% of steady
+wall — HMC 1000×8 60.98 → 62.92 ms, MALA S=1000 16.94 → 17.42 ms, MALA
+still under the bare 1.2x target. Seconds of build time per graph for 3%
+of steady wall is a bad trade for anything interactive or adaptive, which
+retraces whenever a shape changes.
+
+The pass was therefore **reverted outright**, not merely defaulted off.
+Our mlx fork is a REBASED PATCH STACK (`docs/fork/`), so every patch is
+replayed on every upstream sync forever; keeping 268 lines of default-off
+C++, plus its 190-line pin file, would have been a permanent tax on a code
+path nobody runs. Rung 1 is recoverable from `genmlx-o0ek` and the dropped
+commit if the build-time stall is ever explained — the bean is cheaper to
+carry than the code. (Rung 1 also left `test/tiers.txt` un-regenerated when
+it added its test file, a manifest drift `run.sh check` is meant to catch;
+removing the file resolves it.)
+
+The stall's internal mechanism was NOT identified, and the honest record
+is that four candidates were eliminated rather than one confirmed: not
+NVRTC compilation (warm cache, zero new PTX files, yet still ~1.4 s), not
+cuBLASLt init (a bare 2×2 matmul prewarm costs 73 ms and changes
+nothing), not kernel size (69 vs 70 distinct signatures, identical
+275-char max), and not a GenMLX buffer sweep (`proactive-sweep-count`
+stays 0). It is also not proportional to compile work — the post-fusion
+tape grows 586 → 3147 across shapes while the cost stays ~1.7 s and fires
+on only some of them. Only the trigger and the remedy are established.
 
 ## linreg_mala_manychain — N-chain vectorized MALA, the decisive amortization regime
 
