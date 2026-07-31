@@ -149,7 +149,12 @@ TEST_TIME_SCALE=6 test/run.sh all   # RTX PRO 6000 (x86_64, sm_120; measured 202
 # and 73m21s (431/0 PASS); fast tier ~4 min of that. No serial baseline was
 # taken on this box, so the 4-way SPEEDUP is unmeasured here — only the wall.
 # Peak VRAM stayed far under the 96 GB card (sampled ~3 GB mid-medium-tier);
-# no floor-guard needed, unlike Thor's unified memory.
+# no floor-guard needed, unlike Thor's unified memory. RE-VALIDATED 2026-07-30
+# (genmlx-t5ws) on the #103-#106 upstream mlx-node bump + fresh build.mjs:
+# 440/440 PASS in ~62 min (fast 204, medium 154, slow 82), exit 0, zero
+# FAIL/CRASH/TIMEOUT — the first clean-sweep battery on this box, and faster
+# than the 73-76 min above. Peak VRAM ~4.5 GB. (440 > the 430/431 of 07-28
+# because the suite grew, not because tiers moved: check reports 499 files.)
 # M2 Max VALIDATED 2026-07-28 (genmlx-7yam): two full batteries at
 # TEST_JOBS=8 TEST_JOBS_SLOW=4. Battery 2 (scale 3, LLM fixtures live):
 # 27.7 min wall, 432/2 with both misses re-passing solo (band flakes, none
