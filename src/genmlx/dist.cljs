@@ -121,6 +121,19 @@
     (throw (ex-info (str dist-name ": " param-name " must be positive, got " v)
                     {:distribution dist-name :parameter param-name :value v}))))
 
+(defn- check-all-positive
+  "Positivity guard for a VECTOR-valued parameter (Dirichlet's alpha).
+   Only inspects a raw CLJS sequential of JS numbers — exactly the same
+   restriction as check-positive: an MLX-array parameter is left alone, since
+   reading it would force a GPU eval in the constructor (see the note above)."
+  [dist-name param-name v]
+  (when (and (sequential? v) (seq v) (every? number? v))
+    (when-some [bad (first (remove pos? v))]
+      (throw (ex-info (str dist-name ": every " param-name
+                           " component must be positive, got " bad
+                           " in " (pr-str (vec v)))
+                      {:distribution dist-name :parameter param-name :value bad})))))
+
 (defn- check-less-than [dist-name lo-name lo hi-name hi]
   (when (and (number? lo) (number? hi) (>= lo hi))
     (throw (ex-info (str dist-name ": " lo-name " must be less than " hi-name
@@ -319,14 +332,29 @@
             ;; Mathematically correct for the beta distribution — the density
             ;; is 0 at the boundaries when alpha > 1 or beta > 1 respectively.
             ;; Support guard (genmlx-7oen): v outside [0,1] gave NaN.
+            ;; xlogy guard (genmlx-4x5w): beta's mask is INCLUSIVE of 0 and 1,
+            ;; so unlike gamma/inv-gamma (strict v>0) the boundary value is not
+            ;; discarded by the where — beta(1,3) lp(0) and beta(2,1) lp(1)
+            ;; returned NaN from 0*(-Inf), poisoning any weight that touched
+            ;; them. The gate is (coefficient=0 AND log arg=0) so that d/dalpha
+            ;; = log v is preserved at every interior point.
             (let [log-beta-val (mx/subtract (mx/add (mx/lgamma alpha)
                                                     (mx/lgamma beta-param))
                                             (mx/lgamma (mx/add alpha beta-param)))
                   in-support (mx/multiply (mx/greater-equal v ZERO)
                                           (mx/less-equal v ONE))
-                  lp (-> (mx/add (mx/multiply (mx/subtract alpha ONE) (mx/log v))
-                                 (mx/multiply (mx/subtract beta-param ONE)
-                                              (mx/log (mx/subtract ONE v))))
+                  am1 (mx/subtract alpha ONE)
+                  bm1 (mx/subtract beta-param ONE)
+                  one-v (mx/subtract ONE v)
+                  term-a (mx/where (mx/multiply (mx/equal am1 ZERO)
+                                                (mx/equal v ZERO))
+                                   ZERO
+                                   (mx/multiply am1 (mx/log v)))
+                  term-b (mx/where (mx/multiply (mx/equal bm1 ZERO)
+                                                (mx/equal one-v ZERO))
+                                   ZERO
+                                   (mx/multiply bm1 (mx/log one-v)))
+                  lp (-> (mx/add term-a term-b)
                          (mx/subtract log-beta-val))]
               (mx/where in-support lp NEG-INF))))
 
@@ -478,6 +506,28 @@
         g2 (gamma-sample-vec beta k2)]
     (mx/clip (mx/divide g1 (mx/add g1 g2)) 1e-7 (- 1.0 1e-7))))
 
+;; ---------------------------------------------------------------------------
+;; Dirichlet support constants (genmlx-4x5w) — shared by the batch sampler here
+;; and by the `dirichlet` defdist further down.
+;; ---------------------------------------------------------------------------
+
+;; Simplex-membership tolerance for the Dirichlet support mask.
+;; DELIBERATELY loose: |sum(v) - 1| must clear both float32 renormalization
+;; slack AND the h=1e-3 one-component probe step that gradient_fd_test uses to
+;; finite-difference d/dv log Dir(v|alpha) — a central difference legitimately
+;; evaluates the density 1e-3 off the simplex. 1e-2 gives 10x margin there while
+;; still rejecting the audit repro v=[0.3,0.3,0.3] (sum 0.9), which used to
+;; score a finite +1.18.
+(def ^:private SIMPLEX-TOL (mx/scalar 1e-2))
+
+;; Floor for a normalized Dirichlet component. Mirrors the (1e-7, 1-1e-7) clamp
+;; that :beta-dist applies to its gamma-ratio draw: a float32 Gamma draw with a
+;; small alpha rounds to exactly 0.0, and a 0 component is outside the open
+;; simplex (log-prob NaN at alpha=1, +Inf at alpha<1). Applied AFTER
+;; normalization and followed by a renormalization so the draw stays exactly on
+;; the simplex — clamping the ratio the way beta does would break sum(v)=1.
+(def ^:private DIRICHLET-FLOOR 1e-7)
+
 ;; Dirichlet batch sampling via k independent gamma samples, then normalize
 (defmethod dc/dist-sample-n* :dirichlet [d key n]
   (let [{:keys [alpha]} (:params d)
@@ -489,9 +539,17 @@
         gammas (mx/stack (mapv (fn [a ki] (gamma-sample-n a ONE ki n))
                                alpha-vals ks))
         ;; gammas is [k n], sum along axis 0 -> [n], then transpose and divide
-        totals (mx/sum gammas [0])]
-    ;; Result shape [n k]: transpose [k n] -> [n k]
-    (mx/transpose (mx/divide gammas totals))))
+        totals (mx/sum gammas [0])
+        ;; Result shape [n k]: transpose [k n] -> [n k]
+        p (mx/transpose (mx/divide gammas totals))
+        ;; Clamp off the boundary like :beta-dist does (genmlx-4x5w): a float32
+        ;; Gamma draw with small alpha rounds to exactly 0.0, and a 0 component
+        ;; makes log-prob NaN (alpha=1) or +Inf (alpha<1). Measured before this
+        ;; floor: dirichlet([0.05,0.05,0.05]), n=2000 -> min component 0.0.
+        ;; The lift is applied to the NORMALIZED value and followed by a
+        ;; renormalization, so every row stays exactly on the simplex.
+        lifted (mx/maximum p (mx/scalar DIRICHLET-FLOOR))]
+    (mx/divide lifted (mx/sum lifted [-1] true))))
 
 ;; ---------------------------------------------------------------------------
 ;; Exponential
@@ -535,7 +593,26 @@
   (sample [key]
           (rng/categorical key logits))
   (log-prob [v]
-            (let [v (mx/ensure-array v mx/int32)
+            ;; SUPPORT GUARD (genmlx-bey6). The mask is built from the RAW v,
+            ;; BEFORE the int32 cast below — the cast is precisely what makes a
+            ;; post-hoc floor factor useless, since it has already truncated
+            ;; 1.7 to 1 and wrapped -1 to the last index. Measured before this
+            ;; guard, on (dist/categorical (mx/array [-1.0 -2.0 -0.5])):
+            ;;   lp(7)   = 0        <- an OUT-OF-RANGE index scored the maximum
+            ;;                         possible log-probability, outscoring
+            ;;                         every legal one
+            ;;   lp(-1)  = -0.604   <- silent wrap to the last index
+            ;;   lp(1.7) = lp(1)    <- silent int32 truncation
+            ;; categorical is on the LLM-token, HMM-transition and
+            ;; vectorized-mixture hot paths, so a value that outscores the
+            ;; whole support is the worst shape this class can take.
+            (let [raw (mx/ensure-array v)
+                  n-cat (last (mx/shape logits))
+                  in-support (mx/multiply
+                              (mx/multiply (mx/greater-equal raw ZERO)
+                                           (mx/less raw (mx/scalar n-cat)))
+                              (mx/equal raw (mx/floor raw)))
+                  v (mx/ensure-array v mx/int32)
                   log-probs (logits->logprobs logits)
                   lp-shape (mx/shape log-probs)
                   nd (count lp-shape)]
@@ -547,18 +624,24 @@
         ;;    the [N] score into [N,N] -> NaN ESS for vectorized models with
         ;;    per-particle logits, e.g. HMM transitions (genmlx-ql6a).
         ;;  - scalar / broadcastable v (constrained shared obs): plain gather.
-              (cond
-                (= nd 1)
-                (mx/take-idx log-probs v)
+              ;; All THREE shape branches are masked (genmlx-ql6a listed them;
+              ;; guarding only the 1-D one would leave the per-particle HMM
+              ;; path — the busiest — unguarded).
+              (mx/where in-support
+                        (cond
+                          (= nd 1)
+                          (mx/take-idx log-probs (mx/clip v 0 (dec n-cat)))
 
-                (= (vec (mx/shape v)) (vec (butlast lp-shape)))
-                (mx/squeeze (mx/take-along-axis log-probs
-                                                (mx/expand-dims v (dec nd))
-                                                (dec nd))
-                            [(dec nd)])
+                          (= (vec (mx/shape v)) (vec (butlast lp-shape)))
+                          (mx/squeeze (mx/take-along-axis
+                                       log-probs
+                                       (mx/expand-dims (mx/clip v 0 (dec n-cat)) (dec nd))
+                                       (dec nd))
+                                      [(dec nd)])
 
-                :else
-                (mx/take-idx log-probs v -1))))
+                          :else
+                          (mx/take-idx log-probs (mx/clip v 0 (dec n-cat)) -1))
+                        NEG-INF)))
   (support []
            (mx/materialize! logits)
            (let [n (last (mx/shape logits))]
@@ -845,6 +928,7 @@
 (defdist dirichlet
   "Dirichlet distribution with concentration parameters alpha."
   [alpha]
+  (validate (check-all-positive "dirichlet" "alpha" alpha))
   (sample [key]
           (let [alpha-vals (mx/->clj alpha)
                 k (count alpha-vals)
@@ -856,7 +940,11 @@
                 gammas (mapv (fn [a ki] (gamma-sample-scalar (mx/scalar a) ONE ki))
                              alpha-vals ks)
                 total (reduce + gammas)
-                normalized (mapv #(/ % total) gammas)]
+                ;; Lift exact zeros off the boundary, then renormalize so the
+                ;; draw is still exactly on the simplex (genmlx-4x5w).
+                lifted (mapv #(max DIRICHLET-FLOOR (/ % total)) gammas)
+                lifted-total (reduce + lifted)
+                normalized (mapv #(/ % lifted-total) lifted)]
             (mx/array normalized)))
   (log-prob [v]
             ;; Reduce only the trailing event (K) axis so batched values broadcast
@@ -864,14 +952,34 @@
             ;; A bare (mx/sum ...) collapses EVERY axis, silently summing the
             ;; particle axis into one scalar that then broadcasts onto every
             ;; particle's score (genmlx-t5qa).
+            ;;
+            ;; Support guard (genmlx-4x5w): the open simplex. Unguarded, this
+            ;; returned NaN at alpha=1 with a zero component (0*log 0), +Inf at
+            ;; alpha<1 with a zero component, NaN on a negative component, and a
+            ;; finite score for any off-simplex v. The zero component is
+            ;; reachable from our OWN batch sampler, which used to normalize
+            ;; float32 gammas without a floor.
             (let [v (mx/ensure-array v)
                   log-beta (mx/subtract (mx/sum (mx/lgamma alpha) [-1])
                                         (mx/lgamma (mx/sum alpha [-1])))
-                  log-terms (mx/sum
-                             (mx/multiply (mx/subtract alpha ONE)
-                                          (mx/log v))
-                             [-1])]
-              (mx/subtract log-terms log-beta))))
+                  ;; xlogy: (alpha_i - 1) * log v_i, with the ONE lane forced to
+                  ;; exactly 0 where v_i = 0 so 0*(-Inf) = NaN never enters the
+                  ;; graph (the NaN would survive the where-mask's cotangent in
+                  ;; reverse mode even though the forward value is discarded).
+                  ;; The gate is (alpha=1 AND v=0), not alpha=1 alone: gating on
+                  ;; alpha alone would zero d/dalpha = log v at every INTERIOR
+                  ;; point of a uniform Dirichlet.
+                  am1 (mx/subtract alpha ONE)
+                  terms (mx/where (mx/multiply (mx/equal am1 ZERO)
+                                               (mx/equal v ZERO))
+                                  ZERO
+                                  (mx/multiply am1 (mx/log v)))
+                  log-terms (mx/sum terms [-1])
+                  in-support (mx/multiply
+                              (mx/all (mx/greater v ZERO) -1)
+                              (mx/less (mx/abs (mx/subtract (mx/sum v [-1]) ONE))
+                                       SIMPLEX-TOL))]
+              (mx/where in-support (mx/subtract log-terms log-beta) NEG-INF))))
 
 ;; ---------------------------------------------------------------------------
 ;; Delta (point mass)
@@ -1119,10 +1227,17 @@
                 n (inc (- hi-val lo-val))]
             (mx/scalar (+ lo-val (int (* (mx/realize (rng/uniform key [])) n))) mx/int32)))
   (log-prob [v]
+            ;; Support guard (genmlx-4x5w, completing the genmlx-7oen sweep):
+            ;; the support is the INTEGERS in [lo, hi]. Without the floor
+            ;; factor every other discrete family carries, lp(3.5) equalled
+            ;; lp(3) — an impossible value scored exactly as well as a legal
+            ;; one, on a family whose own sampler only ever emits integers.
             (let [lo-val (mx/realize lo)
                   hi-val (mx/realize hi)
                   n (inc (- hi-val lo-val))
-                  in-range (mx/multiply (mx/greater-equal v lo) (mx/less-equal v hi))]
+                  in-range (-> (mx/greater-equal v lo)
+                               (mx/multiply (mx/less-equal v hi))
+                               (mx/multiply (mx/equal v (mx/floor v))))]
               (mx/where in-range (mx/scalar (- (js/Math.log n))) NEG-INF)))
   (support []
            (let [lo-val (int (mx/realize lo))
