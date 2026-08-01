@@ -1273,10 +1273,53 @@
   #{:gaussian :normal :uniform :bernoulli :flip :exponential :log-normal
     :laplace :cauchy})
 
+(def ^:private family-value-op-names
+  "Source-form op names EVERY argument of which is a broadcastable VALUE, so
+   a per-site numeric literal appearing there can safely be replaced by a
+   materialized [G] family column.
+
+   The list is a WHITELIST on purpose (genmlx-spid). abstract-dist-args used
+   to replace every numeric literal regardless of position, which turns the
+   index of `(mx/index xs 0)` / `(mx/index xs 1)` … into a float32 [G]
+   column — and mx/index is the one gather-family op without
+   ensure-int-indices, so the family's arg graph throws
+   `[gather] Got indices with invalid dtype` the first time it is evaluated,
+   killing compiled-mh / fused-MALA / fused-HMC for the model instead of
+   declining to the handler. The same hazard exists for every structural
+   (shape / axis / count / dtype) argument position: mx/reshape,
+   mx/broadcast-to, the axis of a reduction, mx/slice bounds, mx/split-arr
+   sections, mx/mat-get — all of them require host numbers or ints and would
+   be handed a float32 array.
+
+   Enumerating every unsafe (op, position) pair is open-ended and one miss
+   is a crash, so the safe direction is inverted: a literal is abstracted
+   only when the whole path from the dist-arg root down to it passes through
+   ops proven elementwise-in-every-argument. Anything else keeps the literal
+   in the signature, so sites that differ there simply do not group into a
+   family and fall through to per-site compiled scoring — the handler-equal
+   path. The cost is a missed vectorization; the alternative was a throw."
+  #{"add" "+" "subtract" "-" "multiply" "*" "divide" "/" "negate"
+    "scalar" "abs" "exp" "expm1" "log" "log1p" "log2" "log10" "sqrt" "rsqrt"
+    "square" "power" "pow" "sin" "cos" "tan" "sinh" "cosh" "tanh"
+    "sigmoid" "erf" "sign" "floor" "ceil" "round" "reciprocal"
+    "maximum" "minimum" "clip" "logaddexp" "relu" "softplus"})
+
+(defn- family-value-op?
+  "Is `h` a head symbol whose every argument position is a plain value?
+   The namespace guard mirrors compiled/resolve-fn: only `mx`/`genmlx.mlx`
+   and unqualified core ops compile at all, so a same-named symbol from some
+   other namespace can never reach the arg graph."
+  [h]
+  (and (symbol? h)
+       (contains? #{nil "mx" "genmlx.mlx"} (namespace h))
+       (contains? family-value-op-names (name h))))
+
 (defn- abstract-dist-args
-  "Abstract a site's dist-arg source forms for family matching: every
-   numeric literal becomes a positional placeholder symbol ᐩfam<i>; the
-   literal values are collected in walk order. Declines (nil) forms that
+  "Abstract a site's dist-arg source forms for family matching: a numeric
+   literal in a VALUE position becomes a positional placeholder symbol
+   ᐩfam<i>; the literal values are collected in walk order. A literal
+   anywhere else keeps its value (see family-value-op-names) — sites then
+   differ in signature and simply do not merge. Declines (nil) forms that
    embed a (trace ...) call (an inline site definition must never be
    family-merged) or map literals (walk-order stability).
    Returns {:sig [forms'] :lits [numbers]} or nil."
@@ -1284,23 +1327,31 @@
   (let [counter (volatile! 0)
         lits (volatile! [])
         ok? (volatile! true)
-        walk (fn walk [form]
+        walk (fn walk [form value-pos?]
                (cond
                  (number? form)
-                 (let [i @counter]
-                   (vswap! counter inc)
-                   (vswap! lits conj form)
-                   (symbol (str "ᐩfam" i)))
+                 (if value-pos?
+                   (let [i @counter]
+                     (vswap! counter inc)
+                     (vswap! lits conj form)
+                     (symbol (str "ᐩfam" i)))
+                   form)
 
                  (and (seq? form) (seq form))
                  (if (and (symbol? (first form)) (= "trace" (name (first form))))
                    (do (vreset! ok? false) form)
-                   (doall (map walk form)))
+                   (let [child-pos? (and value-pos? (family-value-op? (first form)))]
+                     (cons (first form)
+                           (doall (map #(walk % child-pos?) (rest form))))))
 
-                 (vector? form) (mapv walk form)
+                 ;; A vector is a shape / index list far more often than a
+                 ;; value here, and compile-expr turns it into a runtime
+                 ;; mapv — abstracting inside one would put an array where a
+                 ;; host number is required.
+                 (vector? form) (mapv #(walk % false) form)
                  (map? form) (do (vreset! ok? false) form)
                  :else form))
-        sig (mapv walk dist-args)]
+        sig (mapv #(walk % true) dist-args)]
     (when @ok?
       {:sig sig :lits @lits})))
 
@@ -1334,7 +1385,7 @@
    for constants); varying columns become materialized [G] constants
    appended to the args vector, with the placeholder symbols bound as
    synthetic :param entries — compile-expr is reused unchanged.
-   Returns {:cargs [fn-or-nil ...] :args+lits [...]}."
+   Returns {:cargs [fn-or-nil ...] :args+lits [...] :env env'}."
   [sig lits-per-site binding-env mlx-args]
   (let [n-args (count mlx-args)
         n-lits (count (first lits-per-site))
@@ -1352,38 +1403,253 @@
                      binding-env
                      (range n-lits))]
     {:cargs (mapv #(compiled/compile-expr % env' #{}) sig)
-     :args+lits (into mlx-args lit-cols)}))
+     :args+lits (into mlx-args lit-cols)
+     :env env'}))
+
+;; ---------------------------------------------------------------------------
+;; Structural latent-affinity proof (genmlx-yy8u)
+;; ---------------------------------------------------------------------------
+
+(def ^:private affine-additive-heads #{"add" "+" "subtract" "-"})
+(def ^:private affine-product-heads  #{"multiply" "*"})
+(def ^:private affine-quotient-heads #{"divide" "/"})
+;; Single-value passthroughs: degree of the first argument, every other
+;; argument required latent-free (mx/scalar's optional dtype).
+(def ^:private affine-passthrough-heads #{"negate" "scalar"})
+
+(defn- affine-head-name
+  "Head name of a call form when it is one compile-expr can actually
+   resolve (see compiled/resolve-fn: only `mx`/`genmlx.mlx`-qualified and
+   unqualified ops compile), else nil."
+  [h]
+  (when (and (symbol? h) (contains? #{nil "mx" "genmlx.mlx"} (namespace h)))
+    (name h)))
+
+(defn latent-affinity
+  "STRUCTURAL degree of a dist-arg source form in the LATENT trace
+   addresses, walking the same binding-env compiled/compile-expr resolves
+   against:
+
+     :const     — provably latent-free
+     :affine    — provably jointly degree <= 1 in the latents
+     :nonlinear — anything not affirmatively proven affine
+
+   This is the soundness gate genmlx-1fbs specified and the original
+   implementation replaced with a numeric probe (genmlx-yy8u). A probe that
+   samples the residual at q = 0, at each basis vector and at ONE interior
+   point can only ever be evidence: the residual of any
+   g(q) = alpha*q + beta*(q^2 - q) is pinned to exactly zero at every one of
+   those points, so `mean = 100*slope + 0.005*slope^2` was ACCEPTED as
+   affine and the compiled score diverged 945 nats from the handler at
+   slope = 10 with a 3x-wrong gradient at the mode.
+
+   The rule that makes it a proof rather than evidence: JOINT affinity needs
+   every product/quotient to have at most one latent-bearing factor.
+   `(mx/multiply slope slope)` and `(mx/multiply a b)` with both latent-
+   bearing are quadratic; `x / latent` is not affine either. Affinity in
+   each latent SEPARATELY would not do — `(mx/multiply a b)` is affine in a
+   for fixed b.
+
+   Conservative in the safe direction: an unrecognized op with latent-free
+   arguments is :const (the compiled ops are pure functions of their
+   arguments), and anything else is :nonlinear, which only ever causes the
+   affine emission to decline to the exact stacked/per-site path."
+  [form binding-env latent-addrs visited]
+  (letfn [(deg [f v] (latent-affinity f binding-env latent-addrs v))
+          (worst [ds] (cond (some #{:nonlinear} ds) :nonlinear
+                            (some #{:affine} ds)    :affine
+                            :else                   :const))
+          (all-const? [ds] (every? #(= :const %) ds))]
+    (cond
+      (or (number? form) (boolean? form) (keyword? form) (string? form)
+          (nil? form))
+      :const
+
+      (symbol? form)
+      (let [info (get binding-env (name form))]
+        (case (:kind info)
+          :param    :const
+          :trace    (if (contains? latent-addrs (:addr info)) :affine :const)
+          :expr     (if (contains? visited (name form))
+                      :nonlinear
+                      (deg (:form info) (conj visited (name form))))
+          :poisoned :nonlinear
+          ;; Absent from the binding env: compile-expr resolves it as a
+          ;; closed-over var, which cannot read the values-map.
+          :const))
+
+      ;; (:key m) map access
+      (and (seq? form) (seq form) (keyword? (first form)))
+      (if (= :const (deg (second form) visited)) :const :nonlinear)
+
+      (and (seq? form) (seq form) (symbol? (first form)))
+      (let [head (first form)
+            args (vec (rest form))]
+        (if (and (= "trace" (name head)) (keyword? (first args)))
+          (if (contains? latent-addrs (first args)) :affine :const)
+          (let [h (affine-head-name head)
+                ds (mapv #(deg % visited) args)]
+            (cond
+              (nil? h) :nonlinear
+
+              (contains? affine-additive-heads h) (worst ds)
+
+              (contains? affine-product-heads h)
+              (cond
+                (some #{:nonlinear} ds) :nonlinear
+                (> (count (filter #{:affine} ds)) 1) :nonlinear
+                :else (worst ds))
+
+              (contains? affine-quotient-heads h)
+              (cond
+                (empty? ds) :nonlinear
+                (some #{:nonlinear} ds) :nonlinear
+                ;; Dividing BY anything latent-bearing is not affine; the
+                ;; 1-arg reciprocal form is only affine when constant.
+                (some #{:affine} (rest ds)) :nonlinear
+                (< (count ds) 2) (if (= :const (first ds)) :const :nonlinear)
+                :else (first ds))
+
+              (contains? affine-passthrough-heads h)
+              (cond
+                (empty? ds) :const
+                (not (all-const? (rest ds))) :nonlinear
+                :else (first ds))
+
+              :else (if (all-const? ds) :const :nonlinear)))))
+
+      (vector? form)
+      (if (all-const? (mapv #(deg % visited) form)) :const :nonlinear)
+
+      (map? form)
+      (if (all-const? (mapv #(deg % visited)
+                            (concat (keys form) (vals form))))
+        :const :nonlinear)
+
+      :else :nonlinear)))
+
+;; ---------------------------------------------------------------------------
+;; Family build-time safety (genmlx-spid, genmlx-1ol8)
+;; ---------------------------------------------------------------------------
+
+(defn- stacked-obs
+  "Observation values for `members`, stacked into a [G] constant.
+
+   The coercion is load-bearing: mx/stack's NAPI signature is array-ONLY
+   while every other observation consumer takes Either<&MxArray, f64>, so
+   `(cm/choicemap :a 1.0 :b 2.0)` — legal everywhere else, and blessed by
+   the choicemap docstring — used to throw `Failed to recover MxArray type
+   from napi value` out of the score build, naming nothing the user wrote
+   (genmlx-1ol8). Single-site models never hit it, which is why the in-tree
+   raw-number choicemaps (all on non-static doseq models that decline before
+   family detection) missed it."
+  [obs-values members]
+  (let [s (mx/stack (mapv (fn [a]
+                            (let [v (get obs-values a)]
+                              (if (number? v) (mx/scalar v) v)))
+                          members))]
+    (mx/materialize! s)
+    s))
+
+(defn- probe-values-map
+  "A values-map that binds every latent to a scalar 0 on top of the baked
+   observations — enough to force a family's arg graph once at build time."
+  [obs-values latent-order]
+  (reduce (fn [m a] (assoc m a (mx/scalar 0.0)))
+          (into {} (map (fn [[a v]] [a (if (number? v) (mx/scalar v) v)]))
+                obs-values)
+          latent-order))
+
+(defn- lp-fn-usable?
+  "Force a freshly built family/emission closure ONCE at a probe point.
+
+   Compilation is an OPTIMIZATION: CLAUDE.md rule 5 promises the handler as
+   ground truth and a fallback, never a crash. But a family's arg graph is
+   built lazily — the literal columns are only assembled into MLX ops when
+   the closure runs — so a dtype/shape mismatch introduced by the family
+   merge surfaces on FIRST EVALUATION, inside the MCMC step, far from any
+   build-time try/catch (genmlx-spid). Evaluating once here converts that
+   whole class into a decline: the emission is dropped, its members fall
+   back to per-site compiled scoring, and a notice is printed so the decline
+   is not silent. One extra sync per emission, at build time only."
+  [lp-fn probe-input what]
+  (try
+    (let [v (lp-fn probe-input)]
+      (mx/materialize! v)
+      true)
+    (catch :default e
+      (println (str "  [genmlx] compiled " what
+                    " scoring declined to the per-site path: "
+                    (.-message e)))
+      false)))
 
 (defn- build-family-lp-fns
   "Build one stacked log-prob closure per family (see compile-family-sig
    for the literal-column mechanics). reduce-fn folds the elementwise
    [.., G]-shaped lp to the score shape (full mx/sum for the scalar score;
    last-axis keepdims sum for the batched [N,1] score).
-   Returns [lp-fns family-addrs]; a family whose sig fails to compile falls
-   back to per-site scoring (dropped from family-addrs)."
-  [families binding-env mlx-args obs-values reduce-fn]
-  (let [built
+   Returns [lp-fns family-addrs]; a family whose sig fails to compile, whose
+   build throws, or whose arg graph fails its build-time smoke evaluation
+   falls back to per-site scoring (dropped from family-addrs)."
+  [families binding-env mlx-args obs-values latent-order reduce-fn]
+  (let [probe-vm (delay (probe-values-map obs-values latent-order))
+        built
         (keep (fn [{:keys [dist-type sig members lits-per-site]}]
-                (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
-                      {:keys [cargs args+lits]}
-                      (compile-family-sig sig lits-per-site binding-env mlx-args)
-                      stacked (let [s (mx/stack (mapv obs-values members))]
-                                (mx/materialize! s)
-                                s)]
-                  (when (every? some? cargs)
-                    {:lp-fn (fn [values-map]
-                              (let [eval-args (mapv #(% values-map args+lits) cargs)]
-                                (reduce-fn (apply log-prob-fn stacked eval-args))))
-                     :members members})))
+                (try
+                  (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
+                        {:keys [cargs args+lits]}
+                        (compile-family-sig sig lits-per-site binding-env mlx-args)
+                        stacked (stacked-obs obs-values members)]
+                    (when (every? some? cargs)
+                      (let [lp-fn (fn [values-map]
+                                    (let [eval-args (mapv #(% values-map args+lits) cargs)]
+                                      (reduce-fn (apply log-prob-fn stacked eval-args))))]
+                        (when (lp-fn-usable? lp-fn @probe-vm "family")
+                          {:lp-fn lp-fn :members members}))))
+                  (catch :default e
+                    (println (str "  [genmlx] compiled family scoring declined to"
+                                  " the per-site path: " (.-message e)))
+                    nil)))
               families)]
     [(mapv :lp-fn built)
      (into #{} (mapcat :members) built)]))
 
 (def ^:private affine-family-disabled?
   "The rung-2 EMISSION PAIR — matmul-form affine families AND stacked
-   latent priors — is ON by default; GENMLX_AFFINE_FAMILY=0 is the kill
-   switch (genmlx-1fbs). One knob for both, because neither pays alone and
-   together they pay a lot. Measured on sm_120 at S=100, 2026-07-29:
+   latent priors.
+
+   ON by default; GENMLX_AFFINE_FAMILY=0 is the kill switch.
+
+   HISTORY, because the default moved twice. It shipped opt-in in a358ab4
+   and was flipped default-ON in 822c4cd. The 2026-08-01 regression audit
+   then showed the affinity DETECTOR was unsound and it was forced back to
+   opt-in for the day: `build-affine-family-lp-fns` judged global affinity
+   from the value at q=0, at each latent basis vector, and at ONE interior
+   point with |q| <= 0.75, accepting when err <= 1e-4 * max(1, |mean|). The
+   residual is structurally pinned to zero at q=0 and at every basis point,
+   so the whole judgement rested on that one point; and the tolerance was
+   scaled by the magnitude of the MEAN, never by sigma. Reproduced on
+   sm_120 at the then-default knob: mean = 100*slope + 0.005*slope^2 was
+   ACCEPTED, and the compiled score diverged from the handler by 945 nats
+   at slope=10 with a 3x-wrong gradient at the mode; in a sigma-blind
+   variant (|mu|~1e4, sigma=0.01) by 90,007 nats at the mode. Every
+   MALA/HMC/NUTS proposal is computed from that gradient, so the chain
+   targeted a different distribution while every finiteness / determinism /
+   acceptance-rate assertion still passed (genmlx-yy8u).
+
+   The default is restored because the detector is now the sound structural
+   sig-walk genmlx-1fbs specified — `latent-affinity` proves joint affinity
+   from the source form (every product/quotient carries at most one
+   latent-bearing factor) and the numeric probe survives only as a
+   cross-check, now at three points including |q| ~ 3 and ~10 and with a
+   sigma-scaled tolerance. Both repros above DECLINE
+   (:affine-families 0) and reproduce the handler to float32 rounding;
+   family_score_test pins the declines, and pins score+gradient equivalence
+   at |q| = 10 on a model where the emission does engage.
+
+   Original measurement, sm_120 at S=100, 2026-07-29 (taken before the
+   detector was sound — models that engage now are a subset of the models
+   that engaged then, so these are upper bounds):
 
      affine emission alone   HMC 16875 -> 19677 tape  (NET NEGATIVE)
      both + lazy values-map  HMC 104.84 -> 62.72 real launches/step
@@ -1457,13 +1723,16 @@
     (catch :default _ nil)))
 
 (defn- latent-free-args
-  "Evaluated dist-args if they are LATENT-FREE, else nil. Evidence is
-   bit-stability across two differing latent assignments: a latent-free
-   graph is deterministic, so any drift is real latent dependence. This is
-   the same standard the affine detector above applies to its sigma arg —
-   the alternative, the schema's :deps sets, is documented to
-   UNDER-approximate in some shapes (schema.cljs), and here that would
-   silently bake a stale constant into the score."
+  "Evaluated dist-args, given they are already PROVEN latent-free by
+   `latent-affinity` (:const on every arg — the caller's gate).
+
+   Bit-stability across two differing latent assignments is kept as a
+   numeric cross-check, not as the proof: two sample points can agree by
+   coincidence for a genuinely latent-dependent graph (any g with
+   g(probe-a) = g(probe-b)), which is the same unsoundness genmlx-yy8u found
+   in the affine detector. The structural proof is the gate; this only ever
+   causes an additional decline, and it also catches a non-deterministic
+   graph the source walk cannot see."
   [compiled-args obs-values mlx-args latent-order]
   (let [k (count latent-order)
         probe-a (mapv #(+ 0.5 (* 0.25 (js/Math.sin (* 12.9898 (inc %)))))
@@ -1509,25 +1778,42 @@
    cotangent — no index forward, no scatter-add backward.
 
    Requires FULL COVER: every latent site eligible, one shared dist-type,
-   equal arity, and every dist-arg latent-free (probe-proven). A partial
-   cover would have to slice the tensor, and a slice's vjp is a scatter —
-   exactly the tax this removes — so partial groups decline to per-site
-   scoring instead. Hierarchical priors (latent-dependent args) therefore
-   keep the per-site path, and the lazy values-map keeps them correct.
+   equal arity, and every dist-arg PROVEN latent-free — structurally, by
+   `latent-affinity` over the source form (:const), with the bit-stability
+   probe kept only as a cross-check (genmlx-yy8u sibling: two probe points
+   agreeing is evidence, not proof). A partial cover would have to slice the
+   tensor, and a slice's vjp is a scatter — exactly the tax this removes —
+   so partial groups decline to per-site scoring instead. Hierarchical
+   priors (latent-dependent args) therefore keep the per-site path, and the
+   lazy values-map keeps them correct.
 
    latent-order fixes the column order: the scalar tensor layout, or the
    batched caller's `addresses`. Returns [lp-fns handled-addrs]; each
    lp-fn takes the latent tensor DIRECTLY, not a values-map."
-  [latent-specs latent-order obs-values mlx-args reduce-fn]
+  [latent-specs latent-order obs-values mlx-args binding-env probe-tensor
+   reduce-fn]
   (if (or @affine-family-disabled? (empty? latent-order))
     [[] #{}]
     (try
       (let [specs (mapv latent-specs latent-order)
+            latent-set (set latent-order)
             dts (into #{} (map :dist-type) specs)
             arities (into #{} (map #(count (:compiled-args %))) specs)
             dt (first dts)
-            ;; Latent-free evidence AND the column values in one pass.
-            arg-vals (when (every? some? specs)
+            ;; STRUCTURAL proof first — every prior dist-arg latent-free.
+            latent-free-source?
+            (and (every? some? specs)
+                 (every? (fn [s]
+                           (let [da (:dist-args s)]
+                             ;; nil dist-args = no source form to prove
+                             ;; against; decline rather than assume.
+                             (and (seq da)
+                                  (every? #(= :const (latent-affinity
+                                                      % binding-env latent-set #{}))
+                                          da))))
+                         specs))
+            ;; Numeric cross-check AND the column values in one pass.
+            arg-vals (when latent-free-source?
                        (mapv #(latent-free-args (:compiled-args %) obs-values
                                                 mlx-args latent-order)
                              specs))]
@@ -1543,10 +1829,15 @@
                            (range (first arities)))]
             (if-not (every? some? cols)
               [[] #{}]
-              [[(fn stacked-prior-lp [latent-tensor]
-                  (reduce-fn (apply log-prob-fn latent-tensor cols)))]
-               (set latent-order)]))))
-      (catch :default _ [[] #{}]))))
+              (let [lp-fn (fn stacked-prior-lp [latent-tensor]
+                            (reduce-fn (apply log-prob-fn latent-tensor cols)))]
+                (if (lp-fn-usable? lp-fn @probe-tensor "stacked-prior")
+                  [[lp-fn] (set latent-order)]
+                  [[] #{}]))))))
+      (catch :default e
+        (println (str "  [genmlx] compiled stacked-prior scoring declined to"
+                      " the per-site path: " (.-message e)))
+        [[] #{}]))))
 
 (defn- build-affine-family-lp-fns
   "Matmul-form emission (genmlx-1fbs) for gaussian observed families whose
@@ -1561,12 +1852,32 @@
    per-latent index/one-hot extraction and the scatter-add gradient
    assembly (the HMC-1.0x gather/scatter tax, ~4 kernels/eval).
 
-   Detection is by PROBE, not source walk: the compiled mean arg is
-   evaluated at zero, at each latent basis vector (column extraction), and
-   at a fixed pseudo-random point; affinity must hold at 1e-4 rel
-   (float32) and sigma must be bit-stable across every eval (latent-free
-   graphs are deterministic, so any drift is real latent dependence). A
-   failed probe falls back to the stacked emission — never an error.
+   Detection is a STRUCTURAL PROOF plus a numeric cross-check. The mean sig
+   must be proven :affine and the sigma sig :const by `latent-affinity`,
+   which walks the source form and requires every product/quotient to carry
+   at most ONE latent-bearing factor — the analysis genmlx-1fbs specified.
+   The original implementation shipped the probe ALONE, and a numeric probe
+   cannot decide global affinity: it evaluated the mean at q = 0, at each
+   basis vector and at ONE interior point with |q| <= 0.75, accepting at
+   1e-4 * max(1, |mean|). The residual of a quadratic is structurally
+   pinned to zero at q = 0 and at every basis point, so the verdict rested
+   on a single point inside the unit ball while MCMC explores far outside
+   it, and the tolerance was scaled by the MEAN with sigma appearing
+   nowhere. Measured on sm_120: `mean = 100*slope + 0.005*slope^2` was
+   ACCEPTED, the compiled score diverged 945 nats from the handler at
+   slope = 10 and the gradient at the mode was 3x wrong; with
+   |mu| ~ 1e4 / sigma = 0.01 the divergence was 90,007 nats AT THE MODE
+   (genmlx-yy8u).
+
+   The numeric check is retained as a cross-check on the proof — it also
+   catches a non-deterministic graph a source walk cannot see — but it now
+   probes THREE points, two of them well outside the unit ball (|q| ~ 3 and
+   ~10), and its tolerance is max(1e-4 * min|sigma|, 1e-5 * scale): the
+   sigma term is the one that matters for the score, the scale term is only
+   the float32 evaluation-noise floor. Sigma must additionally be bit-stable
+   across every eval. A failed proof or probe falls back to the stacked
+   emission — never an error.
+
    B/base/sigma/stacked-obs are factory-time materialized constants, the
    same lifecycle as the family lit-cols.
 
@@ -1574,81 +1885,126 @@
    batched caller's `addresses`. Returns [lp-fns handled-addrs]; each
    lp-fn takes the latent tensor DIRECTLY ([K] scalar / [N,K] batched),
    not a values-map."
-  [families binding-env mlx-args obs-values latent-order reduce-fn batched?]
+  [families binding-env mlx-args obs-values latent-order probe-tensor
+   reduce-fn batched?]
   (if (or @affine-family-disabled? (empty? latent-order))
     [[] #{}]
     (let [k-lat (count latent-order)
+          latent-set (set latent-order)
           built
           (keep
            (fn [{:keys [dist-type sig members lits-per-site]}]
-             (when (contains? #{:gaussian :normal} dist-type)
-               (let [{:keys [cargs args+lits]}
-                     (compile-family-sig sig lits-per-site binding-env mlx-args)
-                     [mean-c sigma-c] cargs
-                     g (count members)]
-                 (when (and (= 2 (count cargs)) mean-c sigma-c)
-                   (let [eval-at (fn [q]
-                                   (let [vm (reduce (fn [m [i a]]
-                                                      (assoc m a (mx/scalar (nth q i))))
-                                                    obs-values
-                                                    (map-indexed vector latent-order))]
-                                     [(mean-c vm args+lits) (sigma-c vm args+lits)]))
-                         zeros (vec (repeat k-lat 0.0))
-                         [base sigma0] (eval-at zeros)
-                         basis (mapv #(eval-at (assoc zeros % 1.0)) (range k-lat))
-                         cols (mapv (fn [[m _]] (mx/subtract m base)) basis)
-                         probe (mapv #(+ 0.5 (* 0.25 (js/Math.sin (* 12.9898 (inc %)))))
-                                     (range k-lat))
-                         [probe-mean probe-sigma] (eval-at probe)
-                         predicted (reduce (fn [acc k]
-                                             (mx/add acc (mx/multiply (nth cols k)
-                                                                      (mx/scalar (nth probe k)))))
-                                           base (range k-lat))
-                         ;; Every probe magnitude in ONE sync (see `mags`):
-                         ;; sigma drifts, then the affinity residual and
-                         ;; its scale, then the coefficient columns.
-                         sigma-diffs (mapv #(mx/subtract % sigma0)
-                                           (conj (mapv second basis) probe-sigma))
-                         n-sig (count sigma-diffs)
-                         ms (mags (concat sigma-diffs
-                                          [(mx/subtract probe-mean predicted)
-                                           predicted]
-                                          cols))
-                         sigma-stable? (every? zero? (take n-sig ms))
-                         err (nth ms n-sig)
-                         scale (max 1.0 (nth ms (inc n-sig)))
-                         any-coeff? (boolean (some pos? (drop (+ n-sig 2) ms)))]
-                     (when (and sigma-stable? (<= err (* 1e-4 scale)) any-coeff?)
-                       (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
-                             bcast (fn [x]
-                                     (cond
-                                       (number? x) (mx/broadcast-to (mx/scalar x) [g])
-                                       (zero? (mx/ndim x)) (mx/broadcast-to x [g])
-                                       :else x))
-                             b-mat (let [b (mx/stack (mapv bcast cols) 1)
-                                         b (if batched? (mx/transpose b) b)]
-                                     (mx/materialize! b)
-                                     b)
-                             base-v (let [b (bcast base)] (mx/materialize! b) b)
-                             sigma-v (if (number? sigma0)
-                                       sigma0
-                                       (do (mx/materialize! sigma0) sigma0))
-                             stacked (let [s (mx/stack (mapv obs-values members))]
-                                       (mx/materialize! s)
-                                       s)]
-                         {:lp-fn (if batched?
-                                   (fn affine-batched-lp [params]
-                                     (reduce-fn
-                                      (log-prob-fn stacked
-                                                   (mx/add (mx/matmul params b-mat) base-v)
-                                                   sigma-v)))
-                                   (fn affine-lp [latent-tensor]
-                                     (reduce-fn
-                                      (log-prob-fn stacked
-                                                   (mx/add (mx/matmul b-mat latent-tensor)
-                                                           base-v)
-                                                   sigma-v))))
-                          :members members})))))))
+             (try
+               (when (contains? #{:gaussian :normal} dist-type)
+                 (let [{:keys [cargs args+lits env]}
+                       (compile-family-sig sig lits-per-site binding-env mlx-args)
+                       [mean-c sigma-c] cargs
+                       g (count members)]
+                   (when (and (= 2 (count cargs)) mean-c sigma-c
+                              ;; THE soundness gate. Everything below is
+                              ;; construction and cross-checking.
+                              (= :affine (latent-affinity (first sig) env
+                                                          latent-set #{}))
+                              (= :const (latent-affinity (second sig) env
+                                                         latent-set #{})))
+                     (let [eval-at (fn [q]
+                                     (let [vm (reduce (fn [m [i a]]
+                                                        (assoc m a (mx/scalar (nth q i))))
+                                                      obs-values
+                                                      (map-indexed vector latent-order))]
+                                       [(mean-c vm args+lits) (sigma-c vm args+lits)]))
+                           zeros (vec (repeat k-lat 0.0))
+                           [base sigma0] (eval-at zeros)
+                           basis (mapv #(eval-at (assoc zeros % 1.0)) (range k-lat))
+                           cols (mapv (fn [[m _]] (mx/subtract m base)) basis)
+                           ;; Three probe points, NOT one, and two of them
+                           ;; far outside the unit ball where MCMC actually
+                           ;; goes (genmlx-yy8u).
+                           probes [(mapv #(+ 0.5 (* 0.25 (js/Math.sin (* 12.9898 (inc %)))))
+                                         (range k-lat))
+                                   (mapv #(* 3.0 (+ 1.0 (* 0.5 (js/Math.sin (* 3.1 (inc %))))))
+                                         (range k-lat))
+                                   (mapv #(* -10.0 (+ 1.0 (* 0.3 (js/Math.cos (* 2.7 (inc %))))))
+                                         (range k-lat))]
+                           evals (mapv eval-at probes)
+                           predicteds (mapv (fn [q]
+                                              (reduce (fn [acc k]
+                                                        (mx/add acc (mx/multiply
+                                                                     (nth cols k)
+                                                                     (mx/scalar (nth q k)))))
+                                                      base (range k-lat)))
+                                            probes)
+                           ;; Every probe magnitude in ONE sync (see `mags`):
+                           ;; sigma drifts, then the per-probe affinity
+                           ;; residuals, then their scales, then min|sigma|,
+                           ;; then the coefficient columns.
+                           sigma-diffs (mapv #(mx/subtract % sigma0)
+                                             (into (mapv second basis)
+                                                   (mapv second evals)))
+                           n-sig (count sigma-diffs)
+                           n-pr (count probes)
+                           sigma-min-el (if (number? sigma0)
+                                          sigma0
+                                          (mx/amin (mx/abs sigma0)))
+                           ms (mags (concat sigma-diffs
+                                            (mapv (fn [[m _] p] (mx/subtract m p))
+                                                  evals predicteds)
+                                            predicteds
+                                            [sigma-min-el]
+                                            cols))
+                           sigma-stable? (every? zero? (take n-sig ms))
+                           errs (subvec (vec ms) n-sig (+ n-sig n-pr))
+                           scale (apply max 1.0 (subvec (vec ms) (+ n-sig n-pr)
+                                                        (+ n-sig n-pr n-pr)))
+                           sigma-min (nth ms (+ n-sig n-pr n-pr))
+                           ;; Two floors ANDed, not maxed (genmlx-yy8u review).
+                           ;; `(max sigma-term scale-term)` lets the scale term
+                           ;; WIN whenever the mean is large — with |mu| ~ 1e6
+                           ;; and sigma = 0.01 it admitted a residual of 10,
+                           ;; i.e. 1000 sigma, which is exactly the regime that
+                           ;; measured 90,007 nats. The scale term exists only
+                           ;; as a float32 evaluation-noise floor, so keep it,
+                           ;; but cap every accepted residual in SIGMA units so
+                           ;; no admitted error can ever be worth more than
+                           ;; ~1e-4 nats regardless of |mean|.
+                           tol      (max (* 1e-4 sigma-min) (* 1e-5 scale))
+                           sigma-cap (* 1e-2 sigma-min)
+                           within?  (fn [e] (and (<= e tol) (<= e sigma-cap)))
+                           any-coeff? (boolean (some pos? (drop (+ n-sig n-pr n-pr 1) ms)))]
+                       (when (and sigma-stable? (every? within? errs) any-coeff?)
+                         (let [log-prob-fn (:log-prob (get compiled/noise-transforms-full dist-type))
+                               bcast (fn [x]
+                                       (cond
+                                         (number? x) (mx/broadcast-to (mx/scalar x) [g])
+                                         (zero? (mx/ndim x)) (mx/broadcast-to x [g])
+                                         :else x))
+                               b-mat (let [b (mx/stack (mapv bcast cols) 1)
+                                           b (if batched? (mx/transpose b) b)]
+                                       (mx/materialize! b)
+                                       b)
+                               base-v (let [b (bcast base)] (mx/materialize! b) b)
+                               sigma-v (if (number? sigma0)
+                                         sigma0
+                                         (do (mx/materialize! sigma0) sigma0))
+                               stacked (stacked-obs obs-values members)
+                               lp-fn (if batched?
+                                       (fn affine-batched-lp [params]
+                                         (reduce-fn
+                                          (log-prob-fn stacked
+                                                       (mx/add (mx/matmul params b-mat) base-v)
+                                                       sigma-v)))
+                                       (fn affine-lp [latent-tensor]
+                                         (reduce-fn
+                                          (log-prob-fn stacked
+                                                       (mx/add (mx/matmul b-mat latent-tensor)
+                                                               base-v)
+                                                       sigma-v))))]
+                           (when (lp-fn-usable? lp-fn @probe-tensor "affine-family")
+                             {:lp-fn lp-fn :members members})))))))
+               (catch :default e
+                 (println (str "  [genmlx] compiled affine-family scoring declined"
+                               " to the stacked path: " (.-message e)))
+                 nil)))
            families)]
       [(mapv :lp-fn built)
        (into #{} (mapcat :members) built)])))
@@ -1661,10 +2017,13 @@
    parameters here rather than two copies of the strategy stack.
 
    Strategy order, first match wins per site: affine matmul family >
-   stacked observed family > stacked latent priors > per-site. Everything
-   is probe-detected and every detector may DECLINE, in which case the site
-   falls through to the next strategy; a site with no supported log-prob
-   declines the whole build (nil).
+   stacked observed family > stacked latent priors > per-site. Every
+   detector may DECLINE — on a structural proof it could not complete, on a
+   numeric cross-check, or because the emission it built THREW when forced
+   once at a probe point (genmlx-spid) — in which case the site falls
+   through to the next strategy; a site with no supported log-prob declines
+   the whole build (nil). No detector may propagate a throw: compilation is
+   an optimization and the handler is ground truth (CLAUDE.md rule 5).
 
    Returns {:site-lp-fns  fns taking a values-map
             :tensor-lp-fns fns taking the latent tensor/params DIRECTLY
@@ -1678,19 +2037,32 @@
         static-sites (filterv :static? (:trace-sites schema))
         families (detect-observed-families
                   (filterv #(contains? obs-values (:addr %)) static-sites))
+        ;; A zero latent point of the shape the tensor lp-fns consume,
+        ;; used to force each freshly built emission once (lp-fn-usable?).
+        probe-tensor (delay (let [k (count latent-order)]
+                              (if batched? (mx/zeros [1 k]) (mx/zeros [k]))))
         [affine-lp-fns affine-addrs]
         (build-affine-family-lp-fns families binding-env mlx-args obs-values
-                                    latent-order reduce-fn batched?)
+                                    latent-order probe-tensor reduce-fn batched?)
         [family-lp-fns family-addrs]
         (build-family-lp-fns (remove #(contains? affine-addrs
                                                  (first (:members %)))
                                      families)
-                             binding-env mlx-args obs-values reduce-fn)
+                             binding-env mlx-args obs-values latent-order
+                             reduce-fn)
+        ;; The latent site-specs carry compiled closures only; the STRUCTURAL
+        ;; latent-free proof needs the source dist-args, so merge them back
+        ;; from the schema by address.
+        dist-args-by-addr (into {} (map (juxt :addr :dist-args)) static-sites)
         [prior-lp-fns prior-addrs]
         (build-stacked-prior-lp-fns
-         (into {} (map (juxt :addr identity))
-               (filterv #(contains? latent-index (:addr %)) site-specs))
-         latent-order obs-values mlx-args reduce-fn)
+         (into {} (comp (filter #(contains? latent-index (:addr %)))
+                        (map (fn [ss]
+                               [(:addr ss)
+                                (assoc ss :dist-args
+                                       (get dist-args-by-addr (:addr ss)))])))
+               site-specs)
+         latent-order obs-values mlx-args binding-env probe-tensor reduce-fn)
         per-site
         (mapv
          (fn [site-spec]
