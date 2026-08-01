@@ -115,7 +115,8 @@
                    (loop [i 0, context prompt-ids, logits logits]
                      (if (>= i max-tokens)
                        context
-                       (let [tok (trace (t-addr i) (dist/categorical logits))
+                       (let [logits (mx/astype logits mx/float32)  ;; genmlx-828j: f32 log_softmax on every path
+                             tok (trace (t-addr i) (dist/categorical logits))
                              tok-id (mx/item tok)]
                          (if (= tok-id eos)
                            (conj context tok-id)
@@ -210,7 +211,7 @@
            (loop [i 0, context prompt-ids]
              (if (>= i max-tokens)
                context
-               (let [logits (llm/forward-pass model context)
+               (let [logits (mx/astype (llm/forward-pass model context) mx/float32) ;; genmlx-828j
                      tok (trace (t-addr i) (dist/categorical logits))
                      tok-id (mx/item tok)]
                  (if (= tok-id eos)
@@ -332,6 +333,21 @@
                    (let [lg   (if inv-temp (mx/multiply logits inv-temp) logits)
                          lg   (if hook ((:mask hook) hs lg i) lg)
                          lg   (if active (mask-inactive-logits lg active pad-row) lg)
+                         ;; f32 for the categorical, on EVERY path (genmlx-828j).
+                         ;; mask-inactive-logits does (mx/where active lg pad-row)
+                         ;; against an f32 pad-row, so the BATCHED path was already
+                         ;; promoted to f32 from site 1 onward while the scalar path
+                         ;; (active nil -> no mask) stayed bf16. The two paths then
+                         ;; computed log_softmax at different precisions, and
+                         ;; `logits - logsumexp` at magnitude ~16-32 suffers
+                         ;; catastrophic cancellation on a 0.125 bf16 ULP. Measured:
+                         ;; every scalar logprob landed on the bf16 grid (-0.375,
+                         ;; -0.750, -1.250) while the batched ones did not
+                         ;; (-0.645313, -2.423557). T=1 agreed to 0.000000 exactly,
+                         ;; because site 0 masks on neither path.
+                         ;; Upcast rather than downcasting pad-row: pad-onehot-row's
+                         ;; guarantee (log_softmax(row)[pad] = 0 exactly) needs f32.
+                         lg   (mx/astype lg mx/float32)
                          tok  (trace (t-addr i) (dist/categorical lg))
                          act' (advance-active active tok eos)
                          hs'  (when hook ((:advance hook) hs tok))

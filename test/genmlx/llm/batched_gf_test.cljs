@@ -42,6 +42,24 @@
 (def model-root (str (.-HOME js/process.env) "/.cache/models"))
 (def K 4)
 (def MAX-TOKENS 8)
+
+;; Cross-path band on a SUM of MAX-TOKENS per-token logprobs. The per-token
+;; error is stationary (bf16 batched-vs-scalar reduction order, ~0.05 nats RMS
+;; per site), so the SCORE error grows as sqrt(T) by construction — this band
+;; is therefore tied to MAX-TOKENS and CANNOT be reused at a larger T without
+;; re-measuring (genmlx-828j).
+;;
+;; Measured at T=8 on qwen3-0.6b, per lane:
+;;   before the genmlx-828j f32 fix:  0.2428 0.2559 0.1909 0.0876   max 0.2559 FAIL
+;;   after:                           0.0036 0.0323 0.1351 0.0364   max 0.1351 PASS
+;; The f32 upcast in llm/core.cljs removed the dtype half of the divergence
+;; (the batched path masked against an f32 pad-row and so computed log_softmax
+;; in f32, while the scalar path stayed bf16); what remains is the genuine
+;; batched-vs-scalar forward reduction-order difference.
+;;
+;; 0.25 is UNCHANGED and now carries ~1.8x margin. It is deliberately not
+;; re-derived: the pre-fix sqrt law (max ~ 0.10*sqrt(T-1)) was fit to the
+;; COMBINED error, and one post-fix data point is not a refit.
 (def band 0.25)
 
 (defn- t-addr [i] (keyword (str "t" i)))

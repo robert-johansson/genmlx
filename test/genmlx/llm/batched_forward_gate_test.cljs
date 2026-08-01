@@ -69,8 +69,28 @@
     :opt-in "GENMLX_GATE_35B"}])
 
 (def K 3)          ;; batch width for every gate
-(def band 0.25)    ;; top-5 logprob cross-path band (parity-test convention)
-(def tie-tol 0.13) ;; 2 bf16 lp quanta at these magnitudes — a sub-tie flip, not divergence
+;; Every cross-path deviation measured in G2 is an EXACT multiple of the bf16
+;; logprob quantum (genmlx-828j): the fixtures are bf16 and the compute dtype
+;; comes from the embedding (qwen3_forward.cljs:403), so the whole forward and
+;; the logits are bf16. Both constants below are therefore expressed in quanta
+;; and deliberately placed BETWEEN lattice points — a strict `<` against a
+;; lattice atom is a coin flip by construction.
+(def lp-quantum 0.0625)
+
+;; 4.5 quanta. The old 0.25 was simultaneously an exact lattice value AND the
+;; observed full-vocab ceiling, so `< 0.25` operationally meant "<= 3 quanta".
+;; Measured top-5 band over the 18 (step, lane) samples this gate asserts on:
+;; {0.0 x2, 0.0625 x5, 0.125 x10, 0.25 x1} — nothing between 0.125 and 0.25 is
+;; achievable, and the single 4-quantum outlier failed by EXACTLY 0.0.
+;; NB the band is a coarse gross-divergence bound, not a safety margin: the
+;; FULL-VOCAB cross-path max is 0.25-0.5 on every step even when everything is
+;; correct. The argmax+tie predicate is the strong invariant.
+(def band (* 4.5 lp-quantum))
+
+;; 2.5 quanta. The old 0.13 accepted the measured 0.125 tie with 0.005 nats of
+;; margin — 4% of a quantum. This robustly means "<= 2 quanta" and still
+;; rejects any 3-quantum gap, which would be a genuine rank swap.
+(def tie-tol (* 2.5 lp-quantum))
 
 (defn- log-softmax [logits] (mx/subtract logits (mx/logsumexp logits)))
 
@@ -98,27 +118,67 @@
 (defn- tok-array [ids] (mx/array (vec ids) [(count ids)] mx/int32))
 
 (defn- argmax-agrees?
-  "Exact argmax agreement — or, on dequantized checkpoints (fp? false), a
-   sub-ULP tie: the REFERENCE path's logprobs of the two candidates differ
-   by < tie-tol, so the flip is a rounding tie-break, not divergence."
-  [ref-lp b-arg s-arg fp?]
+  "Exact argmax agreement — or a sub-ULP tie: the REFERENCE path's logprobs of
+   the two candidates differ by < tie-tol, so the flip is a rounding tie-break
+   rather than divergence.
+
+   The tie escape used to be gated on (not fp?), i.e. granted only to
+   \"dequantized-quantized\" checkpoints. That gate was wrong and is removed
+   (genmlx-828j). Measured on qwen3-0.6b, a :fp? true fixture:
+
+     ref_lp[15344] = -1.750000   ref_lp[9625] = -1.875000   gap 0.125  (2 quanta)
+     bat_lp[15344] = -1.750000   bat_lp[9625] = -1.750000   gap 0.000  (exact tie,
+                                                  broken by mx/argmax on lower index)
+
+   The tie is a property of the bf16 LOGIT LATTICE, not of weight provenance:
+   :fp? distinguishes \"dequantized from a quantized file\" from \"stored bf16\",
+   and neither computes logits at higher precision. Demanding exact argmax on a
+   bf16 checkpoint demands that a B=1 GEMV and a B=3 GEMM agree bit-for-bit
+   across a 2-quantum gap; arithmetic cannot supply that.
+
+   This cannot mask a real bug. It is gated on the REFERENCE path's own gap, so
+   a genuine batched defect — which moves logprobs far more than 2 quanta — is
+   still caught here, and the top-5 band assertion bounds gross divergence
+   independently."
+  [ref-lp b-arg s-arg]
   (or (= b-arg s-arg)
-      (and (not fp?)
-           (< (js/Math.abs (- (mx/item (mx/index ref-lp s-arg))
-                              (mx/item (mx/index ref-lp b-arg))))
-              tie-tol))))
+      (< (js/Math.abs (- (mx/item (mx/index ref-lp s-arg))
+                         (mx/item (mx/index ref-lp b-arg))))
+         tie-tol)))
 
 (defn- assert-argmaxes
   "Per-lane argmax agreement between batched logits [K V] and per-lane
-   reference logits (seq of [V]), tie-aware on non-fp checkpoints."
-  [label blogits refs fp?]
+   reference logits (seq of [V]), tie-aware (see argmax-agrees?)."
+  [label blogits refs]
   (let [b (mapv #(mx/item (mx/argmax (lane blogits %))) (range (count refs)))
         s (mapv #(mx/item (mx/argmax %)) refs)]
     (assert-true (str label " (batched=" (pr-str b) " scalar=" (pr-str s) ")")
                  (every? (fn [k]
                            (argmax-agrees? (log-softmax (nth refs k))
-                                           (nth b k) (nth s k) fp?))
+                                           (nth b k) (nth s k)))
                          (range (count refs))))))
+
+(defn- assert-band
+  "Per-lane top-5 logprob band between batched logits [K V] and per-lane
+   reference logits (seq of [V]), REPORTING the measured maximum.
+
+   The four band assertions used to build their label from the CONSTANT and
+   pass a bare boolean, so the log showed neither the measured deviation nor
+   which lane tripped — an assertion that looks identical at 0.1875 and at
+   0.375. Diagnosing genmlx-828j needed a GPU probe to recover a number the
+   test already had in hand. Print it (assert-argmaxes prints both tuples,
+   which is the only reason the sibling failure was diagnosable from the
+   battery log at all)."
+  [label blogits refs]
+  (let [devs (mapv (fn [k]
+                     (let [r (log-softmax (nth refs k))]
+                       (max-abs-diff (log-softmax (lane blogits k)) r
+                                     (topk-ids r 5))))
+                   (range (count refs)))
+        worst (reduce max devs)]
+    (assert-true (str label " (max " (.toFixed worst 6) " < " band
+                      ", per-lane " (pr-str (mapv #(.toFixed % 4) devs)) ")")
+                 (< worst band))))
 
 ;; ---------------------------------------------------------------------------
 ;; G4: broadcast-cache value equality
@@ -155,18 +215,12 @@
         [blogits bcache] (fwd/prefill-batched fm variants)             ; [K V]
         argmaxes (mapv #(mx/item (mx/argmax %)) refs)]
     (assert-argmaxes "per-lane argmax == per-prompt scalar prefill argmax"
-                     blogits refs fp?)
+                     blogits refs)
     (when fp?
       (assert= "per-lane top-5 ids == scalar top-5 ids (full-precision)"
                (mapv #(topk-ids (log-softmax %) 5) refs)
                (mapv #(topk-ids (log-softmax (lane blogits %)) 5) (range K))))
-    (assert-true (str "per-lane top-5 logprob band < " band)
-                 (every? (fn [k]
-                           (< (max-abs-diff (log-softmax (lane blogits k))
-                                            (log-softmax (nth refs k))
-                                            (topk-ids (log-softmax (nth refs k)) 5))
-                              band))
-                         (range K)))
+    (assert-band "per-lane top-5 logprob band" blogits refs)
     ;; one batched step from the batched cache vs scalar prefill+step per lane
     (let [T       (count ids)
           toks    argmaxes
@@ -176,14 +230,8 @@
                         variants toks)
           [slogits _] (fwd/step-batched fm bcache T (tok-array toks))]
       (assert-argmaxes "post-prefill batched step argmax == scalar step argmax, per lane"
-                       slogits srefs fp?)
-      (assert-true (str "post-prefill batched step top-5 band < " band)
-                   (every? (fn [k]
-                             (< (max-abs-diff (log-softmax (lane slogits k))
-                                              (log-softmax (nth srefs k))
-                                              (topk-ids (log-softmax (nth srefs k)) 5))
-                                band))
-                           (range K))))))
+                       slogits srefs)
+      (assert-band "post-prefill batched step top-5 band" slogits srefs))))
 
 ;; ---------------------------------------------------------------------------
 ;; G1: K-copies decode (tile + identical tokens)
@@ -201,18 +249,12 @@
         blogits (llm/forward-step-batched model (tok-array (repeat K tok)))]
     (llm/dispose-branch! model br)
     (assert-argmaxes (str "all " K " lanes argmax == scalar step argmax")
-                     blogits (vec (repeat K ref)) fp?)
+                     blogits (vec (repeat K ref)))
     (when fp?
       (assert= "per-lane top-5 ids == scalar top-5 (full-precision)"
                (vec (repeat K (topk-ids (log-softmax ref) 5)))
                (mapv #(topk-ids (log-softmax (lane blogits %)) 5) (range K))))
-    (assert-true (str "per-lane top-5 logprob band < " band)
-                 (every? (fn [k]
-                           (< (max-abs-diff (log-softmax (lane blogits k))
-                                            (log-softmax ref)
-                                            (topk-ids (log-softmax ref) 5))
-                              band))
-                         (range K)))
+    (assert-band "per-lane top-5 logprob band" blogits (vec (repeat K ref)))
     (if dense?
       (assert-true "lanes mutually bit-identical (dense: one kernel, same rows)"
                    (every? #(zero? (max-abs-diff (lane blogits %) (lane blogits 0)))
@@ -262,14 +304,9 @@
     (doseq [j (range n-steps)]
       (let [b (nth steps j)]
         (assert-argmaxes (str "step " j ": per-lane argmax == branch-replay argmax")
-                         b (mapv #(nth (:logits %) j) refs) fp?)
-        (assert-true (str "step " j ": per-lane top-5 logprob band < " band)
-                     (every? (fn [k]
-                               (let [r (log-softmax (nth (:logits (nth refs k)) j))]
-                                 (< (max-abs-diff (log-softmax (lane b k)) r
-                                                  (topk-ids r 5))
-                                    band)))
-                             (range K)))))
+                         b (mapv #(nth (:logits %) j) refs))
+        (assert-band (str "step " j ": per-lane top-5 logprob band")
+                     b (mapv #(nth (:logits %) j) refs))))
     (when fp?
       (let [b (peek steps)]
         (assert= "final step: per-lane top-5 ids == branch-replay (full-precision)"
