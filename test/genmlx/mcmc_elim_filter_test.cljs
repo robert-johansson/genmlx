@@ -148,5 +148,57 @@
       (is (= [20 1] (vec (mx/shape (:samples r)))))
       (is (js/isFinite (mx/item (mx/sum (:samples r))))))))
 
+;; ---------------------------------------------------------------------------
+;; genmlx-fw2z: a model with BOTH top-level and nested latents must THROW.
+;;
+;; derive-unconstrained-addresses kept only depth-1 paths and threw only when
+;; the result was EMPTY. With a top-level latent present it silently returned
+;; the top-level subset — and because make-score-fn wraps the model in
+;; dyn/auto-key, every dropped nested site was redrawn from the prior on every
+;; score evaluation. hmc-step then compared current-H and proposed-H across two
+;; INDEPENDENT draws, so log-accept carried an uncorrected O(1) random offset:
+;; a silently biased posterior reported with a plausible acceptance rate.
+;; genmlx-ph4g made the empty case loud; this makes the partial case loud too.
+;; ---------------------------------------------------------------------------
+
+(def ^:private sub-gf
+  (gen [] (trace :z (dist/gaussian 0 1))))
+
+(def ^:private nested-latent-model
+  (dyn/auto-key
+    (gen [] (let [mu (trace :mu (dist/gaussian 0 10))
+                  z  (splice :s sub-gf [])]
+              (trace :y (dist/gaussian (mx/add mu z) 1))
+              mu))))
+
+(deftest nested-latents-throw-rather-than-being-dropped
+  (testing "derive-unconstrained-addresses names the nested paths and throws"
+    (let [tr  (p/simulate nested-latent-model [])
+          obs (cm/choicemap :y (mx/scalar 3.0))
+          e   (try (u/derive-unconstrained-addresses tr obs)
+                   nil
+                   (catch :default ex ex))]
+      (is (some? e) "throws instead of returning [:mu] and dropping [:s :z]")
+      (is (= :nested-latents-unsupported (:genmlx/error (ex-data e))))
+      (is (= [[:s :z]] (:nested-paths (ex-data e)))
+          "the offending path is named, not just counted")
+      (is (= [:mu] (:top-level-addresses (ex-data e)))
+          "what WOULD have been silently returned is reported too")))
+  (testing "the throw reaches a bare mcmc/hmc call — the documented entry point"
+    (let [obs (cm/choicemap :y (mx/scalar 3.0))
+          e (try (mcmc/hmc {:samples 10 :burn 2 :key (rng/fresh-key 7)}
+                           nested-latent-model [] obs)
+                 nil
+                 (catch :default ex ex))]
+      (is (some? e) "hmc with no :addresses throws on a nested-latent model")
+      (is (= :nested-latents-unsupported (:genmlx/error (ex-data e)))))))
+
+(deftest flat-models-still-derive
+  (testing "the guard is false-negatives-only: flat models are unaffected"
+    (let [tr  (p/simulate two-g [])
+          obs (cm/choicemap :obs-a (mx/scalar 1.0) :obs-b (mx/scalar 1.0))]
+      (is (= [:a :b] (u/derive-unconstrained-addresses tr obs))
+          "both top-level latents still derived, in traversal order"))))
+
 (cljs.test/run-tests)
 

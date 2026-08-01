@@ -414,8 +414,20 @@
    nil yields an EMPTY layout (n-params 0), and the empty param vector then
    crashed NATIVELY (SIGFPE) inside the fused chain machinery (genmlx-ph4g).
    Nested (spliced) latents cannot be expressed in the scalar-per-address
-   layout, so a model whose only unconstrained leaves are nested still
-   requires explicit :addresses; deriving nothing at all throws."
+   layout, so a model with ANY unconstrained nested leaf throws — including
+   when some top-level latents ARE derivable.
+
+   That partial case used to return the top-level subset silently, and the
+   consequence was not a missing address but a STOCHASTIC TARGET DENSITY
+   (genmlx-fw2z): make-score-fn wraps the model in dyn/auto-key, so every
+   uncovered nested site is redrawn from the prior on each evaluation and
+   contributes nothing to the weight. hmc-step then evaluates current-H and
+   proposed-H against two INDEPENDENT draws, so log-accept carries an
+   uncorrected O(1) random offset with no pseudo-marginal correction, and
+   mx/grad of the same fn is noisy. The chain converges to a smeared, biased
+   distribution while reporting a plausible acceptance rate — the worst
+   failure mode available. genmlx-ph4g made the EMPTY case loud and left this
+   one silent; both are now loud."
   [trace observations]
   (let [paths (cm/addresses (:choices trace))
         constrained? (fn [path]
@@ -423,11 +435,22 @@
                         (some-> (reduce (fn [c a] (when c (cm/get-submap c a)))
                                         observations path)
                                 cm/has-value?)))
-        top (into []
-                  (comp (filter #(= 1 (count %)))
-                        (remove constrained?)
-                        (map first))
-                  paths)]
+        unconstrained (into [] (remove constrained?) paths)
+        top (into [] (comp (filter #(= 1 (count %))) (map first)) unconstrained)
+        nested (into [] (filter #(> (count %) 1)) unconstrained)]
+    (when (seq nested)
+      (throw (ex-info (str "MCMC: " (count nested) " unconstrained latent(s) are nested "
+                           "inside a splice or combinator and cannot be expressed in the "
+                           "scalar-per-address layout: " (pr-str nested)
+                           ". Returning only the " (count top) " top-level address(es) "
+                           "would make the target density stochastic (each nested site "
+                           "would be redrawn from the prior on every score evaluation). "
+                           "Constrain them, or use an inference method that handles "
+                           "nested structure (e.g. SMC).")
+                      {:genmlx/error :nested-latents-unsupported
+                       :nested-paths nested
+                       :top-level-addresses top
+                       :n-leaf-paths (count paths)})))
     (when (empty? top)
       (throw (ex-info (str "MCMC: no unconstrained top-level addresses to sample "
                            "(every leaf address is observed or nested inside a "
