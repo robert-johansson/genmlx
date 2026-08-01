@@ -64,13 +64,36 @@
       {:type "scalar" :value (mx/item arr) :dtype dt}
       {:type "array" :value (mx/->clj arr) :shape sh :dtype dt})))
 
+(defn- reject-nulls!
+  "Refuse a JSON `null` standing where a number must be. `Float32Array.from`
+   maps nil to 0, so without this a legacy row written before genmlx-94tu
+   silently restores -Inf as 0.0 — and for an SMC log-weight that turns the
+   impossible particle into the best one. Unrecoverable, so fail loudly."
+  [v where]
+  (cond
+    (nil? v)
+    (throw (ex-info (str "genmlx.serialize: JSON null where a number must be, in " where
+                         ". This row predates the non-finite token codec (genmlx-94tu); "
+                         "the original value (NaN or ±Inf) is not recoverable.")
+                    {:genmlx/error :non-finite-lost :where where}))
+    (sequential? v)
+    (do (when (some nil? v)
+          (throw (ex-info (str "genmlx.serialize: JSON null(s) where numbers must be, in " where
+                               ". This row predates the non-finite token codec (genmlx-94tu); "
+                               "the original values (NaN or ±Inf) are not recoverable.")
+                          {:genmlx/error :non-finite-lost :where where
+                           :n-null (count (filter nil? v))})))
+        v)
+    :else v))
+
 (defn- data->mlx-value
   "Convert a serializable map back to an MLX array."
   [data]
-  (let [dt (str->dtype (:dtype data))]
+  (let [dt (str->dtype (:dtype data))
+        v  (reject-nulls! (:value data) (str "an MLX " (:type data) " leaf"))]
     (if (= "scalar" (:type data))
-      (mx/scalar (:value data) dt)
-      (mx/array (:value data) dt))))
+      (mx/scalar v dt)
+      (mx/array v dt))))
 
 ;; ---------------------------------------------------------------------------
 ;; Address codec
@@ -212,6 +235,70 @@
   (deserialize-value v))
 
 ;; ---------------------------------------------------------------------------
+;; Non-finite tokens — the JSON round trip's one lossy spot
+;; ---------------------------------------------------------------------------
+;; `JSON.stringify` maps NaN and ±Infinity to `null`, and `Float32Array.from`
+;; then maps `null` to 0. So a non-finite value written and read back returns
+;; **0.0**, with no error at either end. For an SMC log-weight that is
+;; maximally perverse: -Inf means "impossible particle" and 0.0 means
+;; "log-weight 0", so after logsumexp normalization the dead particle restores
+;; as the single BEST one. Measured 2026-08-01 (genmlx-94tu), before this fix:
+;;   save-particles! payload : "weight":{"value":[null,-2,null]}
+;;   restore-particles       : [0 -2 0]      <- input was [##-Inf -2 ##Inf]
+;;
+;; A -Inf score is ROUTINE, not exotic — any out-of-support observation
+;; produces one, and the genmlx-4x5w support-guard work makes them strictly
+;; more common. So the codec must round-trip them, not reject them.
+;;
+;; `genmlx.memory` fixed this on its own hashing path (genmlx-7qbr) and left
+;; the payload codec untouched. These live HERE, in the lower layer, so there
+;; is one implementation and memory delegates to it rather than keeping a
+;; second copy that can drift (genmlx-pif1).
+
+(def non-finite-tokens
+  "Token <-> value table for the JSON round trip. Public so `genmlx.memory`
+   composes this rather than defining its own."
+  {"#nan" js/NaN "#+inf" js/Infinity "#-inf" (- js/Infinity)})
+
+(defn- non-finite-token [x]
+  (cond (js/Number.isNaN x) "#nan"
+        (pos? x)            "#+inf"
+        :else               "#-inf"))
+
+(defn tag-non-finite
+  "Replace non-finite numbers with their tokens, and escape any genuine string
+   that could be read back as one (a leading `#` is doubled). Map KEYS are left
+   alone — they are already the prefixed-address strings the codec produced."
+  [x]
+  (cond
+    (number? x) (if (js/isFinite x) x (non-finite-token x))
+    (string? x) (if (str/starts-with? x "#") (str "#" x) x)
+    (map? x)    (update-vals x tag-non-finite)
+    (vector? x) (mapv tag-non-finite x)
+    (seq? x)    (mapv tag-non-finite x)
+    :else       x))
+
+(defn untag-non-finite
+  "Inverse of `tag-non-finite`."
+  [x]
+  (cond
+    (string? x) (cond
+                  (contains? non-finite-tokens x) (get non-finite-tokens x)
+                  (str/starts-with? x "##")       (subs x 1)
+                  :else                           x)
+    (map? x)    (update-vals x untag-non-finite)
+    (vector? x) (mapv untag-non-finite x)
+    (seq? x)    (mapv untag-non-finite x)
+    :else       x))
+
+(defn- stringify
+  "`JSON.stringify` with non-finite numbers tokenized first. Every save path
+   in this namespace goes through here — a bare `js/JSON.stringify` on trace
+   data is the bug above."
+  [data]
+  (js/JSON.stringify (clj->js (tag-non-finite data)) nil 2))
+
+;; ---------------------------------------------------------------------------
 ;; Public API: choices-only (recommended)
 ;; ---------------------------------------------------------------------------
 
@@ -226,12 +313,18 @@
                       :format "genmlx-choices-v1"
                       :choices (choicemap->data (:choices trace))}
                gen-fn-id (assoc :gen-fn-id gen-fn-id))]
-    (js/JSON.stringify (clj->js data) nil 2)))
+    (stringify data)))
 
 (defn- parse-versioned
   "Parse a JSON string and assert it is serialization version 1."
   [json-str]
-  (let [data (js->clj (js/JSON.parse json-str) :keywordize-keys true)]
+  ;; untag BEFORE anything else, so every downstream decoder sees real
+  ;; NaN/±Inf rather than tokens. Rows written before genmlx-94tu contain a
+  ;; bare JSON `null` where a number belongs; those are unrecoverable, and
+  ;; `data->mlx-value`/`data->value` refuse them loudly rather than handing
+  ;; back a silent 0.0.
+  (let [data (untag-non-finite
+              (js->clj (js/JSON.parse json-str) :keywordize-keys true))]
     (when (not= serialization-version (:version data))
       (throw (ex-info "Unsupported serialization version"
                       {:expected serialization-version :got (:version data)})))
@@ -287,7 +380,7 @@
                  data))
         data (cond-> data
                gen-fn-id (assoc :gen-fn-id gen-fn-id))]
-    (js/JSON.stringify (clj->js data) nil 2)))
+    (stringify data)))
 
 (defn load-trace
   "Deserialize a full trace JSON string. Requires the gen-fn.

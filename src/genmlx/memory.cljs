@@ -104,6 +104,38 @@
   [k]
   (if (keyword? k) (subs (str k) 1) (str k)))
 
+;; ---------------------------------------------------------------------------
+;; The NON-FINITE vocabulary — ONE definition, used by BOTH the content hash
+;; and the durable payload codec (genmlx-94tu)
+;; ---------------------------------------------------------------------------
+;; `JSON.stringify` collapses EVERY non-finite number to `null`, and `mx/array`'s
+;; `Float32Array.from` silently coerces `null` back to `0.0`. Measured
+;; end-to-end on this codebase: a VectorizedTrace `:weight` of `[-Inf -2 +Inf]`
+;; round-tripped through `save-particles!` / `restore-particles` as `[0 -2 0]`.
+;; For an SMC log-weight that is maximally perverse — `-Inf` means "impossible
+;; particle" and `0.0` means "log-weight 0", so after logsumexp normalization the
+;; DEAD particle restores as the single BEST one.
+;;
+;; These three tokens were originally introduced for the content hash only
+;; (`canonical-str`); the durable payload codec below now shares them rather
+;; than inventing a second spelling.
+
+;; Vocabulary is owned by `genmlx.serialize` (the payload codec). Named here
+;; only so the hashing call sites below read the same as before.
+(def ^:private nan-token     "#nan")
+(def ^:private pos-inf-token "#+inf")
+(def ^:private neg-inf-token "#-inf")
+
+(def ^:private token->non-finite ser/non-finite-tokens)
+
+(defn- non-finite-token
+  "The stable token for a non-finite number. NaN/+Inf/-Inf get DISTINCT tokens
+   so they never alias each other (or nil), which plain JSON does."
+  [x]
+  (cond (js/Number.isNaN x) nan-token
+        (pos? x)            pos-inf-token
+        :else               neg-inf-token))
+
 (defn canonical-str
   "Order-independent canonical string for a CLJS data value: map keys sorted
    lexicographically, vectors/seqs kept in order, set elements sorted by their
@@ -141,11 +173,10 @@
     ;; JSON.stringify collapses EVERY non-finite to "null", aliasing NaN/±Inf
     ;; with each other and with nil; emit distinct tokens so a score of -Inf
     ;; (an impossible-event log-prob) never content-hashes equal to nil.
+    ;; Same vocabulary the durable payload codec uses (`non-finite-token`).
     (number? x)  (if (js/isFinite x)
                    (js/JSON.stringify x)
-                   (cond (js/Number.isNaN x) "#nan"
-                         (pos? x)            "#+inf"
-                         :else               "#-inf"))
+                   (non-finite-token x))
     (boolean? x) (str x)
     (nil? x)     "null"
     :else        (js/JSON.stringify (clj->js x))))
@@ -339,6 +370,109 @@
    (.-c (.get (.query db "SELECT count(*) c FROM objects WHERE kind = ?") (name kind)))))
 
 ;; ===========================================================================
+;; Durable JSON payload codec — non-finite-SAFE (genmlx-94tu)
+;; ===========================================================================
+;;
+;; Every JSON payload this namespace writes goes through `encode-payload`, and
+;; every one it reads through `decode-payload`. They are exact inverses: a
+;; non-finite number becomes its token (see the vocabulary above), and a genuine
+;; string that could be MISTAKEN for a token is escaped by doubling its leading
+;; '#', so the transform is total and lossless in both directions.
+;;
+;; `assert-no-null-number!` is the second half of the defence, and the one that
+;; covers what this namespace cannot re-encode: payloads produced INSIDE
+;; `genmlx.serialize` (`save-choices` / `save-trace` stringify internally) and
+;; legacy rows written before this fix. A JSON `null` standing where a number
+;; must be is not recoverable, so we refuse LOUDLY at both the write and the read
+;; boundary rather than hand back a silent 0.0.
+
+;; The tag/untag pair used to live here as a private copy. It now lives in
+;; `genmlx.serialize` — the LOWER layer that owns the JSON codec — so there is
+;; one implementation and this namespace cannot drift from the payload format
+;; it reads (genmlx-94tu / genmlx-pif1). These aliases keep the call sites
+;; below unchanged.
+(def ^:private tag-non-finite   ser/tag-non-finite)
+(def ^:private untag-non-finite ser/untag-non-finite)
+
+(defn- mlx-leaf?
+  "Is this a serialized MLX leaf (`{:type \"scalar\"|\"array\" :value ..}`)?"
+  [m]
+  (and (map? m) (contains? #{"scalar" "array"} (:type m))))
+
+(def ^:private bare-number-keys
+  "Payload keys whose value is a BARE number rather than an MLX leaf (a 0-d
+   trace score in `genmlx-trace-v1`, a scalar weight). A null there is a nulled
+   non-finite, not a legitimate absent value — unlike `:retval` / `:args`, which
+   may genuinely be nil and are therefore NOT listed."
+  #{:score :weight "score" "weight"})
+
+(defn- null-in-value?
+  "Is `v` nil, or does it contain a nil anywhere (an MLX leaf `:value` is a
+   number or a nested vector of numbers — never nil)?"
+  [v]
+  (or (nil? v)
+      (and (sequential? v) (boolean (some null-in-value? v)))))
+
+(defn- find-null-number
+  "Path to the first JSON null standing where a NUMBER must be, or nil."
+  ([data] (find-null-number data []))
+  ([data path]
+   (cond
+     (mlx-leaf? data)
+     (when (null-in-value? (:value data)) (conj path :value))
+
+     (map? data)
+     (some (fn [[k v]]
+             (if (and (contains? bare-number-keys k) (nil? v))
+               (conj path k)
+               (find-null-number v (conj path k))))
+           data)
+
+     (sequential? data)
+     (some (fn [[i v]] (find-null-number v (conj path i)))
+           (map-indexed vector data))
+
+     :else nil)))
+
+(defn- assert-no-null-number!
+  "Throw if `data` (a PARSED payload) holds a JSON null where a number must be.
+   JSON.stringify maps NaN/±Inf to null and mx/array's Float32Array.from coerces
+   null to 0.0, so restoring such a payload would silently yield 0.0 — for an SMC
+   log-weight, turning an impossible particle into the best one."
+  [data key ctx]
+  (when-let [p (find-null-number data)]
+    (throw (ex-info (str "genmlx.memory: JSON null where a number must be, at path "
+                         (pr-str p) " of the " ctx " payload at key " (pr-str key)
+                         ". JSON.stringify nulls every NaN/±Inf and mx/array coerces"
+                         " null to 0.0, so this value is unrecoverable and would"
+                         " restore as a silent 0.0.")
+                    {:genmlx/error :null-number-in-payload
+                     :key key :context ctx :path p}))))
+
+(defn- assert-json-no-null-number!
+  "Same check against a JSON payload STRING. The `null` substring is a cheap gate
+   so the common (clean) payload is never re-parsed."
+  [json key ctx]
+  (when (str/includes? json "null")
+    (assert-no-null-number! (js->clj (js/JSON.parse json) :keywordize-keys true)
+                            key ctx))
+  json)
+
+(defn- encode-payload
+  "CLJS data -> non-finite-safe JSON payload string."
+  [data]
+  (js/JSON.stringify (clj->js (tag-non-finite data))))
+
+(defn- decode-payload
+  "Non-finite-safe JSON payload string -> CLJS data. Throws on an unrecoverable
+   null-number (a legacy row written before the tokens existed)."
+  [json key ctx]
+  (let [data (untag-non-finite
+               (js->clj (js/JSON.parse json) :keywordize-keys true))]
+    (assert-no-null-number! data key ctx)
+    data))
+
+;; ===========================================================================
 ;; Typed save / restore (composes genmlx.serialize)
 ;; ===========================================================================
 
@@ -354,17 +488,25 @@
    :collapsed trace (enumerate/exact): its choicemap is EMPTY, so re-generating
    from the stored choices cannot reproduce the collapsed score — persisting it
    would be a silent-empty-choices trap (consistent with `save-trace!`).
+   Also throws if the JSON `genmlx.serialize` produced nulled a non-finite choice
+   value (genmlx-94tu): this namespace does not own that stringify, so it refuses
+   to store an unrecoverable artifact rather than let it restore as a silent 0.0.
    Returns `key`."
   [store key trace & {:keys [created-at]}]
   (when (= :collapsed (tr/score-type trace))
     (throw (ex-info "genmlx.memory: cannot persist choices of a :collapsed trace (empty choicemap)"
                     {:genmlx/error :collapsed-trace :key key})))
-  (put! store key "choices" (ser/save-choices trace) nil (or created-at (now-ms))))
+  (put! store key "choices"
+        (assert-json-no-null-number! (ser/save-choices trace) key "choices")
+        nil (or created-at (now-ms))))
 
 (defn restore-choices
-  "Load the ChoiceMap stored at `key`."
+  "Load the ChoiceMap stored at `key`. Throws on a payload that nulled a
+   non-finite value rather than restoring it as a silent 0.0."
   [store key]
-  (ser/load-choices (:payload (require-row store key))))
+  (let [json (:payload (require-row store key))]
+    (assert-json-no-null-number! json key "choices")
+    (ser/load-choices json)))
 
 ;; --- full trace (caller supplies the gen-fn; :collapsed refused) -----------
 
@@ -372,23 +514,28 @@
   "Persist a full trace (kind \"trace\", with its score-type) under `key`.
    Throws on a :collapsed trace: enumerate/exact traces have an EMPTY choicemap
    and no recoverable choices, so persisting one would store a misleading
-   artifact (restore re-generates from choices). Returns `key`."
+   artifact (restore re-generates from choices). Also throws if the JSON
+   `genmlx.serialize` produced nulled a non-finite choice value or score
+   (genmlx-94tu). Returns `key`."
   [store key trace & {:keys [created-at]}]
   (let [st (tr/score-type trace)]
     (when (= :collapsed st)
       (throw (ex-info "genmlx.memory: cannot persist a :collapsed trace (empty choicemap, nothing to re-generate)"
                       {:genmlx/error :collapsed-trace :key key})))
-    (put! store key "trace" (ser/save-trace trace) st (or created-at (now-ms)))))
+    (put! store key "trace"
+          (assert-json-no-null-number! (ser/save-trace trace) key "trace")
+          st (or created-at (now-ms)))))
 
 (defn restore-trace
   "Reconstruct a full trace at `key` by re-generating from the saved choices and
    args with the caller-supplied `gen-fn` (gen-fns are never serialized). Refuses
-   a :collapsed row."
+   a :collapsed row, and a payload that nulled a non-finite value."
   [store key gen-fn]
   (let [{:keys [payload score-type]} (require-row store key)]
     (when (= :collapsed score-type)
       (throw (ex-info "genmlx.memory: stored trace is :collapsed and cannot be restored"
                       {:genmlx/error :collapsed-trace :key key})))
+    (assert-json-no-null-number! payload key "trace")
     (ser/load-trace gen-fn payload)))
 
 ;; --- particle set (VectorizedTrace; no serialize path exists upstream) ------
@@ -396,7 +543,10 @@
 (defn save-particles!
   "Persist a VectorizedTrace particle set (kind \"particles\") under `key`:
    the [N]-leaf choices plus the [N] score, weight, n-particles and args. The
-   gen-fn is NOT serialized (supplied on restore). Returns `key`."
+   gen-fn is NOT serialized (supplied on restore). Non-finite numbers are written
+   as tokens, NOT as JSON null (genmlx-94tu): an SMC `-Inf` log-weight must not
+   restore as 0.0, which logsumexp would read as the BEST particle. Returns
+   `key`."
   [store key vtrace & {:keys [created-at]}]
   (let [data {:format      "genmlx-particles-v1"
               :n-particles (:n-particles vtrace)
@@ -405,15 +555,16 @@
               :weight      (ser/value->data (:weight vtrace))
               :args        (mapv ser/value->data (:args vtrace))}]
     (put! store key "particles"
-          (js/JSON.stringify (clj->js data))
+          (encode-payload data)
           nil (or created-at (now-ms)))))
 
 (defn restore-particles
   "Reconstruct a VectorizedTrace at `key` with the caller-supplied `gen-fn`.
-   retval is not persisted (best-effort nil)."
+   retval is not persisted (best-effort nil). Non-finite scores/weights/choices
+   restore EXACTLY; a legacy payload that nulled one throws rather than silently
+   returning 0.0."
   [store key gen-fn]
-  (let [data    (js->clj (js/JSON.parse (:payload (require-row store key)))
-                         :keywordize-keys true)
+  (let [data    (decode-payload (:payload (require-row store key)) key "particles")
         choices (ser/data->choices (:choices data))
         score   (ser/data->value (:score data))
         weight  (ser/data->value (:weight data))
@@ -425,17 +576,20 @@
 (defn save-param-store!
   "Persist a learning parameter store `{:params {name -> MLX-array} :version n}`
    (kind \"param-store\") under `key`. Upserts — re-saving under the same key
-   OVERWRITES, the mutable-threaded-slot discipline. Returns `key`."
+   OVERWRITES, the mutable-threaded-slot discipline. Non-finite parameters are
+   written as tokens, not JSON null (genmlx-94tu). Returns `key`."
   [store key param-store & {:keys [created-at]}]
   (put! store key "param-store"
-        (js/JSON.stringify (clj->js (ser/value->data param-store)))
+        (encode-payload (ser/value->data param-store))
         nil (or created-at (now-ms))))
 
 (defn restore-param-store
-  "Load the parameter store stored at `key` (MLX arrays restored)."
+  "Load the parameter store stored at `key` (MLX arrays restored). Non-finite
+   parameters restore EXACTLY; a legacy payload that nulled one throws rather
+   than silently returning 0.0."
   [store key]
   (ser/data->value
-    (js->clj (js/JSON.parse (:payload (require-row store key))) :keywordize-keys true)))
+    (decode-payload (:payload (require-row store key)) key "param-store")))
 
 ;; --- pure-EDN values (ConceptMemory, experience log, skill library) --------
 
@@ -492,6 +646,9 @@
    value, not by name."
   [store kind payload & {:keys [score-type created-at]}]
   (let [key (content-hash-json payload)]
+    ;; genmlx-94tu: a nulled non-finite is doubly bad here — it corrupts the
+    ;; VALUE and collapses the content ADDRESS onto the nil-valued variant.
+    (assert-json-no-null-number! payload key (name kind))
     (put! store key (name kind) payload score-type (or created-at (now-ms)))
     key))
 

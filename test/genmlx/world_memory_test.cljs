@@ -389,4 +389,147 @@
           (is (= 1 n) "returns the value of f directly (no promise)")
           (is (number? n) "result is a plain value, not a promise"))))))
 
+;; ===========================================================================
+;; Non-finite values through the durable codec (genmlx-94tu)
+;; ===========================================================================
+;;
+;; POSITIVE oracles, not "nothing crashed". JSON.stringify maps every NaN/±Inf
+;; to null and mx/array's Float32Array.from coerces null back to 0.0, so the
+;; pre-fix behaviour was a SILENT, well-formed, deterministic wrong answer:
+;; a -Inf SMC log-weight ("impossible particle") restored as 0.0, which after
+;; logsumexp normalization is the single BEST particle. Every assertion below
+;; therefore pins the exact restored value, and the weight test additionally
+;; pins the DECISION that value drives (which particle wins the resample).
+
+(defn- exact-non-finite?
+  "Elementwise identity for a vector that may contain NaN/±Inf. `all-close?`
+   cannot be used: NaN compares false against itself and (- Inf Inf) is NaN."
+  [expected actual]
+  (and (= (count expected) (count actual))
+       (every? true?
+               (map (fn [e a]
+                      (if (js/Number.isNaN e) (js/Number.isNaN a) (= e a)))
+                    expected actual))))
+
+(deftest non-finite-particle-weight-survives-round-trip
+  (testing "a -Inf particle log-weight restores as -Inf, not as the best particle"
+    (let [model (dyn/auto-key (gen [] (trace :z (dist/gaussian 0 1))))
+          vt0   (dyn/vsimulate model [] 4 (h/deterministic-key 11))
+          ;; particle 0 is IMPOSSIBLE (-Inf), particle 2 is the true best.
+          w     [##-Inf -5.0 -1.0 -7.0]
+          vt    (assoc vt0 :weight (mx/array w))
+          store (mem/open-store ":memory:")]
+      (mem/save-particles! store "p/nonfinite" vt)
+      (let [rw (h/realize-vec (:weight (mem/restore-particles store "p/nonfinite" model)))]
+        (is (exact-non-finite? w rw)
+            (str "[N] weight round-trips EXACTLY, -Inf included (got " (pr-str rw) ")"))
+        (is (= ##-Inf (first rw))
+            "the impossible particle restores as -Inf, NOT 0.0")
+        ;; The decision the weight drives: argmax must stay particle 2. Pre-fix
+        ;; the -Inf became 0.0 and the DEAD particle won the resample.
+        (is (= 2 (apply max-key #(nth rw %) (range (count rw))))
+            "argmax of the restored weights is still particle 2, not the dead one"))
+      (mem/close-store! store))))
+
+(deftest non-finite-choice-value-and-score-survive-round-trip
+  (testing "NaN/±Inf in a choice leaf and in the [N] score round-trip exactly"
+    (let [model (dyn/auto-key (gen [] (trace :z (dist/gaussian 0 1))))
+          vt0   (dyn/vsimulate model [] 3 (h/deterministic-key 13))
+          zs    [##-Inf 2.5 ##Inf]
+          ss    [-1.0 ##-Inf ##NaN]
+          vt    (-> vt0
+                    (assoc :choices (cm/->Node {:z (cm/->Value (mx/array zs))}))
+                    (assoc :score (mx/array ss)))
+          store (mem/open-store ":memory:")]
+      (mem/save-particles! store "p/leaf" vt)
+      (let [rvt (mem/restore-particles store "p/leaf" model)
+            rz  (h/realize-vec (leaf (:choices rvt) :z))
+            rs  (h/realize-vec (:score rvt))]
+        (is (exact-non-finite? zs rz)
+            (str "choice value round-trips exactly (got " (pr-str rz) ")"))
+        (is (exact-non-finite? ss rs)
+            (str "trace score round-trips exactly (got " (pr-str rs) ")"))
+        (is (not-any? zero? rz) "no non-finite silently became 0.0"))
+      (mem/close-store! store))))
+
+(deftest non-finite-param-store-survives-round-trip
+  (testing "save-param-store!/restore-param-store preserve NaN/±Inf"
+    (let [store (mem/open-store ":memory:")
+          ps    {:params  {:a (mx/scalar ##-Inf)
+                           :b (mx/array [##Inf 1.0 ##NaN])}
+                 :lr      ##-Inf          ;; a BARE non-finite, not an MLX leaf
+                 :version 3}]
+      (mem/save-param-store! store "model/params-nf" ps)
+      (let [r (mem/restore-param-store store "model/params-nf")]
+        (is (= ##-Inf (h/realize (get-in r [:params :a])))
+            "scalar -Inf parameter restores as -Inf, not 0.0")
+        (is (exact-non-finite? [##Inf 1.0 ##NaN]
+                               (h/realize-vec (get-in r [:params :b])))
+            "array parameter with +Inf/NaN restores exactly")
+        (is (= ##-Inf (:lr r)) "bare non-finite scalar restores as -Inf")
+        (is (= 3 (:version r)) "finite neighbours unaffected"))
+      (mem/close-store! store))))
+
+(deftest payload-codec-is-lossless-on-hash-like-strings
+  (testing "a genuine string that LOOKS like a non-finite token survives"
+    ;; The tokens are ordinary JSON strings, so the codec must escape any real
+    ;; string that could be read back as one — otherwise the fix would trade a
+    ;; number corruption for a string corruption.
+    (let [store (mem/open-store ":memory:")
+          ps    {:params {} :version 0 :tag "#nan" :note "#-inf" :plain "nan"}]
+      (mem/save-param-store! store "model/strings" ps)
+      (let [r (mem/restore-param-store store "model/strings")]
+        (is (= "#nan" (:tag r)) "the literal string \"#nan\" is NOT decoded as NaN")
+        (is (= "#-inf" (:note r)) "the literal string \"#-inf\" is NOT decoded as -Inf")
+        (is (= "nan" (:plain r)) "an ordinary string is untouched"))
+      (mem/close-store! store))))
+
+(deftest nulled-non-finite-is-refused-never-silently-zeroed
+  (testing "a legacy payload with a JSON null where a number belongs THROWS"
+    ;; This is the pre-fix on-disk shape. Restoring it must fail loudly rather
+    ;; than hand back 0.0 — an unrecoverable value is not a zero.
+    (let [store  (mem/open-store ":memory:")
+          legacy (js/JSON.stringify
+                   (clj->js {:format "genmlx-particles-v1" :n-particles 2
+                             :choices {}
+                             :score  {:type "array" :value [-1 -2] :shape [2] :dtype "float32"}
+                             :weight {:type "array" :value [nil -2] :shape [2] :dtype "float32"}
+                             :args []}))]
+      (mem/put! store "p/legacy" "particles" legacy)
+      (is (thrown? js/Error (mem/restore-particles store "p/legacy" nil))
+          "restore-particles refuses a nulled non-finite")
+      (mem/close-store! store)))
+  (testing "save-choices! ROUND-TRIPS a non-finite choice value exactly"
+    ;; Was "refuses": genmlx.serialize's stringify was un-tokenized, so memory
+    ;; could only decline to persist a payload it knew was already lossy. The
+    ;; token codec now lives in genmlx.serialize (the lower layer that owns the
+    ;; JSON format), so the value survives and refusing would be wrong —
+    ;; a -Inf score is ROUTINE (any out-of-support observation makes one, and
+    ;; the genmlx-4x5w support guards make them strictly more common), so the
+    ;; codec must carry them, not reject them. This assertion is strictly
+    ;; stronger than the one it replaces: preserving the value implies not
+    ;; silently zeroing it, which is what genmlx-94tu was about.
+    (let [store (mem/open-store ":memory:")
+          trace {:choices (cm/->Node {:x (cm/->Value (mx/array [##-Inf 1.0 ##Inf]))})}]
+      (mem/save-choices! store "c/nf" trace)
+      (is (= 1 (mem/count-objects store)) "it was written")
+      (let [back (mem/restore-choices store "c/nf")
+            v    (mx/->clj (cm/get-value (cm/get-submap back :x)))]
+        (is (= ##-Inf (nth v 0)) "-Inf survives as -Inf, not 0.0")
+        (is (= 1.0    (nth v 1)) "the finite neighbour is untouched")
+        (is (= ##Inf  (nth v 2)) "+Inf survives as +Inf, not 0.0"))
+      (mem/close-store! store))))
+
+(deftest content-hash-vocabulary-is-shared-with-the-payload-codec
+  (testing "canonical-str still emits the #nan/#+inf/#-inf tokens"
+    ;; The payload codec now shares this vocabulary; pin it so a refactor of
+    ;; either side cannot silently fork the spelling.
+    (is (= "{\"a\":#-inf,\"b\":#+inf,\"c\":#nan}"
+           (mem/canonical-str {:a ##-Inf :b ##Inf :c ##NaN}))
+        "one vocabulary, three distinct tokens")
+    (is (not= (mem/content-hash {:w ##-Inf}) (mem/content-hash {:w nil}))
+        "-Inf and nil are distinct content addresses")
+    (is (not= (mem/content-hash {:w ##-Inf}) (mem/content-hash {:w ##Inf}))
+        "-Inf and +Inf are distinct content addresses")))
+
 (cljs.test/run-tests)
