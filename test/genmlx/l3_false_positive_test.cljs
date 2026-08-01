@@ -575,6 +575,196 @@
                (marginal-trace? (:trace r))))
 
 ;; ===========================================================================
+;; SECTION N — latent-dependent OBS NOISE: conjugacy must decline (genmlx-5ytq)
+;; ===========================================================================
+;;
+;; conjugacy/classify-dependency inspected ONLY the natural-parameter argument
+;; (:natural-param-idx, 0 for all seven families). When the eliminated latent
+;; ALSO appeared in the observation's noise argument, the pair was still
+;; detected and the closed form evaluated with sigma frozen at a point
+;; estimate — a wrong marginal likelihood published as :exact.
+;;
+;; Measured before the guard: weight -1.51551 (exactly log N(3; 2, 2), i.e.
+;; sigma pinned at the prior mean mu=2) against a true marginal of -1.79917
+;; (2e6-point trapezoid over the exact 1-D integral). 0.284 nats, tagged
+;; :marginal. The ORACLE below is that same independent quadrature.
+
+(println "\n== Section N: latent-dependent obs noise declines ==")
+
+(def cv-noise-model
+  ;; constant-coefficient-of-variation likelihood: sigma = 0.5 * mu
+  (gen []
+    (let [mu (trace :mu (dist/gaussian 2.0 1.0))]
+      (trace :y (dist/gaussian mu (mx/multiply 0.5 mu)))
+      mu)))
+
+(assert-true "cv-noise: no conjugate pair detected (latent in the sigma arg)"
+             (empty? (conj/detect-conjugate-pairs (:schema cv-noise-model))))
+
+(let [k (rng/fresh-key 41)
+      tr (gen-trace cv-noise-model (cmv {:y 3.0}) k)]
+  (assert-true "cv-noise: trace is :joint, not :marginal"
+               (not (marginal-trace? tr))))
+
+;; Same-key parity against the stripped handler path: the analytical route must
+;; not merely be relabelled, it must be GONE.
+(let [k (rng/fresh-key 42)]
+  (assert-close "cv-noise: weight equals the stripped handler path"
+                (gen-weight (strip-l3 cv-noise-model) (cmv {:y 3.0}) k)
+                (gen-weight cv-noise-model (cmv {:y 3.0}) k)
+                1e-6))
+
+;; The independent oracle: whatever we return, it must NOT be the frozen-sigma
+;; closed form (-1.51551), which is what the defect produced.
+(let [frozen-sigma-closed-form (norm-lpdf 3.0 2.0 (* 2.0 2.0))]
+  (assert-true "cv-noise: the frozen-sigma closed form is no longer returned"
+               (> (Math/abs (- (gen-weight cv-noise-model (cmv {:y 3.0}) (rng/fresh-key 43))
+                               frozen-sigma-closed-form))
+                  1e-4)))
+
+;; Control: the SAME family with a constant sigma must still be eliminated —
+;; this guard is false-negatives-only and must not cost a real conjugate pair.
+(def const-noise-model
+  (gen []
+    (let [mu (trace :mu (dist/gaussian 2.0 1.0))]
+      (trace :y (dist/gaussian mu 0.5))
+      mu)))
+
+(assert-true "control: constant sigma still detects a conjugate pair"
+             (seq (conj/detect-conjugate-pairs (:schema const-noise-model))))
+
+(let [k (rng/fresh-key 44)
+      tr (gen-trace const-noise-model (cmv {:y 3.0}) k)]
+  (assert-true "control: constant sigma still yields a :marginal trace"
+               (marginal-trace? tr))
+  ;; normal-normal marginal: y ~ N(mu0, sigma0^2 + sigma^2)
+  (assert-close "control: marginal matches the closed form"
+                (norm-lpdf 3.0 2.0 (+ (* 1.0 1.0) (* 0.5 0.5)))
+                (gen-weight const-noise-model (cmv {:y 3.0}) k)
+                1e-4))
+
+;; ===========================================================================
+;; SECTION O — joint affinity probed in >1 DIRECTION (genmlx-su6q)
+;; ===========================================================================
+;;
+;; probe-jointly-affine? validated a p-DIMENSIONAL affinity claim with two probe
+;; points that BOTH lay on the diagonal ray s·(1,…,1). A mean that is nonlinear
+;; OFF-diagonal but linear ALONG that ray was accepted, and the h recovered by
+;; 0/1 coordinate probing was then published as an exact design row.
+;;
+;; Two adversaries, each a POSITIVE oracle for one of the added directions:
+;;   a² − b²    quadratic terms cancel at every point of the diagonal
+;;              (the bean's example) → needs the alternating direction
+;;   a³b − ab³  = ab(a−b)(a+b): zero at every (s, s) AND every (s, −s)
+;;              → needs the distinct-magnitude pseudo-random direction
+;; Both are first shown to SATISFY the old diagonal-only test, so the section
+;; cannot pass by accident.
+
+(println "\n== Section O: off-diagonal nonlinearity declines ==")
+
+(def ^:private sq  (fn [x] (mx/multiply x x)))
+(def ^:private sc  mx/scalar)
+
+;; mean forms, as raw (env, args) fns — the same level Section 1 probes at.
+(def ^:private mean-diff-sq
+  (fn [env _] (mx/subtract (sq (get env :a)) (sq (get env :b)))))
+(def ^:private mean-quartic
+  (fn [env _] (let [a (get env :a) b (get env :b)]
+                (mx/subtract (mx/multiply (sq a) (mx/multiply a b))
+                             (mx/multiply (mx/multiply a b) (sq b))))))
+(def ^:private mean-affine2
+  (fn [env _] (mx/add (mx/subtract (mx/multiply (sc 2.0) (get env :a))
+                                   (mx/multiply (sc 3.0) (get env :b)))
+                      (sc 1.0))))
+(def ^:private mean-affine3
+  (fn [env _] (-> (mx/multiply (sc 1.0) (get env :a))
+                  (mx/add (mx/multiply (sc 2.0) (get env :b)))
+                  (mx/subtract (mx/multiply (sc 0.5) (get env :c)))
+                  (mx/add (sc 3.0)))))
+(def ^:private mean-affine1
+  (fn [env _] (mx/add (mx/multiply (sc 3.0) (get env :a)) (sc 1.0))))
+
+;; The OLD oracle, recomputed here host-side: mean(s·1) ?= c + s·Σh, s ∈ {1,2}.
+;; If an adversary failed THIS, the section would prove nothing about directions.
+(defn- old-diagonal-probe-accepts? [mean-fn latents]
+  (let [ev (fn [vals] (mx/item (mean-fn (zipmap latents (map sc vals)) nil)))
+        p  (count latents)
+        c  (ev (repeat p 0.0))
+        hs (mapv (fn [i] (- (ev (map #(if (= % i) 1.0 0.0) (range p))) c)) (range p))
+        sum-h (reduce + hs)]
+    (every? (fn [s] (< (js/Math.abs (- (ev (repeat p s)) (+ c (* s sum-h)))) 1e-5))
+            [1.0 2.0])))
+
+(assert-true "a²−b²: the OLD diagonal-only probe accepts it (this is why the bug existed)"
+             (old-diagonal-probe-accepts? mean-diff-sq [:a :b]))
+(assert-true "a³b−ab³: accepted by the diagonal AND by the alternating ray"
+             (and (old-diagonal-probe-accepts? mean-quartic [:a :b])
+                  ;; alternating: mean(s,−s) = 0 for all s, and h·(1,−1) = 0 too
+                  (let [ev (fn [a b] (mx/item (mean-quartic {:a (sc a) :b (sc b)} nil)))]
+                    (and (< (js/Math.abs (ev 1.0 -1.0)) 1e-6)
+                         (< (js/Math.abs (ev 2.0 -2.0)) 1e-6)))))
+
+;; The decision under test: does the block's latent handler commit (some?) or
+;; fall through to the ground-truth handler path (nil)?
+(let [mk-state (fn [] {:model-args [] :constraints (cmv {:y 2.0})
+                       :choices cm/EMPTY :score (mx/scalar 0.0)
+                       :weight (mx/scalar 0.0)})
+      fake-dist {:params {:mu (mx/scalar 0.0) :sigma (mx/scalar 1.0)}}
+      mk-block (fn [latents mean-fn]
+                 {:id latents :latents latents :p (count latents)
+                  :latent-index (into {} (map-indexed (fn [i a] [a i])) latents)
+                  :obs [{:addr :y :mean-fn mean-fn :sigma-fn (fn [_ _] (mx/scalar 1.0))}]
+                  :obs-addrs [:y] :latent-addrs latents
+                  :noise-latents #{} :all-addrs (into #{:y} latents)})
+      eliminates? (fn [latents mean-fn]
+                    (let [h (get (lg/make-lg-handlers (mk-block latents mean-fn))
+                                 (first latents))]
+                      (some? (h (mk-state) (first latents) fake-dist))))]
+
+  (assert-true "probe: a²−b² (diagonal-only cancellation) is DECLINED"
+               (not (eliminates? [:a :b] mean-diff-sq)))
+  (assert-true "probe: a³b−ab³ (both ±1 rays cancel) is DECLINED"
+               (not (eliminates? [:a :b] mean-quartic)))
+
+  ;; False-negatives-only: genuinely affine means must still be eliminated.
+  (assert-true "control: 2a−3b+1 still eliminates (p=2)"
+               (eliminates? [:a :b] mean-affine2))
+  (assert-true "control: a+2b−0.5c+3 still eliminates (p=3)"
+               (eliminates? [:a :b :c] mean-affine3))
+  (assert-true "control: 3a+1 still eliminates (p=1, alternating ray collapses)"
+               (eliminates? [:a] mean-affine1))
+
+  ;; The pseudo-random direction is SEEDED by the block id, never by entropy:
+  ;; repeated probes of the same block must give the same verdict, or a block
+  ;; would be eliminated in one particle and not the next.
+  (assert-true "probe verdicts are deterministic across repeated probes"
+               (and (= (repeatedly 3 #(eliminates? [:a :b] mean-quartic)) [false false false])
+                    (= (repeatedly 3 #(eliminates? [:a :b] mean-affine2)) [true true true]))))
+
+;; Whole-stack: the same mean written as a model. The static layer declines it
+;; too (mx/square is not affine), so no block is claimed and the weight is the
+;; plain joint — defense in depth, both layers must agree.
+(def diff-sq-model
+  (gen []
+    (let [a (trace :a (dist/gaussian 1.0 1.0))
+          b (trace :b (dist/gaussian 2.0 1.0))]
+      (trace :y (dist/gaussian (mx/subtract (mx/multiply a a) (mx/multiply b b)) 1.0))
+      a)))
+
+(assert-true "a²−b² model: no linear-Gaussian block claimed"
+             (empty? (:linear-gaussian-blocks (:schema diff-sq-model))))
+(let [k (rng/fresh-key 51)
+      obs (cmv {:y 2.0})
+      r (p/generate (dyn/with-key diff-sq-model k) [] obs)
+      tr (:trace r)
+      a (choice-val tr :a) b (choice-val tr :b)]
+  (assert-true "a²−b² model: trace NOT labeled :marginal" (not (marginal-trace? tr)))
+  (assert-close "a²−b² model: weight = joint p(y|a,b) from the trace values"
+                (norm-lpdf 2.0 (- (* a a) (* b b)) 1.0) (mx/item (:weight r)) TOL)
+  (assert-close "a²−b² model: weight matches the stripped handler path (same key)"
+                (gen-weight (strip-l3 diff-sq-model) obs k) (mx/item (:weight r)) TOL))
+
+;; ===========================================================================
 (println "\n==========================================")
 (println (str "  l3-false-positive: " @*pass* " passed, " @*fail* " failed"))
 (println "==========================================")

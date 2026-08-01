@@ -334,21 +334,82 @@
                           latents))]
     {:h h :c c}))
 
+(defn- probe-directions
+  "Deterministic probe directions for a p-latent block (genmlx-su6q).
+
+   Joint affinity is a p-DIMENSIONAL claim, so probing it along one line proves
+   nothing off that line. The original backstop used only the diagonal ray
+   s·(1,…,1), and a mean that is nonlinear off-diagonal but linear along that
+   ray was accepted: (mx/subtract (mx/square a) (mx/square b)) has its quadratic
+   terms cancel at every point of the diagonal, yet the h=[1,−1] recovered by
+   0/1 probing is not its design row (it has none). Three directions:
+
+     1. (1, 1, 1, …)     the diagonal ray — unchanged, so every block that
+                         passed before still meets the same test
+     2. (1, −1, 1, …)    alternating — a form that cancels ONLY on the diagonal
+                         (the a²−b² family) is exposed here
+     3. block-seeded pseudo-random, PAIRWISE-DISTINCT magnitudes |d_i| ∈ [1, 2)
+                         with pseudo-random signs — a residual that vanishes on
+                         BOTH ±1 lines (e.g. a³b − ab³, zero at every (s, ±s))
+                         survives here only where two coordinates share a
+                         magnitude, which distinctness rules out; the non-lattice
+                         magnitudes also break integer-valued coincidences
+
+   The pseudo-random direction is seeded from the block's latent-address vector
+   (an LCG over cljs' murmur hash of the address names), NOT from entropy: the
+   accept/decline decision must be identical across runs, hosts and particles —
+   a per-call random direction would make elimination flaky, and a block that is
+   eliminated in one particle and not the next produces incomparable weights.
+
+   Duplicate directions are dropped (at p=1 the alternating direction IS the
+   diagonal), so a 1-latent block costs 2 directions, not 3."
+  [latents]
+  (let [p (count latents)
+        ones (vec (repeat p 1.0))
+        alt  (mapv #(if (even? %) 1.0 -1.0) (range p))
+        rnd  (loop [i 0
+                    s (bit-or (bit-and (hash (mapv str latents)) 0x7fffffff) 1)
+                    acc []]
+               (if (= i p)
+                 acc
+                 ;; js/Math.imul keeps the multiply in exact 32-bit integer
+                 ;; arithmetic — a plain (* s 1103515245) exceeds 2^53 and would
+                 ;; lose the low bits that carry the state.
+                 (let [s'  (bit-and (+ (js/Math.imul s 1103515245) 12345) 0x7fffffff)
+                       ;; |d_i| = 1 + i/p + jitter, jitter < 1/(2p): strictly
+                       ;; increasing in i, so no two coordinates share a magnitude.
+                       jit (/ (mod (bit-shift-right s' 8) 64) (* 128.0 p))
+                       mag (+ 1.0 (/ i p) jit)
+                       sgn (if (zero? (bit-and (bit-shift-right s' 20) 1)) 1.0 -1.0)]
+                   (recur (inc i) s' (conj acc (* sgn mag))))))]
+    (vec (distinct [ones alt rnd]))))
+
 (defn- probe-jointly-affine?
-  "Runtime backstop for the static affine classification (genmlx-b470).
+  "Runtime backstop for the static affine classification (genmlx-b470, su6q).
 
    The 0/1 probing in obs-design recovers h and c correctly ONLY when the mean
    form is JOINTLY affine in the block latents. Bilinear means like
    (mx/multiply slope intercept) classify affine PER-PAIR (each latent looks
    constant while the other is analyzed) yet probe to h=0, c=0 — a silently
-   wrong exact LL. Verify the recovered design reproduces the mean form at two
-   joint probe points:  mean(s,...,s) ?= c + s·Σh  for s ∈ {1, 2}
-   (s=2 additionally catches pure-power forms like β² that pass s=1).
-   Tolerance is relative, float32-scaled. Any evaluation failure declines.
+   wrong exact LL. Verify the recovered design reproduces the mean form at
+   several joint probe points:
 
-   The mx/item here forces a GPU eval inside a handler transition — acceptable
-   for the same reason as mvn-well-conditioned?: the analytical path is
-   scalar-only and dispatcher-gated against mx/in-grad?.
+     mean(s·d) ?= c + s·(h·d)   for every d in probe-directions, s ∈ {1, 2}
+
+   (s=2 catches pure-power forms like β² that happen to agree at s=1; the extra
+   DIRECTIONS catch forms that agree along the diagonal at every s — genmlx-su6q.)
+   Tolerance is relative, float32-scaled. Any evaluation failure declines, and
+   declining is only ever a performance loss: the block falls through to the
+   handler path, which is ground truth.
+
+   Cost (against the budget this docstring already carried): the probe forces a
+   GPU eval inside a handler transition — acceptable for the same reason as
+   mvn-well-conditioned?, since the analytical path is scalar-only and
+   dispatcher-gated against mx/in-grad?. Adding directions did NOT multiply that
+   budget: the old code did 4 separate mx/item calls (2 checks × lhs+rhs); the
+   new code builds c, h and all 4-6 probe values as one lazy graph and reads
+   them back with a SINGLE mx/->clj, so 2-3x the probe points cost 1 GPU
+   round-trip instead of 4. The h·d dot products are then host-side float64.
 
    The design recovery itself (obs-design) runs INSIDE the try: a mean form
    whose evaluation fails (e.g. a hidden non-latent trace reference leaving
@@ -356,15 +417,32 @@
   [mean-fn latents args]
   (try
     (let [{:keys [h c]} (obs-design mean-fn latents args)
-          sum-h (mx/sum h)
-          check (fn [s]
-                  (let [probe-env (zipmap latents (repeat (mx/scalar s)))
-                        lhs (mx/item (coerce-scalar (mean-fn probe-env args)))
-                        rhs (mx/item (mx/add c (mx/multiply (mx/scalar s) sum-h)))]
-                    (and (js/isFinite lhs) (js/isFinite rhs)
-                         (<= (js/Math.abs (- lhs rhs))
-                             (* 1e-4 (max 1.0 (js/Math.abs lhs) (js/Math.abs rhs)))))))]
-      (and (check 1.0) (check 2.0)))
+          p      (count latents)
+          points (vec (for [d (probe-directions latents), s [1.0 2.0]]
+                        (mapv #(* s %) d)))
+          lhs-arrs (mapv (fn [pt]
+                           (mx/reshape
+                            (coerce-scalar
+                             (mean-fn (zipmap latents (map mx/scalar pt)) args))
+                            [1]))
+                         points)
+          ;; ONE eval + ONE host read for the whole probe.
+          flat (mx/->clj (mx/concatenate
+                          (into [(mx/reshape c [1]) (mx/reshape h [p])] lhs-arrs)))
+          cv   (nth flat 0)
+          hv   (subvec flat 1 (inc p))
+          lhss (subvec flat (inc p))]
+      (and (js/isFinite cv)
+           (every? js/isFinite hv)
+           (= (count lhss) (count points))
+           (every? identity
+                   (map (fn [pt lhs]
+                          (let [rhs (+ cv (reduce + (map * hv pt)))]
+                            (and (js/isFinite lhs) (js/isFinite rhs)
+                                 (<= (js/Math.abs (- lhs rhs))
+                                     (* 1e-4 (max 1.0 (js/Math.abs lhs)
+                                                  (js/Math.abs rhs)))))))
+                        points lhss))))
     (catch :default _ false)))
 
 (defn make-lg-handlers

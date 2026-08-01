@@ -11,6 +11,42 @@
   (:require [clojure.set :as set]))
 
 ;; =========================================================================
+;; Source-form symbol reference (shared by the Level 3 static analyzers)
+;; =========================================================================
+
+(defn form-symbols
+  "Every symbol appearing anywhere in `form`, recursively.
+
+   Traverses seqs, vectors, sets and both halves of map entries. Set literals
+   ARE traversed here (unlike linear_gaussian's private copy): for the
+   reference guards below, missing a reference is the unsafe direction."
+  [form]
+  (cond
+    (symbol? form) #{form}
+    (map? form)    (into #{} (mapcat form-symbols) (concat (keys form) (vals form)))
+    (or (seq? form) (vector? form) (set? form))
+    (into #{} (mapcat form-symbols) form)
+    :else #{}))
+
+(defn references-addr?
+  "Does `form` reference the trace address `addr`?
+
+   `aliases` is the schema's `:arg-aliases` provenance map (symbol -> the
+   trace address it was bound from), or nil for hand-built schemas. When a
+   symbol appears in that map the map is authoritative — it distinguishes a
+   direct binding from a rebinding that merely reuses the name (genmlx-1thx).
+   A symbol absent from the map falls back to a NAME match, which can only
+   over-report; over-reporting a reference makes a caller decline, and
+   declining is always the safe direction for an analytical fast path."
+  [form addr aliases]
+  (boolean
+    (some (fn [s]
+            (if (contains? aliases s)
+              (= addr (get aliases s))
+              (= (name s) (name addr))))
+          (form-symbols form))))
+
+;; =========================================================================
 ;; Affine result constructors
 ;; =========================================================================
 

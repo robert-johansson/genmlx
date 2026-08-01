@@ -137,8 +137,39 @@
         direct-binding? (if (contains? obs-site :arg-aliases)
                           (and (symbol? natural-arg)
                                (= prior-addr (get (:arg-aliases obs-site) natural-arg)))
-                          (symbol-resolves-to-addr? natural-arg prior-addr))]
+                          (symbol-resolves-to-addr? natural-arg prior-addr))
+        ;; The closed form is valid ONLY when the eliminated latent enters the
+        ;; likelihood through the NATURAL parameter. If it also appears in any
+        ;; OTHER dist-arg — the observation's noise/scale/covariance — the
+        ;; conjugate update silently freezes that argument at a point estimate
+        ;; and reports the result as exact.
+        ;;
+        ;; Measured 2026-08-01 (genmlx-5ytq), before this guard:
+        ;;   (gen [] (let [mu (trace :mu (dist/gaussian 2 1))]
+        ;;             (trace :y (dist/gaussian mu (mx/multiply 0.5 mu)))))
+        ;;   with {:y 3.0} returned weight -1.5155 — exactly log N(3; 2, 2),
+        ;;   i.e. sigma pinned at the prior mean — against a true marginal of
+        ;;   -1.7992. The trace was tagged :marginal and published as :log-ml.
+        ;;
+        ;; No family in conjugacy-table has the latent legitimately outside
+        ;; :natural-param-idx (all seven are idx 0, and their remaining args
+        ;; are the KNOWN noise/cov), so this is false-negatives-only: a
+        ;; declined pair falls through to the handler path, which is ground
+        ;; truth. This is the scalar :direct sibling of the check
+        ;; `sigma-block-free?` already applies on the linear-Gaussian block
+        ;; path (genmlx-4q9d) and the latent-DEPENDENT sibling of the
+        ;; [T]-SHAPED sigma decline (genmlx-symr).
+        latent-in-other-arg?
+        (boolean
+          (some (fn [[i arg]]
+                  (and (not= i natural-idx)
+                       (affine/references-addr? arg prior-addr
+                                                (:arg-aliases obs-site))))
+                (map-indexed vector dist-args)))]
     (cond
+      latent-in-other-arg?
+      {:type :nonlinear :reason :latent-in-non-natural-arg}
+
       ;; Dirichlet–Categorical is conjugate ONLY through the log link
       ;; (dist/categorical (mx/log theta)). Bare (dist/categorical theta) is raw
       ;; logit space and NOT conjugate to a Dirichlet prior — its marginal
