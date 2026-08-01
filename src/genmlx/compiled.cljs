@@ -638,12 +638,19 @@
                  (mx/where (mx/less noise p) ONE ZERO))
     ;; xlogy guards ported from dist.cljs (genmlx-b210): without them p=0,v=0
     ;; gives 0 * -Inf = NaN where the handler gives 0.
+    ;; Support guard ported verbatim from dist.cljs (genmlx-4x5w): the xlogy
+    ;; form extrapolates smoothly off {0,1}, so v=0.5 scored a finite -0.78 and
+    ;; v=-1 scored a POSITIVE +0.49 where the handler gives -Inf. The inner lp
+    ;; expression and its op order are unchanged, so in-support results are
+    ;; bit-identical to both the previous compiled path and the handler.
     :log-prob (fn [v p]
                 (let [log-p (mx/log p)
-                      log-1-p (mx/log (mx/subtract ONE p))]
-                  (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
-                          (mx/where (mx/equal v ONE) ZERO
-                                    (mx/multiply (mx/subtract ONE v) log-1-p)))))}
+                      log-1-p (mx/log (mx/subtract ONE p))
+                      in-support (mx/maximum (mx/equal v ZERO) (mx/equal v ONE))
+                      lp (mx/add (mx/where (mx/equal v ZERO) ZERO (mx/multiply v log-p))
+                                 (mx/where (mx/equal v ONE) ZERO
+                                           (mx/multiply (mx/subtract ONE v) log-1-p)))]
+                  (mx/where in-support lp NEG-INF)))}
 
    :exponential
    {:noise-fn (fn [key] (rng/uniform key []))
@@ -661,12 +668,23 @@
    {:noise-fn (fn [key] (rng/normal key []))
     :transform (fn [noise mu sigma]
                  (mx/exp (mx/add mu (mx/multiply sigma noise))))
+    ;; Support guard ported verbatim from dist.cljs (genmlx-4x5w): at v<=0
+    ;; (mx/log v) is NaN, so the compiled path returned NaN where the handler
+    ;; returns -Inf — and NaN poisons a whole SMC population's logsumexp, while
+    ;; -Inf only kills one particle. The summand order is dist.cljs's (log-v
+    ;; FIRST), not the old compiled order: measured at v=1e-6, mu=0.3, sigma=2
+    ;; the two orders differ by one float32 ulp (-12.702530860900879 vs
+    ;; -12.702531814575195) and the dist.cljs order is the one the handler
+    ;; produces, so this makes in-support results bit-identical to the handler.
     :log-prob (fn [v mu sigma]
                 (let [log-v (mx/log v)
-                      z (mx/divide (mx/subtract log-v mu) sigma)]
-                  (mx/negative
-                   (mx/add LOG-2PI-HALF (mx/log sigma) log-v
-                           (mx/multiply HALF (mx/square z))))))}
+                      z (mx/divide (mx/subtract log-v mu) sigma)
+                      lp (mx/negative
+                          (mx/add log-v
+                                  LOG-2PI-HALF
+                                  (mx/log sigma)
+                                  (mx/multiply HALF (mx/square z))))]
+                  (mx/where (mx/greater v ZERO) lp NEG-INF)))}
 
    :delta
    {:noise-fn nil ;; no randomness

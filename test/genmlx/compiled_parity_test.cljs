@@ -12,6 +12,8 @@
    6. M4 requires a compilable return expression (no retval-nil traces)
    7. compiled regenerate resamples iid-gaussian (was: Delta, zero weight)
    8. closed-over vars deref per call (no stale baked values)
+   9. noise-transform registry seam: EVERY family's out-of-support log-prob
+      matches the handler, and in-support values are bit-identical
 
    Handler path (strip-compiled / stripped schema) is ground truth; numeric
    oracles are computed host-side.
@@ -386,6 +388,175 @@
                                    (:choices (p/simulate drift-model [])) :x)))]
     (assert-true "drift: re-def'd var honored on next call (x ~ 5, was stale 0)"
                  (< (js/Math.abs (- x1 5.0)) 1.0))))
+
+;; ===========================================================================
+;; SECTION 9 — noise-transform registry is a CHECKED seam (genmlx-4x5w)
+;; ===========================================================================
+;;
+;; compiled.cljs's noise-transform registry is a second copy of dist.cljs's
+;; log-prob math. Two of its nine entries had silently drifted out of
+;; support-guard agreement (measured 2026-08-01, x86_64/sm_120):
+;;
+;;   bernoulli p=0.3 v=0.5  handler -Inf   compiled -0.780  (FINITE)
+;;   bernoulli p=0.3 v=-1   handler -Inf   compiled +0.491  (POSITIVE!)
+;;   log-normal      v<=0   handler -Inf   compiled NaN
+;;
+;; -Inf kills one particle; NaN poisons a whole SMC population's logsumexp.
+;; These rows cover EVERY registry family — including the seven that were
+;; correct — so the next drift is caught automatically instead of by audit.
+;;
+;; The comparator below treats NaN as a FAILURE on either side, deliberately
+;; unlike pef.cljs:523 which defines NaN == NaN as path AGREEMENT.
+
+(println "\n== Section 9: noise-transform registry vs handler (all families) ==")
+
+(defn assert-parity
+  "compiled log-prob must equal the handler's. NaN on EITHER side is a failure,
+   even if both are NaN — 'both paths blew up the same way' is not parity."
+  ([desc h c] (assert-parity desc h c 1e-6))
+  ([desc h c tol]
+   (cond
+     (js/Number.isNaN c)
+     (do (vswap! *fail* inc)
+         (println (str "  FAIL: " desc " — compiled is NaN (handler=" h ")")))
+     (js/Number.isNaN h)
+     (do (vswap! *fail* inc)
+         (println (str "  FAIL: " desc " — handler is NaN (compiled=" c ")")))
+     (or (= h c)
+         (and (js/isFinite h) (js/isFinite c) (<= (js/Math.abs (- h c)) tol)))
+     (do (vswap! *pass* inc) (println (str "  PASS: " desc " (h=" h " c=" c ")")))
+     :else
+     (do (vswap! *fail* inc)
+         (println (str "  FAIL: " desc " — handler=" h " compiled=" c))))))
+
+(defn assert-bit-identical [desc h c]
+  (if (and (not (js/Number.isNaN h)) (= h c))
+    (do (vswap! *pass* inc) (println (str "  PASS: " desc " (" h ")")))
+    (do (vswap! *fail* inc)
+        (println (str "  FAIL: " desc " — handler=" h " compiled=" c
+                      " (not bit-identical)")))))
+
+(defn nt-lp
+  "The registry's :log-prob for a dist-type (the compiled path's math)."
+  [dist-type]
+  (:log-prob (get compiled/noise-transforms-full dist-type)))
+
+(defn h-lp
+  "Handler ground truth: dc/dist-log-prob on the real Distribution."
+  [d v]
+  (mx/item (dc/dist-log-prob d v)))
+
+(defn c-lp
+  "Compiled ground truth: the registry entry, same value + dist-args."
+  [dist-type v dist-args]
+  (mx/item (apply (nt-lp dist-type) v dist-args)))
+
+(def S mx/scalar)
+(defn A [xs] (mx/array (clj->js xs)))
+
+;; --- 1/9 gaussian: unbounded support; pin agreement at overflow extremes ---
+(doseq [v [1e30 -1e30 0.0]]
+  (assert-parity (str "gaussian(0,1) lp(" v ")")
+                 (h-lp (dist/gaussian (S 0.0) (S 1.0)) (S v))
+                 (c-lp :gaussian (S v) [(S 0.0) (S 1.0)])))
+
+;; --- 2/9 uniform: out of [lo,hi] and both inclusive boundaries ---
+(doseq [v [-1.0 2.0 0.0 1.0 0.5]]
+  (assert-parity (str "uniform(0,1) lp(" v ")")
+                 (h-lp (dist/uniform (S 0.0) (S 1.0)) (S v))
+                 (c-lp :uniform (S v) [(S 0.0) (S 1.0)])))
+
+;; --- 3/9 bernoulli: v off {0,1} — the drift (was finite / POSITIVE) --------
+(doseq [[p v] [[0.3 0.5] [0.3 2.0] [0.3 -1.0] [0.7 0.25]
+               [0.0 1.0] [1.0 0.0] [0.0 0.0] [1.0 1.0] [0.3 0.0] [0.3 1.0]]]
+  (assert-parity (str "bernoulli(" p ") lp(" v ")")
+                 (h-lp (dist/bernoulli (S p)) (S v))
+                 (c-lp :bernoulli (S v) [(S p)])))
+
+;; the :flip alias must resolve to the SAME guarded entry
+(assert-parity "flip(0.3) lp(0.5) via :flip alias"
+               (h-lp (dist/flip (S 0.3)) (S 0.5))
+               (c-lp :flip (S 0.5) [(S 0.3)]))
+
+;; --- 4/9 exponential: v<0 out of support, v=0 boundary --------------------
+(doseq [v [-1.0 0.0 1.5]]
+  (assert-parity (str "exponential(2) lp(" v ")")
+                 (h-lp (dist/exponential (S 2.0)) (S v))
+                 (c-lp :exponential (S v) [(S 2.0)])))
+
+;; --- 5/9 log-normal: v<=0 — the drift (was NaN, poisons logsumexp) --------
+(doseq [v [0.0 -1.0 -1e-9]]
+  (assert-parity (str "log-normal(0,1) lp(" v ") must be -Inf, not NaN")
+                 (h-lp (dist/log-normal (S 0.0) (S 1.0)) (S v))
+                 (c-lp :log-normal (S v) [(S 0.0) (S 1.0)])))
+
+;; --- 6/9 delta: point-mass mismatch, scalar and joint vector --------------
+(assert-parity "delta(1) lp(2)"
+               (h-lp (dist/delta (S 1.0)) (S 2.0))
+               (c-lp :delta (S 2.0) [(S 1.0)]))
+(assert-parity "delta([1 2 3]) lp([1 2 4]) — joint -Inf on one mismatch"
+               (h-lp (dist/delta (A [1.0 2.0 3.0])) (A [1.0 2.0 4.0]))
+               (c-lp :delta (A [1.0 2.0 4.0]) [(A [1.0 2.0 3.0])]))
+(assert-parity "delta([1 2 3]) lp([1 2 3]) — exact match is 0"
+               (h-lp (dist/delta (A [1.0 2.0 3.0])) (A [1.0 2.0 3.0]))
+               (c-lp :delta (A [1.0 2.0 3.0]) [(A [1.0 2.0 3.0])]))
+
+;; --- 7/9 laplace: unbounded; extremes must not diverge --------------------
+(doseq [v [1e30 -1e30 0.5]]
+  (assert-parity (str "laplace(0,1) lp(" v ")")
+                 (h-lp (dist/laplace (S 0.0) (S 1.0)) (S v))
+                 (c-lp :laplace (S v) [(S 0.0) (S 1.0)])
+                 1e24))                       ;; |lp| ~ 1e30 here: relative tol
+
+;; --- 8/9 cauchy: unbounded; extremes must not diverge ---------------------
+(doseq [v [1e30 -1e30 0.5]]
+  (assert-parity (str "cauchy(0,1) lp(" v ")")
+                 (h-lp (dist/cauchy (S 0.0) (S 1.0)) (S v))
+                 (c-lp :cauchy (S v) [(S 0.0) (S 1.0)])))
+
+;; --- 9/9 iid-gaussian: joint over the event axis --------------------------
+(doseq [vs [[1e30 0.0 -1e30] [0.1 0.2 0.3]]]
+  (assert-parity (str "iid-gaussian(0,1,3) lp(" vs ")")
+                 (h-lp (dist/iid-gaussian (S 0.0) (S 1.0) 3) (A vs))
+                 (c-lp :iid-gaussian (A vs) [(S 0.0) (S 1.0) 3])))
+
+;; --- in-support results must be BIT-identical, not merely close -----------
+;; The support guard must be a pure mx/where wrapper: it may not perturb the
+;; in-support expression by even one ulp. log-normal at v=1e-6 is the sentinel
+;; — the pre-fix compiled summand order gave -12.702530860900879 where the
+;; handler gives -12.702531814575195 (one float32 ulp apart).
+(doseq [[mu sg v] [[0.3 2.0 1e-6] [0.3 2.0 100.0] [0.0 1.0 1.5]
+                   [-1.0 0.5 2.25] [0.0 1.0 0.5]]]
+  (assert-bit-identical (str "log-normal(" mu "," sg ") lp(" v ") bit-identical")
+                        (h-lp (dist/log-normal (S mu) (S sg)) (S v))
+                        (c-lp :log-normal (S v) [(S mu) (S sg)])))
+(doseq [[p v] [[0.3 0.0] [0.3 1.0] [0.7 0.0] [0.7 1.0] [0.0 0.0] [1.0 1.0]]]
+  (assert-bit-identical (str "bernoulli(" p ") lp(" v ") bit-identical")
+                        (h-lp (dist/bernoulli (S p)) (S v))
+                        (c-lp :bernoulli (S v) [(S p)])))
+
+;; --- model level: compiled assess vs strip-compiled (the real seam) -------
+(println "\n-- Section 9b: model-level assess, compiled vs strip-compiled --")
+
+(def ln-model (dyn/auto-key (gen [] (trace :x (dist/log-normal 0.0 1.0)))))
+
+(assert-true "log-normal model: compiled-assess attached"
+             (some? (:compiled-assess (:schema ln-model))))
+
+(doseq [v [-1.0 0.0 1.5]]
+  (let [choices (cmv {:x v})
+        w-c (mx/item (:weight (p/assess ln-model [] choices)))
+        w-h (mx/item (:weight (p/assess (dyn/auto-key (gfi/strip-compiled ln-model))
+                                        [] choices)))]
+    (assert-parity (str "ln-model assess x=" v ": compiled = handler") w-h w-c)))
+
+(doseq [v [0.5 2.0 -1.0 0.0 1.0]]
+  (let [choices (cmv {:b v})
+        w-c (mx/item (:weight (p/assess bern-model [0.3] choices)))
+        w-h (mx/item (:weight (p/assess (dyn/auto-key (gfi/strip-compiled bern-model))
+                                        [0.3] choices)))]
+    (assert-parity (str "bern-model assess p=0.3 b=" v ": compiled = handler")
+                   w-h w-c)))
 
 ;; ===========================================================================
 (println "\n==========================================")
