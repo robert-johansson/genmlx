@@ -129,19 +129,33 @@ export PATH="$HOME/.local/node/bin:$HOME/.bun/bin:$PATH"
 
 `GLIBC_TUNABLES`: on Thor, omitting it makes every suite that loads `@genmlx/core` die instantly
 with *"cannot allocate memory in static TLS block"* — the runner reports ~all files FAILing in 1s,
-which looks catastrophic and is pure harness error. Root cause is mimalloc's TLS block. **Unknown
-whether x86_64 needs it.** Try without first; if you see that error, add it. Use `8192`, not a
+which looks catastrophic and is pure harness error. Root cause is mimalloc's TLS block.
+**x86_64 DOES need it — answered 2026-08-01.** A bare `node -e "require('@genmlx/core')"` on the
+RTX box dies without it; with `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=8192` it loads and
+reports its exports. So set it on every run here too, exactly as on Thor. Use `8192`, not a
 larger value — 262144 causes `pthread_create` EINVAL.
 
 ### Verify the addon before trusting any test result
 
 ```bash
 realpath node_modules/@genmlx/core        # must point into mlx-node/packages/genmlx-core
-node -e "const m=require('./mlx-node/packages/genmlx-core');
-         const k=Object.keys(m);
-         console.log('functions:',k.filter(x=>typeof m[x]==='function').length,
-                     'objects:',k.filter(x=>typeof m[x]!=='function').length)"
-# expect: functions: 227  objects: 6
+
+# Use BUN — it is the runtime the battery actually runs under, so it is the
+# surface that matters. (Verified 2026-08-01: bun and node expose a
+# byte-identical function list here, 237/6 both, so this particular check is
+# runtime-independent. Do not assume that for anything else — the two have
+# different NAPI implementations.)
+GLIBC_TUNABLES=glibc.rtld.optional_static_tls=8192 bun -e \
+  "const m=require('./mlx-node/packages/genmlx-core');
+   const k=Object.keys(m);
+   console.log('functions:',k.filter(x=>typeof m[x]==='function').length,
+               'objects:',k.filter(x=>typeof m[x]!=='function').length)"
+# expect: functions: 237  objects: 6      <- 237, measured 2026-08-01 (was 227 when this
+#                                            doc was written; the surface grew). The membrane
+#                                            COVERAGE MATRIX is the authority, not this number:
+#                                            membrane_coverage_test partitions every export into
+#                                            wrapped + intentional-omissions, so it names exactly
+#                                            what moved. See docs/membrane-coverage.md.
 ```
 
 > **`Object.keys(...).length` is 233, not 227.** The membrane matrix pins *function* exports;
