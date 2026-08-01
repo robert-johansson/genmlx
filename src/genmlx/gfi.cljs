@@ -1661,6 +1661,57 @@
                    m (/ (reduce + samples) (count samples))]
                (approx= m (/ 24.0 13.0) 0.1)))}
 
+   {:name :encapsulated-regenerate-divides-proposal
+    :from "[T] §4.5 + §2.3 regenerate — the internal proposal ratio is divided out"
+    :theorem "regenerate on a SELECTED encapsulated address proposes v' from the
+              internal proposal q, so its weight must be
+                (log xi' - log xi) - (log q(v') - log q(v)),
+              not the bare estimator ratio. Two independent witnesses: (a) a
+              DEGENERATE estimator whose xi is the exact density q collapses to
+              the ordinary exact-density law weight = 0 EXACTLY; (b) on the
+              stochastic mixture estimator the weight equals the recomposed
+              formula with log q taken from a hand-derived closed form. Dropping
+              the q ratio returns log p(v')-log p(v) in case (a) and makes MH on
+              the address target ~p(v)^2 (genmlx-evab)."
+    :tags #{:encapsulated :inference}
+    :check (fn [_]
+             (let [;; (a) degenerate estimator: xi = q = N(0,1), omega ignored.
+                   log-q (fn [v] (mx/subtract
+                                  (mx/scalar (* -0.5 (js/Math.log (* 2 js/Math.PI))))
+                                  (mx/multiply (mx/scalar 0.5) (mx/square v))))
+                   degen (enc/encapsulated
+                          {:addr :v
+                           :sample-value (fn [k _args] (rng/normal k []))
+                           :sample-omega (fn [_k _args _v] (mx/scalar 0.0))
+                           :log-density-estimate (fn [_args v _om] (log-q v))
+                           :log-proposal-density (fn [_args v] (log-q v))})
+                   t0 (p/simulate (dyn/with-key degen (rng/fresh-key 913)) [])
+                   {t1 :trace w0 :weight}
+                   (p/regenerate (dyn/with-key degen (rng/fresh-key 914))
+                                 t0 (sel/select :v))
+                   moved? (not= (choice-num (:choices t0) :v)
+                                (choice-num (:choices t1) :v))
+                   ;; (b) stochastic mixture estimator vs the hand-derived q.
+                   wts [0.3 0.5 0.2] mus [-2 0 3] sgs [1 0.5 2]
+                   wsum (reduce + wts)
+                   o-logq (fn [y] (js/Math.log
+                                   (reduce + (map (fn [wk m s]
+                                                    (* (/ wk wsum)
+                                                       (js/Math.exp (log-gauss y m s))))
+                                                  wts mus sgs))))
+                   {gf :gf} (enc/mixture-density {:weights wts :means mus
+                                                  :sigmas sgs :k 8})
+                   s0 (p/simulate (dyn/with-key gf (rng/fresh-key 915)) [])
+                   {s1 :trace w1 :weight}
+                   (p/regenerate (dyn/with-key gf (rng/fresh-key 916))
+                                 s0 (sel/select :y))
+                   expect (- (- (ev (:score s1)) (ev (:score s0)))
+                             (- (o-logq (choice-num (:choices s1) :y))
+                                (o-logq (choice-num (:choices s0) :y))))]
+               (and moved?
+                    (approx= (ev w0) 0.0 1e-5)
+                    (approx= (ev w1) expect 1e-4))))}
+
    ;; ===================================================================
    ;; WELL-FORMEDNESS laws [T] §2.2.1 (DML restrictions)
    ;; ===================================================================

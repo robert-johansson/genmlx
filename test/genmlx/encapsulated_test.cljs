@@ -194,9 +194,21 @@
         (is (< (js/Math.abs (- (it weight) (it (:score trace)))) 1e-6)
             "generate weight equals stored score")
         (is (some? (:omega trace)) "generate stores omega")))
-    (testing "generate empty constraints == simulate, weight 0"
-      (let [{:keys [weight]} (p/generate (dyn/with-key gf (rng/fresh-key 12)) [theta] cm/EMPTY)]
-        (is (= 0.0 (it weight)) "unconstrained generate has weight 0")))
+    (testing "generate empty constraints: weight = log xi - log q(v)  (genmlx-evab)"
+      ;; NOT 0. The value is drawn from the internal proposal q, and the trace's
+      ;; score is an ESTIMATE xi != q(v), so generate's score/weight tie
+      ;; (score - weight = log q(what was proposed)) makes the weight the
+      ;; estimator/proposal ratio. Oracle: q for marginalized-gaussian is the
+      ;; hand-derived convolution marginal o-conv-logp (tau=1, sigma=1 => S=sqrt 2).
+      (let [{:keys [trace weight]} (p/generate (dyn/with-key gf (rng/fresh-key 12))
+                                               [theta] cm/EMPTY)
+            v (mx/realize-clj (cm/get-value (cm/get-submap (:choices trace) :y)))
+            log-q (o-conv-logp v (it theta) 1.0 1.0)]
+        (is (< (js/Math.abs (- (it weight) (- (it (:score trace)) log-q))) 1e-4)
+            (str "weight " (it weight) " = log xi " (it (:score trace))
+                 " - log q(v) " log-q))
+        (is (not= 0.0 (it weight))
+            "a genuine estimator makes xi != q(v), so the weight is NOT 0")))
     (testing "assess: weight is a finite log-xi; retval is the value"
       (let [{:keys [retval weight]} (p/assess (dyn/with-key gf (rng/fresh-key 13)) [theta] obs)]
         (is (js/Number.isFinite (it weight)))
@@ -230,16 +242,27 @@
         (is (< (js/Math.abs (- (it w1) (- (it (:score trace)) (it (:score t))))) 1e-5)
             "arg-change weight = log xi'(theta') - old score")
         (is (= [(it (mx/scalar 0.9))] (mapv it (:args trace))) "args updated to theta'")))
-    (testing "regenerate: empty selection => weight 0; selected => fresh value + finite weight"
+    (testing "regenerate: empty selection => 0; selected => (log xi'-log xi) - (log q(y')-log q(y))"
+      ;; genmlx-evab: the weight is NOT the bare estimator ratio. regenerate
+      ;; proposes y' from the internal proposal q itself, so the q ratio must be
+      ;; divided back out. log q here is the hand-derived convolution marginal
+      ;; (o-conv-logp), NEVER the implementation.
       (let [t (:trace (p/generate (dyn/with-key gf (rng/fresh-key 20)) [theta] obs))
             {w0 :weight} (p/regenerate gf t sel/none)
             {trace :trace w1 :weight} (p/regenerate (dyn/with-key gf (rng/fresh-key 21))
-                                                    t (sel/select :y))]
+                                                    t (sel/select :y))
+            y-old (mx/realize-clj (cm/get-value (cm/get-submap (:choices t) :y)))
+            y-new (mx/realize-clj (cm/get-value (cm/get-submap (:choices trace) :y)))
+            th (it theta)
+            expect (- (- (it (:score trace)) (it (:score t)))
+                      (- (o-conv-logp y-new th 1.0 1.0) (o-conv-logp y-old th 1.0 1.0)))]
         (is (= 0.0 (it w0)) "unselected regenerate weight 0")
-        (is (js/Number.isFinite (it w1)) "selected regenerate weight finite")
-        (is (not (identical? (cm/get-value (cm/get-submap (:choices t) :y))
-                             (cm/get-value (cm/get-submap (:choices trace) :y))))
-            "selected regenerate proposes a fresh value")))))
+        (is (not= y-old y-new) "selected regenerate proposes a fresh value")
+        (is (< (js/Math.abs (- (it w1) expect)) 1e-4)
+            (str "weight " (it w1) " = (log xi'-log xi) - (log q(y')-log q(y)) = " expect))
+        ;; and it is NOT the bare estimator ratio the pre-genmlx-evab code returned
+        (is (> (js/Math.abs (- (it w1) (- (it (:score trace)) (it (:score t))))) 1e-3)
+            "the q ratio is genuinely subtracted (not accidentally ~0)")))))
 
 ;; ===========================================================================
 ;; 5b. Robustness & edge cases (adversarial-review hardening)
@@ -267,11 +290,21 @@
       (let [{trace :trace w :weight} (p/update (dyn/with-key gf (rng/fresh-key 51))
                                                t (cm/set-value cm/EMPTY :y (mx/array [1.7])))]
         (is (some? (:omega trace)) "update draws fresh omega")
-        (is (js/Number.isFinite (it w)) "weight finite"))
+        ;; update does not propose the value, so no q ratio: w = log xi' - log xi
+        (is (< (js/Math.abs (- (it w) (- (it (:score trace)) (it (:score t))))) 1e-5)
+            "update weight = log xi' - log xi (stored score is the old xi)"))
       (let [{trace :trace w :weight} (p/regenerate (dyn/with-key gf (rng/fresh-key 52))
-                                                   t (sel/select :y))]
+                                                   t (sel/select :y))
+            y-old (mx/realize-clj (cm/get-value (cm/get-submap (:choices t) :y)))
+            y-new (mx/realize-clj (cm/get-value (cm/get-submap (:choices trace) :y)))
+            th (it theta)
+            expect (- (- (it (:score trace)) (it (:score t)))
+                      (- (o-conv-logp y-new th 1.0 1.0) (o-conv-logp y-old th 1.0 1.0)))]
         (is (some? (:omega trace)) "regenerate draws fresh omega")
-        (is (js/Number.isFinite (it w)) "weight finite"))))
+        ;; genmlx-evab: correctness, not merely finiteness — the proposal ratio
+        ;; is divided out even when the stored omega was missing.
+        (is (< (js/Math.abs (- (it w) expect)) 1e-4)
+            (str "weight " (it w) " = (log xi'-log xi) - (log q(y')-log q(y)) = " expect)))))
   (testing "EncapsulatedGF satisfies the generic project laws (via the law framework)"
     (let [g (dyn/auto-key (:gf (enc/marginalized-gaussian {:n 1 :tau 1.0 :sigma 1.0 :k 8})))]
       (doseq [law-name [:project-all-equals-score :project-none-equals-zero]]
@@ -282,6 +315,134 @@
                  (enc/pseudo-marginal-mh {:enc-gf {:not :encapsulated} :y (mx/array [1.0])
                                           :theta0 0.0 :log-prior (fn [_] 0.0)
                                           :step 0.5 :samples 1})))))
+
+;; ===========================================================================
+;; 5c. genmlx-evab — regenerate/generate divide out the INTERNAL PROPOSAL q
+;;
+;; The two ops that propose the observed value themselves (regenerate on the
+;; selected address, generate with the address unconstrained) must divide the
+;; proposal density back out:
+;;   regenerate: W = (log xi' - log xi) - (log q(v') - log q(v))
+;;   generate  : W =  log xi           -  log q(v)
+;; Returning the bare estimator ratio makes MH on the address target ~p(v)^2.
+;; ===========================================================================
+
+(def ^:private LOG2PI (js/Math.log (* 2 js/Math.PI)))
+
+(defn- mx-log-gauss [v mu sigma]
+  (mx/subtract
+   (mx/subtract (mx/scalar (* -0.5 LOG2PI)) (mx/scalar (js/Math.log sigma)))
+   (mx/multiply (mx/scalar 0.5) (mx/square (mx/divide (mx/subtract v (mx/scalar mu))
+                                                      (mx/scalar sigma))))))
+
+(defn- degenerate-enc
+  "An EncapsulatedGF whose estimator IGNORES omega and returns the EXACT density
+   of the very distribution :sample-value draws from (xi = q = N(0,1)). It is
+   therefore observationally an ordinary exact-density GF whose internal
+   proposal is the prior, so the ordinary GFI laws must hold EXACTLY:
+   regenerate on the selected address costs 0, unconstrained generate costs 0.
+   `extra` lets a caller drop :log-proposal-density to test the throw."
+  ([] (degenerate-enc {:log-proposal-density (fn [_args v] (mx-log-gauss v 0.0 1.0))}))
+  ([extra]
+   (enc/encapsulated
+    (merge {:addr :v
+            :sample-value (fn [k _args] (rng/normal k []))
+            :sample-omega (fn [_k _args _v] (mx/scalar 0.0))
+            :log-density-estimate (fn [_args v _om] (mx-log-gauss v 0.0 1.0))}
+           extra))))
+
+(deftest degenerate-estimator-obeys-exact-density-laws
+  (testing "xi = q exactly => regenerate on the selected address costs EXACTLY 0"
+    ;; This is the confirm-or-close oracle of genmlx-evab. With the bare
+    ;; estimator ratio it returns log p(v') - log p(v) (measured 0.2612 on
+    ;; seeds 7/8), i.e. the acceptance of an MH move that targets p(v)^2.
+    (let [g (degenerate-enc)
+          t (p/simulate (dyn/with-key g (rng/fresh-key 7)) [])
+          {tr :trace w :weight} (p/regenerate (dyn/with-key g (rng/fresh-key 8))
+                                              t (sel/select :v))
+          v  (it (cm/get-value (cm/get-submap (:choices t) :v)))
+          v' (it (cm/get-value (cm/get-submap (:choices tr) :v)))]
+      (is (not= v v') "precondition: the proposal actually moved the value")
+      (is (> (js/Math.abs (- (o-log-gauss v' 0.0 1.0) (o-log-gauss v 0.0 1.0))) 0.05)
+          "precondition: log p(v') - log p(v) is far from 0, so 0 is not vacuous")
+      (is (< (js/Math.abs (it w)) 1e-5)
+          (str "regenerate weight " (it w) " must be 0 (exact-density law); the "
+               "undivided ratio would be "
+               (- (o-log-gauss v' 0.0 1.0) (o-log-gauss v 0.0 1.0))))))
+  (testing "xi = q exactly => unconstrained generate costs EXACTLY 0"
+    (let [g (degenerate-enc)
+          {trace :trace w :weight} (p/generate (dyn/with-key g (rng/fresh-key 9))
+                                               [] cm/EMPTY)]
+      (is (< (js/Math.abs (it w)) 1e-5)
+          (str "unconstrained generate weight " (it w) " must be 0 when xi = q"))))
+  (testing "without :log-proposal-density the two PROPOSING ops throw (no plausible-but-wrong weight)"
+    (let [g (degenerate-enc {})
+          t (p/simulate (dyn/with-key g (rng/fresh-key 2)) [])]
+      (is (thrown? js/Error (p/regenerate (dyn/with-key g (rng/fresh-key 3))
+                                          t (sel/select :v)))
+          "regenerate on the selected address throws")
+      (is (thrown? js/Error (p/generate (dyn/with-key g (rng/fresh-key 4)) [] cm/EMPTY))
+          "unconstrained generate throws")
+      ;; every op that does NOT propose a value still works: a black-box sampler
+      ;; with an unknown density remains usable for pseudo-marginal MCMC.
+      (let [obs (cm/set-value cm/EMPTY :v (mx/scalar 0.25))]
+        (is (< (js/Math.abs (- (it (:weight (p/generate (dyn/with-key g (rng/fresh-key 6))
+                                                        [] obs)))
+                               (o-log-gauss 0.25 0.0 1.0))) 1e-5)
+            "constrained generate = log xi (no q involved)")
+        (is (js/Number.isFinite (it (:weight (p/update (dyn/with-key g (rng/fresh-key 7))
+                                                       t obs))))
+            "update works")
+        (is (= 0.0 (it (:weight (p/regenerate g t sel/none)))) "unselected regenerate works")
+        (is (js/Number.isFinite (it (p/project g t (sel/select :v)))) "project works")))))
+
+(deftest regenerate-mh-targets-p-not-p-squared
+  ;; THE consequence test. An independent MH kernel built out of p/regenerate
+  ;; (propose v' from the internal proposal, accept with min(1, exp(weight)))
+  ;; must leave the GF's own density p invariant. Here p = q = N(0.7, 1) and the
+  ;; estimator is genuinely stochastic: xi = p(v) * exp(a Z - a^2/2), Z~N(0,1),
+  ;; so E[xi] = p(v) (Eq 4.3) while xi != p(v) in every realization.
+  ;;   correct weight (log xi'-log xi) - (log q(v')-log q(v))  => stationary N(0.7, 1)
+  ;;   bare ratio      log xi'-log xi                          => stationary ∝ p*q = p^2
+  ;;                                                              = N(0.7, 0.5)
+  ;; The VARIANCE separates them by a factor of 2. Oracle: the conjugate closed
+  ;; forms 1.0 and 0.5, derived by hand (product of two N(0.7,1) densities).
+  (let [a 0.4
+        mu 0.7
+        g (enc/encapsulated
+           {:addr :v
+            :sample-value (fn [k _args] (mx/add (mx/scalar mu) (rng/normal k [])))
+            :sample-omega (fn [k _args _v] (rng/normal k []))
+            :log-density-estimate
+            (fn [_args v z] (mx/add (mx-log-gauss v mu 1.0)
+                                    (mx/subtract (mx/multiply (mx/scalar a) z)
+                                                 (mx/scalar (* 0.5 a a)))))
+            :log-proposal-density (fn [_args v] (mx-log-gauss v mu 1.0))})
+        n-samples 4000
+        n-burn 500
+        samples
+        (loop [t (p/simulate (dyn/with-key g (rng/fresh-key 771)) [])
+               i 0
+               rk (rng/fresh-key 772)
+               acc (transient [])]
+          (if (>= i (+ n-burn n-samples))
+            (persistent! acc)
+            (let [[k1 k2 rk'] (rng/split-n rk 3)
+                  {tr :trace w :weight} (p/regenerate (dyn/with-key g k1) t (sel/select :v))
+                  accept? (< (js/Math.log (it (rng/uniform k2 []))) (it w))
+                  nt (if accept? tr t)]
+              (recur nt (inc i) rk'
+                     (if (>= i n-burn)
+                       (conj! acc (it (cm/get-value (cm/get-submap (:choices nt) :v))))
+                       acc)))))
+        m (mean samples)
+        v (variance samples)]
+    (testing "the regenerate-MH chain is stationary for p, not for p^2"
+      (is (< (js/Math.abs (- m mu)) 0.08) (str "chain mean " m " ~ " mu))
+      (is (< (js/Math.abs (- v 1.0)) 0.13)
+          (str "chain variance " v " ~ 1.0 (p); the undivided-ratio kernel gives "
+               "0.5 (p^2)"))
+      (is (> v 0.75) "variance is nowhere near the p^2 value 0.5"))))
 
 ;; ===========================================================================
 ;; 6. Pseudo-marginal MCMC stationarity (THE headline)
@@ -343,13 +504,16 @@
   (let [names (set (map :name gfi/laws))]
     (is (contains? names :encapsulated-estimator-unbiased) "Eq 4.3 law present")
     (is (contains? names :encapsulated-identity-update-zero) "identity-zero law present")
-    (is (contains? names :pseudo-marginal-stationarity) "pseudo-marginal law present")))
+    (is (contains? names :pseudo-marginal-stationarity) "pseudo-marginal law present")
+    (is (contains? names :encapsulated-regenerate-divides-proposal)
+        "regenerate proposal-ratio law present (genmlx-evab)")))
 
 (deftest gfi-laws-hold
-  (testing "the three §4.5 laws pass when run directly"
+  (testing "the four §4.5 laws pass when run directly"
     (doseq [law-name [:encapsulated-estimator-unbiased
                       :encapsulated-identity-update-zero
-                      :pseudo-marginal-stationarity]]
+                      :pseudo-marginal-stationarity
+                      :encapsulated-regenerate-divides-proposal]]
       (let [{:keys [pass? error]} (gfi/check-law law-name
                                                  (dyn/auto-key
                                                   (:gf (enc/mixture-density

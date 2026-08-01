@@ -16,7 +16,8 @@
    estimator at the recorded omega yields the same xi. Reproducibility is what
    makes identity update/project return weight 0 exactly, while a genuine move
    (changed value or args) resamples omega and pays the pseudo-marginal ratio
-   log xi' − log xi_old.
+   log xi' − log xi_old (regenerate additionally divides out the proposal ratio
+   — see `The one weight rule` below).
 
    ## Why it matters (the three §4.5 use cases)
 
@@ -31,14 +32,44 @@
 
    ## Contract on the caller-supplied estimator (the §4.5 obligation)
 
-   `encapsulated` takes a single observed address and three closures:
+   `encapsulated` takes a single observed address and three closures, plus one
+   optional fourth:
      :sample-value          (fn [key args] -> v)        draws v ~ p(.; args)
      :sample-omega          (fn [key args v] -> omega)  draws encapsulated randomness
      :log-density-estimate  (fn [args v omega] -> logxi-scalar)
+     :log-proposal-density  (fn [args v] -> log q(v; args))   OPTIONAL
    Obligations:
      (1) E_omega[ exp(log-density-estimate args v omega) ] = p(v; args)  (Eq 4.3)
      (2) log-density-estimate is DETERMINISTIC given omega (reproducibility)
      (3) xi >= 0 (the estimate is a non-negative density; logxi finite)
+     (4) if supplied, log-proposal-density is the EXACT log density of the value
+         drawn by :sample-value (its internal-proposal density q), not an estimate.
+
+   ## The one weight rule (genmlx-evab)
+
+   Every GFI weight here is the exact-density rule with the exact density p
+   replaced by the realized estimate xi, and q = the internal proposal density
+   of whatever the op itself SAMPLED:
+
+       weight = log xi_new - log xi_old - [ log q(new sampled) - log q(old sampled) ]
+
+   - generate, value constrained: nothing is proposed for v, so w = log xi.
+   - generate, value UNCONSTRAINED: v is drawn from q, so w = log xi - log q(v).
+   - update / update-with-args: the caller supplies v (or new args); q cancels,
+     so w = log xi' - log xi (the pseudo-marginal ratio).
+   - regenerate, address SELECTED: v' ~ q and the reverse move re-proposes v, so
+     w = (log xi' - log xi) - (log q(v') - log q(v)).
+
+   The two ops that actually propose a value (generate-unconstrained,
+   regenerate-selected) therefore REQUIRE :log-proposal-density and THROW without
+   it — there is no correct weight to return. Dropping the q ratio (as this
+   namespace did before genmlx-evab) makes MH on a selected encapsulated address
+   accept with xi'/xi while proposing from q, i.e. target ~p(v)^2 instead of p(v);
+   with a degenerate exact estimator (xi = p) it returns log p(v') - log p(v)
+   where the ordinary regenerate-weight-zero law demands 0. All the other ops
+   (simulate, assess, project, update, update-with-args — including the whole
+   pseudo-marginal-mh path) never propose a value and work without it, so a
+   genuinely black-box sampler with an unknown density is still usable there.
 
    ## NOTE on score-type
 
@@ -119,6 +150,32 @@
                     :retval v :score logxi :omega omega})
     :joint))
 
+(defn- proposal-log-density
+  "log q(v; args) — the EXACT density of the value that :sample-value draws.
+
+   Required by the two GFI ops that propose the value themselves and must
+   therefore divide the internal proposal back out (generate with the address
+   unconstrained, regenerate with the address selected). Throws when the
+   estimator was built without :log-proposal-density: no correct weight exists,
+   and returning the undivided estimator ratio silently targets ~p(v)^2
+   (genmlx-evab). `op` names the caller for the error message."
+  [gf op args v]
+  (let [q (:log-proposal-density gf)]
+    (when (nil? q)
+      (throw (ex-info
+              (str "encapsulated " op ": :log-proposal-density is required at address "
+                   (:addr gf) ". This op proposes the observed value from the "
+                   "internal proposal q, so the weight must divide log q back out: "
+                   "w = (log xi' - log xi) - (log q(v') - log q(v)). Supply "
+                   ":log-proposal-density (fn [args v] -> log q(v; args)) to "
+                   "`encapsulated`, or use an op that does not propose a value "
+                   "(update / update-with-args / assess / project / simulate).")
+              {:op op :addr (:addr gf) :missing :log-proposal-density})))
+    (when (nil? v)
+      (throw (ex-info (str "encapsulated " op ": no value at address " (:addr gf))
+                      {:op op :addr (:addr gf)})))
+    (q args v)))
+
 (defn- resample-result
   "Build the {:trace :weight :discard} result for a genuine move at new value
    `v` under `args`: draw fresh omega with `key`, recompute logxi', weight is
@@ -136,7 +193,8 @@
 ;; EncapsulatedGF — full GFI over a single observed address
 ;; ---------------------------------------------------------------------------
 
-(defrecord EncapsulatedGF [addr sample-value sample-omega log-density-estimate]
+(defrecord EncapsulatedGF [addr sample-value sample-omega log-density-estimate
+                           log-proposal-density]
   p/IGenerativeFunction
   (simulate [gf args]
     (let [[k1 k2] (rng/split (enc-key gf))
@@ -155,8 +213,17 @@
               omega (sample-omega k2 args v)
               logxi (log-density-estimate args v omega)]
           {:trace (make-enc-trace gf args addr v logxi omega) :weight logxi})
-        ;; Unconstrained: equivalent to simulate, weight 0.
-        {:trace (p/simulate gf args) :weight ZERO})))
+        ;; Unconstrained: the value is drawn from the internal proposal q, so
+        ;; the weight is the estimator/proposal ratio log xi − log q(v). It is
+        ;; NOT 0: the trace's score is an ESTIMATE xi, not q(v), and generate's
+        ;; contract ties them (score − weight = log q(what was proposed) — the
+        ;; same rule that makes the constrained branch above w = log xi).
+        ;; Returning 0 would assert xi = q(v), which is false for any real
+        ;; estimator; the exact-density case xi = q recovers 0 (genmlx-evab).
+        (let [t (p/simulate gf args)]
+          {:trace t
+           :weight (mx/subtract (:score t)
+                                (proposal-log-density gf :generate args (:retval t)))}))))
 
   p/IAssess
   (assess [gf args choices]
@@ -171,6 +238,14 @@
         {:retval v :weight logxi})))
 
   p/IPropose
+  ;; CAVEAT (not a bug in this weight, a scope limit of the §4.5 contract): the
+  ;; returned weight is log xi, which callers use as a DENOMINATOR (1/xi). The
+  ;; contract only guarantees E[xi] = p(v) (Eq 4.3), and by Jensen
+  ;; E[1/xi] > 1/p(v) (Eq 4.4 — see the `eq44-naive-reciprocal-is-biased` test),
+  ;; so an EncapsulatedGF built on this contract is NOT sound as an inference
+  ;; PROPOSAL. Reciprocal unbiasedness needs a meta-inference proposal for omega
+  ;; (thesis §4.5), which this constructor does not ask for. Use it as a model /
+  ;; likelihood (its stated scope), not as a proposal.
   (propose [gf args]
     (let [trace (p/simulate gf args)]
       {:choices (:choices trace) :weight (:score trace) :retval (:retval trace)}))
@@ -203,14 +278,25 @@
   (regenerate [gf trace selection]
     (let [args (:args trace)]
       (if (and selection (sel/selected? selection addr))
-        ;; Selected: propose a fresh observed value from the marginal, with a
-        ;; fresh estimate. The §4.5 estimator regenerate ratio logxi'−logxi_old
-        ;; replaces the exact-density "resample-from-prior ⇒ weight 0" because
-        ;; the marginal proposal density is itself only estimated.
+        ;; Selected: propose a fresh observed value v' from the internal
+        ;; proposal q, with a fresh estimate. Because the op ITSELF proposes the
+        ;; value, the estimator ratio must have the proposal ratio divided out
+        ;;   W = (log xi' − log xi) − (log q(v') − log q(v))
+        ;; (the MH ratio on the extended (v, omega) chain whose target is
+        ;; q(omega|v)·xi(v,omega); the q(omega|·) factors cancel, the q(v) ones
+        ;; do not). Keeping only log xi' − log xi accepts with xi'/xi while
+        ;; proposing from q — stationary density ~p(v)^2, and it breaks the
+        ;; ordinary regenerate-weight-zero law in the exact case xi = q
+        ;; (genmlx-evab).
         (let [[k1 k2] (rng/split (enc-key gf))
-              new-v (sample-value k1 args)]
-          (dissoc (resample-result gf args addr new-v (:score trace) cm/EMPTY k2)
-                  :discard))
+              log-q-old (proposal-log-density gf :regenerate args
+                                              (addr-value (:choices trace) addr))
+              new-v (sample-value k1 args)
+              log-q-new (proposal-log-density gf :regenerate args new-v)
+              {tr' :trace w-xi :weight}
+              (resample-result gf args addr new-v (:score trace) cm/EMPTY k2)]
+          {:trace tr'
+           :weight (mx/subtract w-xi (mx/subtract log-q-new log-q-old))})
         ;; Unselected: reuse omega → weight 0.
         {:trace trace :weight ZERO})))
 
@@ -254,15 +340,25 @@
      :sample-omega          (fn [key args v] -> omega)  draws encapsulated randomness.
      :log-density-estimate  (fn [args v omega] -> logxi) DETERMINISTIC given omega;
                             unbiased: E_omega[exp logxi] = p(v; args).
+     :log-proposal-density  (fn [args v] -> log q(v; args)) OPTIONAL. The EXACT
+                            log density of the value :sample-value draws.
+                            REQUIRED by the two ops that propose the value
+                            themselves — generate with the address unconstrained
+                            and regenerate with the address selected — which
+                            throw without it (see the ns docstring's weight
+                            rule, genmlx-evab). Every other op works without it.
 
    Returns an EncapsulatedGF implementing the full GFI with score = log xi and
    trace.omega = omega. Use dyn/with-key / dyn/auto-key for PRNG control."
-  [{:keys [addr sample-value sample-omega log-density-estimate]}]
+  [{:keys [addr sample-value sample-omega log-density-estimate log-proposal-density]}]
   (assert (keyword? addr) "encapsulated: :addr must be a keyword")
   (assert (fn? sample-value) "encapsulated: :sample-value must be a fn")
   (assert (fn? sample-omega) "encapsulated: :sample-omega must be a fn")
   (assert (fn? log-density-estimate) "encapsulated: :log-density-estimate must be a fn")
-  (->EncapsulatedGF addr sample-value sample-omega log-density-estimate))
+  (assert (or (nil? log-proposal-density) (fn? log-proposal-density))
+          "encapsulated: :log-proposal-density, when supplied, must be a fn")
+  (->EncapsulatedGF addr sample-value sample-omega log-density-estimate
+                    log-proposal-density))
 
 ;; ---------------------------------------------------------------------------
 ;; Gaussian log-density helper (estimator-internal; the TEST oracle is an
@@ -327,7 +423,12 @@
     {:gf (encapsulated {:addr addr
                         :sample-value sample-value
                         :sample-omega sample-omega
-                        :log-density-estimate log-density-estimate})
+                        :log-density-estimate log-density-estimate
+                        ;; sample-value draws y_i ~iid N(theta, S) EXACTLY, so
+                        ;; the internal proposal density q is the convolution
+                        ;; marginal itself — the ratio generate-unconstrained /
+                        ;; regenerate-selected must divide out (genmlx-evab).
+                        :log-proposal-density exact-log-density})
      :exact-log-density exact-log-density
      :marginal-sigma S}))
 
@@ -385,7 +486,11 @@
     {:gf (encapsulated {:addr addr
                         :sample-value sample-value
                         :sample-omega sample-omega
-                        :log-density-estimate log-density-estimate})
+                        :log-density-estimate log-density-estimate
+                        ;; sample-value draws k ~ Cat(pi) then y ~ N(mu_k,sig_k):
+                        ;; y's exact marginal IS the mixture density, so q =
+                        ;; exact-log-density (genmlx-evab).
+                        :log-proposal-density exact-log-density})
      :exact-log-density exact-log-density}))
 
 ;; ---------------------------------------------------------------------------
