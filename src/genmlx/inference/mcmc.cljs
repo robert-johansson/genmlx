@@ -249,6 +249,19 @@
    (iterative compile passes / big-stack trace thread) is beaned."
   {:mh 1250 :mala 2500 :hmc 8000})
 
+(defn- stack-collected
+  "mx/stack over a HOST-SIDE accumulator that may legitimately be empty
+   (genmlx-n896). MLX's stack throws \"stack requires at least one array\"
+   on an empty list, so every collect-then-stack chain terminal needs the
+   zero-sample case spelled out: an empty accumulator yields a real
+   0-leading-axis array of `empty-shape`, matching what a pre-allocating
+   chain (make-fused-mh/hmc-chain-raw, which mx/zeros up front) already
+   returns. Reached by the chunked N-chain MALA's burn-only [b 0] chunks
+   and — on the same line, pre-dating the chunked work — by a plain
+   {:samples 0} sweep."
+  [xs empty-shape]
+  (if (seq xs) (mx/stack xs) (mx/zeros empty-shape)))
+
 (def ^:private hmc-chunk-ops-override
   "GENMLX_HMC_CHUNK_OPS (int, estimate-fused-ops units — steps x leapfrog):
    opt-in routing knob (genmlx-geiw): HMC chains whose total ops exceed it
@@ -310,19 +323,38 @@
    `ulimit -s 65536`. Past the limit we keep today's identity-compile
    behavior (build-per-call — eval's scheduler is iterative and does not
    overflow). Proper fix (iterative passes / big-stack trace thread) is
-   beaned; raise the limit only WITH a new measurement."
+   beaned; raise the limit only WITH a new measurement.
+
+   Untraceable chain-fns (a score fn that forces a host eval — host-side
+   branching on `mx/item`, an explicit `mx/eval!`, the `Mix` combinator's
+   `(int (mx/item ...))`) degrade LOUDLY and permanently to the raw builder,
+   exactly as persist-point-fn does (genmlx-01e7: only the point half of
+   genmlx-53aa's degradation spec shipped, so on CUDA the default
+   :compile? true path hard-threw for that whole model class)."
   [chain-fn method ops]
   (if (or (mx/metal-is-available?)
           (> ops (get persist-trace-ops-limits method 0)))
     (mx/compile-fn chain-fn)
-    (let [h (mx/compile-create chain-fn)]
+    (let [h (mx/compile-create chain-fn)
+          degraded (volatile! false)]
       (with-meta
         ;; Captured replay (genmlx-7prh): the first call traces AND captures
         ;; the eval into retained CUDA graph execs; later calls are
         ;; launch-only, returning EVALUATED outputs (callers' materialize!
         ;; becomes a no-op). Uncapturable tapes (cpu device, graph fallback)
         ;; latch the plain trace-cache replay inside the native handle.
-        (fn [& args] (mx/compiled-call-captured h (to-array args)))
+        (fn [& args]
+          (if @degraded
+            (apply chain-fn args)
+            (try
+              (mx/compiled-call-captured h (to-array args))
+              (catch :default e
+                (if (re-find #"during function transformations" (str (.-message e)))
+                  (do (vreset! degraded true)
+                      (println (str "Note: persist-chain — fn is not traceable "
+                                    "(item/eval inside); using the raw fn."))
+                      (apply chain-fn args))
+                  (throw e))))))
         {:genmlx/compiled-handle h}))))
 
 (defn- persist-chain1
@@ -333,17 +365,30 @@
    sampler invocation, no caller plumbing needed. Same gates/metadata as
    persist-chain; the handle is GC-reclaimed (native side) after the
    sampler call drops the fn — only the small napi builder ref outlives it
-   (documented Phase-1 tradeoff)."
+   (documented Phase-1 tradeoff). Same untraceable-fn degradation as
+   persist-chain / persist-point-fn (genmlx-01e7)."
   [chain-fn method ops]
   (if (or (mx/metal-is-available?)
           (> ops (get persist-trace-ops-limits method 0)))
     (mx/compile-fn chain-fn)
-    (let [h (mx/compile-create chain-fn)]
+    (let [h (mx/compile-create chain-fn)
+          degraded (volatile! false)]
       (with-meta
         ;; Captured replay (genmlx-7prh) — see persist-chain. Blocks 2..K of
         ;; a single sampler run launch retained execs instead of re-cloning
         ;; and re-walking the block tape.
-        (fn [& args] (aget (mx/compiled-call-captured h (to-array args)) 0))
+        (fn [& args]
+          (if @degraded
+            (apply chain-fn args)
+            (try
+              (aget (mx/compiled-call-captured h (to-array args)) 0)
+              (catch :default e
+                (if (re-find #"during function transformations" (str (.-message e)))
+                  (do (vreset! degraded true)
+                      (println (str "Note: persist-chain1 — fn is not traceable "
+                                    "(item/eval inside); using the raw fn."))
+                      (apply chain-fn args))
+                  (throw e))))))
         {:genmlx/compiled-handle h}))))
 
 (defn- persist-point-fn
@@ -625,7 +670,11 @@
         (fn [params noise-2d uniforms-1d]
           (loop [p params, i 0, traj []]
             (if (>= i k-steps)
-              (mx/stack traj)
+              ;; genmlx-n896 class: same collect-then-stack terminal as the
+              ;; N-chain MALA chain — k-steps 0 (an explicit
+              ;; :block-size-collect 0) must yield an empty [0,D] trajectory,
+              ;; not "stack requires at least one array".
+              (stack-collected traj [0 n-params])
               (let [row (noise-row noise-2d i [n-params])
                     [p' _] (mh-transition score-fn proposal-std p
                                           row uniforms-1d i)]
@@ -1230,7 +1279,8 @@
         (fn [params noise-3d uniforms-2d]
           (loop [p params, i 0, traj []]
             (if (>= i k-steps)
-              (mx/stack traj)
+              ;; genmlx-n896 class — see make-compiled-trajectory.
+              (stack-collected traj [0 n-chains n-params])
               (let [[p' _] (vectorized-mh-transition
                             score-fn proposal-std p noise-3d uniforms-2d i
                             n-chains n-params)]
@@ -2349,7 +2399,7 @@
     (fn [init-q noise-3d uniforms-2d]
       (loop [q init-q, i 0, kept [], accept-count (mx/scalar 0.0)]
         (if (>= i total-steps)
-          #js [q (mx/stack kept) accept-count]
+          #js [q (stack-collected kept [0 n-chains n-params]) accept-count]
           (let [g (grad-fn q)
                 noise-t (noise-row noise-3d i [n-chains n-params])
                 q' (mx/add q (mx/multiply half-eps2 g) (mx/multiply eps noise-t))
