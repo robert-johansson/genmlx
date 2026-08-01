@@ -234,9 +234,27 @@
 
 (deftest handler-path-convergence-test
   (testing "handler path convergence"
+    ;; 1000 -> 3000 iterations (2026-08-01). Same root cause e7d7fd0 fixed for
+    ;; learn-compiled-generate-test on 2026-07-26 and did not carry across to
+    ;; this structurally identical sibling in the same file: co/learn draws
+    ;; :init-params from an AUTO-KEYED initial trace, so Adam starts from a
+    ;; fresh mu ~ N(0,10) and must cross up to ~13 units at lr 0.05. An
+    ;; under-powered budget lands short from a distant draw.
+    ;;
+    ;; Battery observed mu_final = 2.383 against 3.156 +/- 0.3 (|err| 0.773),
+    ;; then passed on two solo re-runs — the signature of a draw-dependent
+    ;; miss, not contention. Measured auto-keyed over 10 runs (the same
+    ;; configuration the test uses; a SEEDED measurement would not be
+    ;; evidence, per e7d7fd0's own caveat that "seeding alone would NOT have
+    ;; been a fix"):
+    ;;   1000 iterations: worst |err| 0.1570  <- already half the band, and
+    ;;                                           the battery found 0.773
+    ;;   3000 iterations: worst |err| 0.0016  <- ~200x margin
+    ;; The assertion and its 0.3 tolerance are UNCHANGED; the optimizer is
+    ;; given the budget to do what the test already claimed.
     (let [obs (cm/choicemap :y0 (mx/scalar 3.0) :y1 (mx/scalar 4.0) :y2 (mx/scalar 2.5))
           result (co/learn dynamic-model [(mx/scalar 3)] obs [:mu]
-                           {:iterations 1000 :lr 0.05 :log-every 200})
+                           {:iterations 3000 :lr 0.05 :log-every 200})
           final-mu (first (mx/->clj (:params result)))]
       (is (= :handler (:compilation-level result)) "compilation-level = :handler")
       (is (h/close? 3.16 final-mu 0.3) "mu converges to posterior mean ~3.16")
