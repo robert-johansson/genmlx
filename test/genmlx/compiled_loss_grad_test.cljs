@@ -326,9 +326,30 @@
 
 (deftest learn-api-handler-test
   (testing "learn API end-to-end (handler)"
+    ;; 1000 -> 3000 iterations (2026-08-02). THIRD instance of the class
+    ;; e7d7fd0 root-caused on 2026-07-26: co/learn draws :init-params from an
+    ;; AUTO-KEYED initial trace, so Adam starts from a fresh mu ~ N(0,10) and an
+    ;; under-powered budget lands short from a distant draw. e7d7fd0 fixed
+    ;; learn-compiled-generate-test; genmlx-vous fixed handler-path-convergence-test
+    ;; and its sibling sweep WRONGLY concluded no other site was under-budgeted —
+    ;; it checked call sites but not their budgets. This is that miss.
+    ;;
+    ;; Battery observed mu_final = 4.9898 against 5.5 +/- 0.5 (|err| 0.510).
+    ;; Measured auto-keyed over 10 runs against the analytic posterior mean
+    ;; 5.4726 (= (5+6)/(2+1/100)), the configuration the test actually uses:
+    ;;   1000 iterations: worst |err| 0.0992
+    ;;   3000 iterations: worst |err| 0.0026   <- ~190x margin
+    ;; Note the 10 draws never reproduced the battery's 0.510, so this measures
+    ;; the FIX's margin, not the failure rate — the tail is heavier than 10
+    ;; samples show, which is the whole reason the budget needs headroom.
+    ;;
+    ;; The remaining convergence sites in this file and their budgets:
+    ;;   L197 gaussian-mean 500 | L220 linear-regression 500 |
+    ;;   L256 handler-path 3000 | L312 learn-api-tensor-native 300
+    ;; The 300/500 ones are tensor-native (deterministic init), not this class.
     (let [obs (cm/choicemap :y0 (mx/scalar 5.0) :y1 (mx/scalar 6.0))
           result (co/learn dynamic-model [(mx/scalar 2)] obs [:mu]
-                           {:iterations 1000 :lr 0.05 :log-every 200})]
+                           {:iterations 3000 :lr 0.05 :log-every 200})]
       (is (= :handler (:compilation-level result)) "learn returns :handler")
       (let [final-mu (first (mx/->clj (:params result)))]
         (is (h/close? 5.5 final-mu 0.5) "handler learn converges")))))
