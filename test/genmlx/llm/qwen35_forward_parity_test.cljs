@@ -138,4 +138,5 @@
 
 (pr/let [_ (check-model (first models))
          _ (check-model (second models))]
-  (println (str "\n=== qwen35-forward-parity: " @pass " PASS, " @fail " FAIL ===")))
+  (println (str "\n=== qwen35-forward-parity: " @pass " PASS, " @fail " FAIL ==="))
+  (when (pos? @fail) (set! (.-exitCode js/process) 1)))

@@ -88,4 +88,5 @@
                             " ms = " (.toFixed tok-s 1) " tok/s"))
               (assert-true "decode rate finite & positive"
                            (and (js/isFinite tok-s) (pos? tok-s))))))
-        (println (str "\n=== forward-parity: " @pass " PASS, " @fail " FAIL ==="))))))
+        (println (str "\n=== forward-parity: " @pass " PASS, " @fail " FAIL ==="))
+        (when (pos? @fail) (set! (.-exitCode js/process) 1))))))

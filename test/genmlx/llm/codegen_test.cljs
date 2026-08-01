@@ -12,7 +12,8 @@
             [genmlx.llm.bytes :as bytes]
             [genmlx.protocols :as p]
             [edamame.core :as eda]
-            [promesa.core :as pr]))
+            [promesa.core :as pr]
+            ["fs" :as fs]))
 
 ;; ============================================================
 ;; Test helpers
@@ -255,111 +256,114 @@
 
 (def model-dir (str (.-HOME js/process.env) "/.cache/models/qwen3-0.6b"))
 
-(println "\n== Loading Qwen3-0.6B for model tests... ==")
-
 ;; codegen uses generate-text (ChatSession) -> needs the upstream model
-(pr/let [model-map (llm/load-model model-dir {:cljs-forward? false})
-         prepared (bytes/prepare (:tokenizer model-map))
-         opts {:prepared prepared :max-bytes 200}]
+(if-not (.existsSync fs (str model-dir "/model.safetensors"))
+  (do (println "SKIP llm-codegen-test model section: qwen3-0.6b checkpoint absent at" model-dir)
+      (when (pos? @fail-count) (set! (.-exitCode js/process) 1)))
+  (do (println "\n== Loading Qwen3-0.6B for model tests... ==")
+    (pr/let [model-map (llm/load-model model-dir {:cljs-forward? false})
+             prepared (bytes/prepare (:tokenizer model-map))
+             opts {:prepared prepared :max-bytes 200}]
 
-  ;; -- 2.1 generate-cljs --
-  (println "\n== generate-cljs ==")
+      ;; -- 2.1 generate-cljs --
+      (println "\n== generate-cljs ==")
 
-  (pr/let [result (cg/generate-cljs model-map "Write a function that adds two numbers" opts)]
-    (assert-true "generate-cljs: text non-empty" (pos? (count (:text result))))
-    (assert-true "generate-cljs: code is string" (string? (:code result)))
-    (assert-true "generate-cljs: has :valid? key" (contains? result :valid?))
-    (assert-true "generate-cljs: has :text key" (some? (:text result)))
-    (println "  Generated text:" (pr-str (:text result)))
-    (println "  Extracted code:" (pr-str (:code result)))
-    (println "  Valid?:" (:valid? result))
-    (when (:valid? result)
-      (assert-true "generate-cljs: valid code has :form" (some? (:form result)))))
+      (pr/let [result (cg/generate-cljs model-map "Write a function that adds two numbers" opts)]
+        (assert-true "generate-cljs: text non-empty" (pos? (count (:text result))))
+        (assert-true "generate-cljs: code is string" (string? (:code result)))
+        (assert-true "generate-cljs: has :valid? key" (contains? result :valid?))
+        (assert-true "generate-cljs: has :text key" (some? (:text result)))
+        (println "  Generated text:" (pr-str (:text result)))
+        (println "  Extracted code:" (pr-str (:code result)))
+        (println "  Valid?:" (:valid? result))
+        (when (:valid? result)
+          (assert-true "generate-cljs: valid code has :form" (some? (:form result)))))
 
-  ;; -- 2.2 generate-cljs-n --
-  (println "\n== generate-cljs-n ==")
+      ;; -- 2.2 generate-cljs-n --
+      (println "\n== generate-cljs-n ==")
 
-  (pr/let [results (cg/generate-cljs-n model-map "Write (fn [x] (+ x 1))" 3 opts)]
-    (assert-equal "generate-cljs-n: 3 candidates" 3 (count results))
-    (assert-true "generate-cljs-n: sorted valid first"
-                 (or (not (:valid? (last results)))
-                     (every? :valid? results)))
-    (println "  Candidates:")
-    (doseq [[i r] (map-indexed vector results)]
-      (println (str "    " i ": valid=" (:valid? r) " code=" (pr-str (subs (:code r) 0 (min 60 (count (:code r)))))))))
+      (pr/let [results (cg/generate-cljs-n model-map "Write (fn [x] (+ x 1))" 3 opts)]
+        (assert-equal "generate-cljs-n: 3 candidates" 3 (count results))
+        (assert-true "generate-cljs-n: sorted valid first"
+                     (or (not (:valid? (last results)))
+                         (every? :valid? results)))
+        (println "  Candidates:")
+        (doseq [[i r] (map-indexed vector results)]
+          (println (str "    " i ": valid=" (:valid? r) " code=" (pr-str (subs (:code r) 0 (min 60 (count (:code r)))))))))
 
-  ;; -- 2.3 synthesize-loop --
-  (println "\n== synthesize-loop ==")
+      ;; -- 2.3 synthesize-loop --
+      (println "\n== synthesize-loop ==")
 
-  (pr/let [transitions [{:state {:x 5 :y 5} :action :up    :expected {:x 5 :y 4}}
-                         {:state {:x 5 :y 5} :action :down  :expected {:x 5 :y 6}}
-                         {:state {:x 5 :y 5} :action :left  :expected {:x 4 :y 5}}
-                         {:state {:x 5 :y 5} :action :right :expected {:x 6 :y 5}}]
-           result (cg/synthesize-loop
-                    model-map
-                    "Write a ClojureScript transition function (fn [state action] ...) where state is {:x int :y int} and action is :up/:down/:left/:right. :up decrements y, :down increments y, :left decrements x, :right increments x."
-                    transitions
-                    (merge opts {:max-revisions 2}))]
-    (assert-true "synthesize-loop: has :code" (string? (:code result)))
-    (assert-true "synthesize-loop: has :accuracy" (number? (:accuracy result)))
-    (assert-true "synthesize-loop: has :history" (vector? (:history result)))
-    (assert-true "synthesize-loop: has :converged?" (contains? result :converged?))
-    (println "  Accuracy:" (:accuracy result))
-    (println "  Revisions:" (:revisions result))
-    (println "  Converged?:" (:converged? result))
-    (println "  Best code:" (pr-str (:code result))))
+      (pr/let [transitions [{:state {:x 5 :y 5} :action :up    :expected {:x 5 :y 4}}
+                             {:state {:x 5 :y 5} :action :down  :expected {:x 5 :y 6}}
+                             {:state {:x 5 :y 5} :action :left  :expected {:x 4 :y 5}}
+                             {:state {:x 5 :y 5} :action :right :expected {:x 6 :y 5}}]
+               result (cg/synthesize-loop
+                        model-map
+                        "Write a ClojureScript transition function (fn [state action] ...) where state is {:x int :y int} and action is :up/:down/:left/:right. :up decrements y, :down increments y, :left decrements x, :right increments x."
+                        transitions
+                        (merge opts {:max-revisions 2}))]
+        (assert-true "synthesize-loop: has :code" (string? (:code result)))
+        (assert-true "synthesize-loop: has :accuracy" (number? (:accuracy result)))
+        (assert-true "synthesize-loop: has :history" (vector? (:history result)))
+        (assert-true "synthesize-loop: has :converged?" (contains? result :converged?))
+        (println "  Accuracy:" (:accuracy result))
+        (println "  Revisions:" (:revisions result))
+        (println "  Converged?:" (:converged? result))
+        (println "  Best code:" (pr-str (:code result))))
 
-  ;; -- 2.4 revise --
-  (println "\n== revise ==")
+      ;; -- 2.4 revise --
+      (println "\n== revise ==")
 
-  (pr/let [bad-code "(fn [s a] s)"
-           failures [{:state {:x 5 :y 5} :action :up
-                      :expected {:x 5 :y 4} :actual {:x 5 :y 5}}]
-           result (cg/revise model-map bad-code failures opts)]
-    (assert-true "revise: produces output" (pos? (count (:text result))))
-    (assert-true "revise: code differs from input"
-                 (not= bad-code (:code result)))
-    (println "  Revised code:" (pr-str (:code result))))
+      (pr/let [bad-code "(fn [s a] s)"
+               failures [{:state {:x 5 :y 5} :action :up
+                          :expected {:x 5 :y 4} :actual {:x 5 :y 5}}]
+               result (cg/revise model-map bad-code failures opts)]
+        (assert-true "revise: produces output" (pos? (count (:text result))))
+        (assert-true "revise: code differs from input"
+                     (not= bad-code (:code result)))
+        (println "  Revised code:" (pr-str (:code result))))
 
-  ;; -- 2.5 generate-and-score --
-  (println "\n== generate-and-score ==")
+      ;; -- 2.5 generate-and-score --
+      (println "\n== generate-and-score ==")
 
-  (pr/let [gf (llm-core/make-llm-gf model-map)
-           result (cg/generate-and-score model-map gf "Write (defn add [a b] (+ a b))"
-                    {:temperature 0.3})]
-    (assert-true "generate-and-score: has :code" (string? (:code result)))
-    (assert-true "generate-and-score: has :valid?" (contains? result :valid?))
-    (assert-true "generate-and-score: has :weight" (number? (:weight result)))
-    (assert-true "generate-and-score: has :struct-score" (number? (:struct-score result)))
-    (assert-true "generate-and-score: weight is negative" (neg? (:weight result)))
-    (println "  Code:" (pr-str (subs (:code result) 0 (min 60 (count (:code result))))))
-    (println "  Weight:" (:weight result) "Struct:" (:struct-score result)))
+      (pr/let [gf (llm-core/make-llm-gf model-map)
+               result (cg/generate-and-score model-map gf "Write (defn add [a b] (+ a b))"
+                        {:temperature 0.3})]
+        (assert-true "generate-and-score: has :code" (string? (:code result)))
+        (assert-true "generate-and-score: has :valid?" (contains? result :valid?))
+        (assert-true "generate-and-score: has :weight" (number? (:weight result)))
+        (assert-true "generate-and-score: has :struct-score" (number? (:struct-score result)))
+        (assert-true "generate-and-score: weight is negative" (neg? (:weight result)))
+        (println "  Code:" (pr-str (subs (:code result) 0 (min 60 (count (:code result))))))
+        (println "  Weight:" (:weight result) "Struct:" (:struct-score result)))
 
-  ;; -- 2.6 generate-and-rank --
-  (println "\n== generate-and-rank ==")
+      ;; -- 2.6 generate-and-rank --
+      (println "\n== generate-and-rank ==")
 
-  (pr/let [gf (llm-core/make-llm-gf model-map)
-           transitions [{:state {:x 5 :y 5} :action :up    :expected {:x 5 :y 4}}
-                        {:state {:x 5 :y 5} :action :down  :expected {:x 5 :y 6}}]
-           results (cg/generate-and-rank model-map gf
-                     "Write (defn move [{:keys [x y]} action] (case action :up {:x x :y (dec y)} :down {:x x :y (inc y)}))"
-                     3
-                     {:temperature 0.7 :transitions transitions})]
-    (assert-equal "generate-and-rank: 3 candidates" 3 (count results))
-    (assert-true "generate-and-rank: sorted by combined desc"
-                 (let [scores (mapv :combined results)]
-                   (= scores (vec (sort > scores)))))
-    (assert-true "generate-and-rank: all have :weight" (every? :weight results))
-    (assert-true "generate-and-rank: all have :struct-score" (every? :struct-score results))
-    (assert-true "generate-and-rank: all have :combined" (every? :combined results))
-    (assert-true "generate-and-rank: all have :accuracy" (every? #(contains? % :accuracy) results))
-    (println "  Candidates:")
-    (doseq [[i r] (map-indexed vector results)]
-      (println (str "    " i ": combined=" (int (:combined r))
-                    " weight=" (int (:weight r))
-                    " struct=" (:struct-score r)
-                    " acc=" (:accuracy r)))))
+      (pr/let [gf (llm-core/make-llm-gf model-map)
+               transitions [{:state {:x 5 :y 5} :action :up    :expected {:x 5 :y 4}}
+                            {:state {:x 5 :y 5} :action :down  :expected {:x 5 :y 6}}]
+               results (cg/generate-and-rank model-map gf
+                         "Write (defn move [{:keys [x y]} action] (case action :up {:x x :y (dec y)} :down {:x x :y (inc y)}))"
+                         3
+                         {:temperature 0.7 :transitions transitions})]
+        (assert-equal "generate-and-rank: 3 candidates" 3 (count results))
+        (assert-true "generate-and-rank: sorted by combined desc"
+                     (let [scores (mapv :combined results)]
+                       (= scores (vec (sort > scores)))))
+        (assert-true "generate-and-rank: all have :weight" (every? :weight results))
+        (assert-true "generate-and-rank: all have :struct-score" (every? :struct-score results))
+        (assert-true "generate-and-rank: all have :combined" (every? :combined results))
+        (assert-true "generate-and-rank: all have :accuracy" (every? #(contains? % :accuracy) results))
+        (println "  Candidates:")
+        (doseq [[i r] (map-indexed vector results)]
+          (println (str "    " i ": combined=" (int (:combined r))
+                        " weight=" (int (:weight r))
+                        " struct=" (:struct-score r)
+                        " acc=" (:accuracy r)))))
 
-  ;; Final report
-  (println "\n== Final summary (pure + model) ==")
-  (report))
+      ;; Final report
+      (println "\n== Final summary (pure + model) ==")
+      (report)
+      (when (pos? @fail-count) (set! (.-exitCode js/process) 1)))))

@@ -306,4 +306,5 @@
          _ (check-model (nth models 1))
          _ (check-model (nth models 2))
          _ (check-model (nth models 3))]
-  (println (str "\n=== llm-batched-forward-gate: " @pass " PASS, " @fail " FAIL ===")))
+  (println (str "\n=== llm-batched-forward-gate: " @pass " PASS, " @fail " FAIL ==="))
+  (when (pos? @fail) (set! (.-exitCode js/process) 1)))

@@ -162,4 +162,5 @@
                       "Answer with yes, no, or maybe: is the sky blue? Answer: " true)
          _ (run-model "qwen3-0.6b" "qwen3-0.6b-mlx-bf16"
                       "The capital of France is" false)]
-  (println (str "\n=== llm-batched-gf: " @pass " PASS, " @fail " FAIL ===")))
+  (println (str "\n=== llm-batched-gf: " @pass " PASS, " @fail " FAIL ==="))
+  (when (pos? @fail) (set! (.-exitCode js/process) 1)))

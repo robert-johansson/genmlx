@@ -13,7 +13,8 @@
             [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
-            [promesa.core :as pr]))
+            [promesa.core :as pr]
+            ["fs" :as fs]))
 
 ;; ============================================================
 ;; Test helpers
@@ -38,7 +39,9 @@
 (defn- report []
   (let [p @pass-count f @fail-count]
     (println (str "\n=== " p "/" (+ p f) " PASS ==="))
-    (when (pos? f) (println (str "!!! " f " FAILURES !!!")))))
+    (when (pos? f)
+      (println (str "!!! " f " FAILURES !!!"))
+      (set! (.-exitCode js/process) 1))))
 
 ;; ============================================================
 ;; 1. TokenByteTrie tests (pure, no model)
@@ -152,221 +155,224 @@
 ;; 2. Byte marginals (needs model)
 ;; ============================================================
 
-(println "\n== Byte marginals (loading model...) ==")
-
 (def home-dir (.-HOME (.-env js/process)))
 
 ;; -mlx-bf16 = the converted (language_model.model.*) key layout every other
 ;; llm/ suite loads; the bare qwen3.5-0.8b dir is an unconverted original
 ;; export on some hosts (model.language_model.* + mtp.*) that load-weights
 ;; cannot read (genmlx-lr9c Mac bring-up).
-(pr/let [model-map (llm/load-model (str home-dir "/.cache/models/qwen3.5-0.8b-mlx-bf16"))]
-  (let [tokenizer (:tokenizer model-map)
-        model (:model model-map)
-        token-index (gram/build-token-index tokenizer)
-        trie (bytes/build-byte-trie token-index)]
+(if-not (.existsSync fs (str home-dir "/.cache/models/qwen3.5-0.8b-mlx-bf16/model.safetensors"))
+  (do (println "SKIP llm-bytes-test byte-marginal section: qwen3.5-0.8b checkpoint absent at"
+               (str home-dir "/.cache/models/qwen3.5-0.8b-mlx-bf16"))
+      (report))
+  (do (println "\n== Byte marginals (loading model...) ==")
+    (pr/let [model-map (llm/load-model (str home-dir "/.cache/models/qwen3.5-0.8b-mlx-bf16"))]
+      (let [tokenizer (:tokenizer model-map)
+            model (:model model-map)
+            token-index (gram/build-token-index tokenizer)
+            trie (bytes/build-byte-trie token-index)]
 
-    (println "\n-- byte trie from real tokenizer --")
+        (println "\n-- byte trie from real tokenizer --")
 
-    (let [vocab (llm/vocab-size tokenizer)
-          reachable (count (:all-token-ids trie))]
-      (assert-true "real trie reachable > 100k" (> reachable 100000))
-      (assert-true "real trie reachable <= vocab" (<= reachable vocab))
-      (assert-true "root has many children (byte branching)" (> (count (:children trie)) 50)))
+        (let [vocab (llm/vocab-size tokenizer)
+              reachable (count (:all-token-ids trie))]
+          (assert-true "real trie reachable > 100k" (> reachable 100000))
+          (assert-true "real trie reachable <= vocab" (<= reachable vocab))
+          (assert-true "root has many children (byte branching)" (> (count (:children trie)) 50)))
 
-    (println "\n-- byte-logprobs at root --")
+        (println "\n-- byte-logprobs at root --")
 
-    ;; Get token logprobs from a simple prompt
-    (let [prompt-ids [6723 25 220] ;; "Phone: "
-          _ (llm/init-cache! model)
-          logits (llm/forward-prefill model prompt-ids)
-          log-probs (bytes/logits->logprobs logits) ;; f64-accurate norm (genmlx-h2ki)
-          byte-lps (bytes/byte-logprobs trie log-probs)
-          _ (llm/reset-cache! model)]
+        ;; Get token logprobs from a simple prompt
+        (let [prompt-ids [6723 25 220] ;; "Phone: "
+              _ (llm/init-cache! model)
+              logits (llm/forward-prefill model prompt-ids)
+              log-probs (bytes/logits->logprobs logits) ;; f64-accurate norm (genmlx-h2ki)
+              byte-lps (bytes/byte-logprobs trie log-probs)
+              _ (llm/reset-cache! model)]
 
-      ;; Returns a map with string keys (single chars)
-      (assert-true "byte-logprobs returns a map" (map? byte-lps))
-      (assert-true "keys are single-char strings"
-                   (every? #(and (string? %) (= 1 (count %))) (keys byte-lps)))
+          ;; Returns a map with string keys (single chars)
+          (assert-true "byte-logprobs returns a map" (map? byte-lps))
+          (assert-true "keys are single-char strings"
+                       (every? #(and (string? %) (= 1 (count %))) (keys byte-lps)))
 
-      ;; All values are negative (log-probabilities)
-      (assert-true "all values negative"
-                   (every? neg? (vals byte-lps)))
+          ;; All values are negative (log-probabilities)
+          (assert-true "all values negative"
+                       (every? neg? (vals byte-lps)))
 
-      ;; exp of values sum to approximately 1.0
-      ;; The sum accounts for all probability mass that goes through byte-
-      ;; producing tokens. EOS and special tokens with empty strings are
-      ;; excluded from the trie, so their mass is missing, so the sum is <= 1.0.
-      ;; The normalization is now computed in float64 (logits->logprobs uses
-      ;; f64-logsumexp), so the full-vocab softmax sums to 1.0 to float32
-      ;; precision rather than drifting to ~1.04 (genmlx-h2ki) — the tight bound
-      ;; is restored.
-      (let [total (reduce + (map #(js/Math.exp %) (vals byte-lps)))]
-        (println (str "  exp sum: " total))
-        (assert-true "exp sum <= 1.0 + eps (EOS mass excluded; f64-normalized)" (<= total 1.001))
-        (assert-true "exp sum > 0.95 (most mass in byte tokens)" (> total 0.95)))
+          ;; exp of values sum to approximately 1.0
+          ;; The sum accounts for all probability mass that goes through byte-
+          ;; producing tokens. EOS and special tokens with empty strings are
+          ;; excluded from the trie, so their mass is missing, so the sum is <= 1.0.
+          ;; The normalization is now computed in float64 (logits->logprobs uses
+          ;; f64-logsumexp), so the full-vocab softmax sums to 1.0 to float32
+          ;; precision rather than drifting to ~1.04 (genmlx-h2ki) — the tight bound
+          ;; is restored.
+          (let [total (reduce + (map #(js/Math.exp %) (vals byte-lps)))]
+            (println (str "  exp sum: " total))
+            (assert-true "exp sum <= 1.0 + eps (EOS mass excluded; f64-normalized)" (<= total 1.001))
+            (assert-true "exp sum > 0.95 (most mass in byte tokens)" (> total 0.95)))
 
-      ;; Common ASCII bytes have reasonable probabilities (not -infinity)
-      (let [common-chars ["a" "e" "t" "o" "1" "0" " "]]
-        (assert-true "common bytes have finite logprobs"
-                     (every? #(and (contains? byte-lps %)
-                                   (js/isFinite (get byte-lps %)))
-                             common-chars))))
+          ;; Common ASCII bytes have reasonable probabilities (not -infinity)
+          (let [common-chars ["a" "e" "t" "o" "1" "0" " "]]
+            (assert-true "common bytes have finite logprobs"
+                         (every? #(and (contains? byte-lps %)
+                                       (js/isFinite (get byte-lps %)))
+                                 common-chars))))
 
-    (println "\n-- byte-logprobs at mid-trie node --")
+        (println "\n-- byte-logprobs at mid-trie node --")
 
-    ;; Navigate to a non-root node (e.g., the "t" subtree)
-    (let [prompt-ids [6723 25 220]
-          _ (llm/init-cache! model)
-          logits (llm/forward-prefill model prompt-ids)
-          log-probs (mx/subtract logits (mx/logsumexp logits))
-          t-node (bytes/trie-lookup trie "t")
-          _ (llm/reset-cache! model)]
+        ;; Navigate to a non-root node (e.g., the "t" subtree)
+        (let [prompt-ids [6723 25 220]
+              _ (llm/init-cache! model)
+              logits (llm/forward-prefill model prompt-ids)
+              log-probs (mx/subtract logits (mx/logsumexp logits))
+              t-node (bytes/trie-lookup trie "t")
+              _ (llm/reset-cache! model)]
 
-      (assert-true "t-node exists" (some? t-node))
+          (assert-true "t-node exists" (some? t-node))
 
-      (when t-node
-        (let [child-lps (bytes/byte-logprobs t-node log-probs)]
-          ;; Values are conditional log-probs
-          (assert-true "mid-trie: returns a map" (map? child-lps))
-          (assert-true "mid-trie: values are finite"
-                       (every? js/isFinite (vals child-lps)))
+          (when t-node
+            (let [child-lps (bytes/byte-logprobs t-node log-probs)]
+              ;; Values are conditional log-probs
+              (assert-true "mid-trie: returns a map" (map? child-lps))
+              (assert-true "mid-trie: values are finite"
+                           (every? js/isFinite (vals child-lps)))
 
-          ;; exp of conditional values sum to at most 1.0
-          ;; At non-leaf nodes with token-ids, the boundary probability (tokens
-          ;; that terminate exactly at this node) is NOT included in the child
-          ;; marginals. So exp sum < 1.0, and the gap is the boundary mass.
-          ;; At nodes without own token-ids, the sum should be close to 1.0.
-          (let [total (reduce + (map #(js/Math.exp %) (vals child-lps)))
-                has-own-tokens (pos? (count (:token-ids t-node)))]
-            (assert-true "mid-trie: exp sum <= 1.0" (<= total 1.001))
-            (when has-own-tokens
-              (println "  INFO: t-node has own tokens, boundary mass accounts for gap"))))))
+              ;; exp of conditional values sum to at most 1.0
+              ;; At non-leaf nodes with token-ids, the boundary probability (tokens
+              ;; that terminate exactly at this node) is NOT included in the child
+              ;; marginals. So exp sum < 1.0, and the gap is the boundary mass.
+              ;; At nodes without own token-ids, the sum should be close to 1.0.
+              (let [total (reduce + (map #(js/Math.exp %) (vals child-lps)))
+                    has-own-tokens (pos? (count (:token-ids t-node)))]
+                (assert-true "mid-trie: exp sum <= 1.0" (<= total 1.001))
+                (when has-own-tokens
+                  (println "  INFO: t-node has own tokens, boundary mass accounts for gap"))))))
 
-    (println "\n-- monotone inclusion invariant --")
+        (println "\n-- monotone inclusion invariant --")
 
-    ;; logsumexp of child marginals <= parent logsumexp
-    ;; (child covers a subset of tokens, so its total mass <= parent's)
-    (let [prompt-ids [6723 25 220]
-          _ (llm/init-cache! model)
-          logits (llm/forward-prefill model prompt-ids)
-          log-probs (mx/subtract logits (mx/logsumexp logits))
-          _ (llm/reset-cache! model)
-          root-lps (bytes/byte-logprobs trie log-probs)
-          root-lse (js/Math.log (reduce + (map #(js/Math.exp %) (vals root-lps))))]
+        ;; logsumexp of child marginals <= parent logsumexp
+        ;; (child covers a subset of tokens, so its total mass <= parent's)
+        (let [prompt-ids [6723 25 220]
+              _ (llm/init-cache! model)
+              logits (llm/forward-prefill model prompt-ids)
+              log-probs (mx/subtract logits (mx/logsumexp logits))
+              _ (llm/reset-cache! model)
+              root-lps (bytes/byte-logprobs trie log-probs)
+              root-lse (js/Math.log (reduce + (map #(js/Math.exp %) (vals root-lps))))]
 
-      ;; Pick a child node ("t") and verify its total mass <= root total mass
-      (let [t-node (bytes/trie-lookup trie "t")]
-        (when t-node
-          (let [child-lps (bytes/byte-logprobs t-node log-probs)
-                child-lse (js/Math.log (reduce + (map #(js/Math.exp %) (vals child-lps))))]
-            (assert-true "monotone: child logsumexp <= root logsumexp"
-                         (<= child-lse (+ root-lse 1e-6)))))))
+          ;; Pick a child node ("t") and verify its total mass <= root total mass
+          (let [t-node (bytes/trie-lookup trie "t")]
+            (when t-node
+              (let [child-lps (bytes/byte-logprobs t-node log-probs)
+                    child-lse (js/Math.log (reduce + (map #(js/Math.exp %) (vals child-lps))))]
+                (assert-true "monotone: child logsumexp <= root logsumexp"
+                             (<= child-lse (+ root-lse 1e-6)))))))
 
-    ;; ============================================================
-    ;; 3. Byte-level generation (needs model)
-    ;; ============================================================
+        ;; ============================================================
+        ;; 3. Byte-level generation (needs model)
+        ;; ============================================================
 
-    (println "\n== Byte-level generation ==")
+        (println "\n== Byte-level generation ==")
 
-    (println "\n-- make-byte-llm-gf: unconstrained simulate --")
+        (println "\n-- make-byte-llm-gf: unconstrained simulate --")
 
-    (let [byte-gf (bytes/make-byte-llm-gf model-map)
-          prompt-ids [6723 25 220]] ;; "Phone: "
+        (let [byte-gf (bytes/make-byte-llm-gf model-map)
+              prompt-ids [6723 25 220]] ;; "Phone: "
 
-      (pr/let [trace (p/simulate byte-gf [prompt-ids 20])]
-        (let [retval (:retval trace)
-              text (bytes/decode-byte-trace trace)
-              score (mx/item (:score trace))]
+          (pr/let [trace (p/simulate byte-gf [prompt-ids 20])]
+            (let [retval (:retval trace)
+                  text (bytes/decode-byte-trace trace)
+                  score (mx/item (:score trace))]
 
-          ;; retval is a vector of single-char strings
-          (assert-true "retval is a vector" (vector? retval))
-          (assert-true "retval length <= max-bytes" (<= (count retval) 20))
-          (assert-true "retval elements are single-char strings"
-                       (every? #(and (string? %) (= 1 (count %))) retval))
+              ;; retval is a vector of single-char strings
+              (assert-true "retval is a vector" (vector? retval))
+              (assert-true "retval length <= max-bytes" (<= (count retval) 20))
+              (assert-true "retval elements are single-char strings"
+                           (every? #(and (string? %) (= 1 (count %))) retval))
 
-          ;; Score is finite and negative
-          (assert-true "score is finite" (js/isFinite score))
-          (assert-true "score is negative" (neg? score))
+              ;; Score is finite and negative
+              (assert-true "score is finite" (js/isFinite score))
+              (assert-true "score is negative" (neg? score))
 
-          ;; decode-byte-trace returns a non-empty string
-          (assert-true "decoded text is a string" (string? text))
-          (assert-true "decoded text is non-empty" (pos? (count text)))
+              ;; decode-byte-trace returns a non-empty string
+              (assert-true "decoded text is a string" (string? text))
+              (assert-true "decoded text is non-empty" (pos? (count text)))
 
-          ;; Generated text is valid UTF-8 (apply str does not throw)
-          (assert-true "text is valid (apply str works)" (string? (apply str retval)))
+              ;; Generated text is valid UTF-8 (apply str does not throw)
+              (assert-true "text is valid (apply str works)" (string? (apply str retval)))
 
-          (println "  generated text:" (pr-str text))
+              (println "  generated text:" (pr-str text))
 
-          (println "\n-- make-byte-llm-gf: zero max-bytes --")
+              (println "\n-- make-byte-llm-gf: zero max-bytes --")
 
-          (pr/let [empty-trace (p/simulate byte-gf [prompt-ids 0])]
-            (assert-equal "zero max-bytes: empty retval" [] (:retval empty-trace))
-            (assert-equal "zero max-bytes: decoded empty" "" (bytes/decode-byte-trace empty-trace))
+              (pr/let [empty-trace (p/simulate byte-gf [prompt-ids 0])]
+                (assert-equal "zero max-bytes: empty retval" [] (:retval empty-trace))
+                (assert-equal "zero max-bytes: decoded empty" "" (bytes/decode-byte-trace empty-trace))
 
-            (println "\n-- constrain-bytes: digit sequence regex --")
+                (println "\n-- constrain-bytes: digit sequence regex --")
 
-            (let [digit-gf (bytes/constrain-bytes model-map "[0-9]+")]
+                (let [digit-gf (bytes/constrain-bytes model-map "[0-9]+")]
 
-              (pr/let [ct (p/simulate digit-gf [prompt-ids 10])]
-                (let [digit-text (bytes/decode-byte-trace ct)
-                      digit-re #"[0-9]+"]
+                  (pr/let [ct (p/simulate digit-gf [prompt-ids 10])]
+                    (let [digit-text (bytes/decode-byte-trace ct)
+                          digit-re #"[0-9]+"]
 
-                  (assert-true "constrained: output matches digit regex"
-                               (some? (re-matches digit-re digit-text)))
-                  (assert-true "constrained: score is finite"
-                               (js/isFinite (mx/item (:score ct))))
+                      (assert-true "constrained: output matches digit regex"
+                                   (some? (re-matches digit-re digit-text)))
+                      (assert-true "constrained: score is finite"
+                                   (js/isFinite (mx/item (:score ct))))
 
-                  (println "  digit output:" (pr-str digit-text))
+                      (println "  digit output:" (pr-str digit-text))
 
-                  ;; Multiple simulates produce variety
-                  (pr/let [ct1 (p/simulate digit-gf [prompt-ids 10])
-                           ct2 (p/simulate digit-gf [prompt-ids 10])
-                           ct3 (p/simulate digit-gf [prompt-ids 10])]
-                    (let [texts (mapv bytes/decode-byte-trace [ct1 ct2 ct3])]
-                      (assert-true "constrained: all match digit regex"
-                                   (every? #(some? (re-matches digit-re %)) texts))
-                      (assert-true "constrained: not all identical"
-                                   (< 1 (count (set texts))))
+                      ;; Multiple simulates produce variety
+                      (pr/let [ct1 (p/simulate digit-gf [prompt-ids 10])
+                               ct2 (p/simulate digit-gf [prompt-ids 10])
+                               ct3 (p/simulate digit-gf [prompt-ids 10])]
+                        (let [texts (mapv bytes/decode-byte-trace [ct1 ct2 ct3])]
+                          (assert-true "constrained: all match digit regex"
+                                       (every? #(some? (re-matches digit-re %)) texts))
+                          (assert-true "constrained: not all identical"
+                                       (< 1 (count (set texts))))
 
-                      (println "\n-- constrain-bytes: capitalized word regex --")
+                          (println "\n-- constrain-bytes: capitalized word regex --")
 
-                      (let [cap-gf (bytes/constrain-bytes model-map "[A-Z][a-z]+")]
+                          (let [cap-gf (bytes/constrain-bytes model-map "[A-Z][a-z]+")]
 
-                        (pr/let [cap-trace (p/simulate cap-gf [prompt-ids 10])]
-                          (let [cap-text (bytes/decode-byte-trace cap-trace)
-                                cap-re #"[A-Z][a-z]+"]
+                            (pr/let [cap-trace (p/simulate cap-gf [prompt-ids 10])]
+                              (let [cap-text (bytes/decode-byte-trace cap-trace)
+                                    cap-re #"[A-Z][a-z]+"]
 
-                            (assert-true "capitalized: output matches regex"
-                                         (some? (re-matches cap-re cap-text)))
-                            (assert-true "capitalized: score is finite"
-                                         (js/isFinite (mx/item (:score cap-trace))))
+                                (assert-true "capitalized: output matches regex"
+                                             (some? (re-matches cap-re cap-text)))
+                                (assert-true "capitalized: score is finite"
+                                             (js/isFinite (mx/item (:score cap-trace))))
 
-                            (println "  capitalized output:" (pr-str cap-text))
+                                (println "  capitalized output:" (pr-str cap-text))
 
-                            (println "\n-- constrain-bytes: compiled DFA input --")
+                                (println "\n-- constrain-bytes: compiled DFA input --")
 
-                            ;; constrain-bytes also accepts a pre-compiled DFA
-                            (let [dfa (gram/compile-regex "[0-9]{2}")
-                                  dfa-gf (bytes/constrain-bytes model-map dfa)]
+                                ;; constrain-bytes also accepts a pre-compiled DFA
+                                (let [dfa (gram/compile-regex "[0-9]{2}")
+                                      dfa-gf (bytes/constrain-bytes model-map dfa)]
 
-                              (pr/let [dfa-trace (p/simulate dfa-gf [prompt-ids 3])]
-                                (let [dfa-text (bytes/decode-byte-trace dfa-trace)]
-                                  (assert-true "dfa input: output matches [0-9]{2}"
-                                               (some? (re-matches #"[0-9]{2}" dfa-text)))
+                                  (pr/let [dfa-trace (p/simulate dfa-gf [prompt-ids 3])]
+                                    (let [dfa-text (bytes/decode-byte-trace dfa-trace)]
+                                      (assert-true "dfa input: output matches [0-9]{2}"
+                                                   (some? (re-matches #"[0-9]{2}" dfa-text)))
 
-                                  (println "  dfa input output:" (pr-str dfa-text))
+                                      (println "  dfa input output:" (pr-str dfa-text))
 
-                                  (println "\n-- constrain-bytes: early stop on stuck DFA --")
+                                      (println "\n-- constrain-bytes: early stop on stuck DFA --")
 
-                                  (let [short-gf (bytes/constrain-bytes model-map "[ab]")]
-                                    (pr/let [short-trace (p/simulate short-gf [prompt-ids 100])]
-                                      (let [short-text (bytes/decode-byte-trace short-trace)]
-                                        (assert-true "early stop: output is 'a' or 'b'"
-                                                     (contains? #{"a" "b"} short-text))
-                                        (assert-true "early stop: retval length 1"
-                                                     (= 1 (count (:retval short-trace))))
+                                      (let [short-gf (bytes/constrain-bytes model-map "[ab]")]
+                                        (pr/let [short-trace (p/simulate short-gf [prompt-ids 100])]
+                                          (let [short-text (bytes/decode-byte-trace short-trace)]
+                                            (assert-true "early stop: output is 'a' or 'b'"
+                                                         (contains? #{"a" "b"} short-text))
+                                            (assert-true "early stop: retval length 1"
+                                                         (= 1 (count (:retval short-trace))))
 
-                                        (println "  early stop output:" (pr-str short-text))
+                                            (println "  early stop output:" (pr-str short-text))
 
-                                        (report)))))))))))))))))))))
+                                            (report)))))))))))))))))))))))

@@ -251,10 +251,12 @@
                        (< (js/Math.abs (- ml-l ml-b)) 5.0))
           (assert-true "L6: ledger empty after both" (zero? (branch-count model))))))))
 
-(-> (run-gates)
-    (pr/then (fn [_] (run-moe-bench)))
-    (pr/then (fn [_] (summary)))
-    (pr/catch (fn [e]
-                (swap! fail inc)
-                (println "  FAIL (uncaught)" (.-message e) (pr-str (ex-data e)))
-                (summary))))
+(if-not (.existsSync fs (str dense-dir "/model.safetensors"))
+  (println "SKIP llm-lanes-smc-test: qwen3-0.6b checkpoint absent at" dense-dir)
+  (-> (run-gates)
+      (pr/then (fn [_] (run-moe-bench)))
+      (pr/then (fn [_] (summary)))
+      (pr/catch (fn [e]
+                  (swap! fail inc)
+                  (println "  FAIL (uncaught)" (.-message e) (pr-str (ex-data e)))
+                  (summary)))))

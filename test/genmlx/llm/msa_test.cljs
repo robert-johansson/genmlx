@@ -20,7 +20,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.dynamic :as dyn]
             [promesa.core :as pr]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            ["fs" :as fs]))
 
 ;; ============================================================
 ;; Test harness
@@ -548,184 +549,187 @@
 (def ^:private model-dir
   (str (.-HOME js/process.env) "/.cache/models/qwen3.5-0.8b-mlx-bf16"))
 
-(println "\n== Loading Qwen3.5-0.8B for model tests... ==")
+(if-not (.existsSync fs (str model-dir "/model.safetensors"))
+  (do (println "SKIP llm-msa-test model section: qwen3.5-0.8b checkpoint absent at" model-dir)
+      (when (pos? @fail-count) (set! (.-exitCode js/process) 1)))
+  (do (println "\n== Loading Qwen3.5-0.8B for model tests... ==")
+    (pr/let [model-map (llm/load-model model-dir)
+             ;; No fine-tuned model in the roster — qwen3.5-0.8b drives both the
+             ;; template-mode (2.1-2.3) and knowledge-mode (2.4-2.5) tests.
+             base-model-map model-map]
+      (println "Model loaded.\n")
 
-(pr/let [model-map (llm/load-model model-dir)
-         ;; No fine-tuned model in the roster — qwen3.5-0.8b drives both the
-         ;; template-mode (2.1-2.3) and knowledge-mode (2.4-2.5) tests.
-         base-model-map model-map]
-  (println "Model loaded.\n")
+      ;; -- 2.1 generate-candidate --
+      (println "\n-- 2.1 generate-candidate: produces code --")
 
-  ;; -- 2.1 generate-candidate --
-  (println "\n-- 2.1 generate-candidate: produces code --")
+      (pr/let [{:keys [code]} (msa/generate-candidate model-map xy-task {})]
+        (assert-true "code is a string" (string? code))
+        (assert-true "code is non-empty" (pos? (count code)))
+        (assert-true "code contains fn or trace"
+                     (or (str/includes? code "fn")
+                         (str/includes? code "trace")))
+        (assert-true "code contains dist/gaussian"
+                     (str/includes? code "dist/gaussian"))
+        (println "    generated code:" (pr-str (subs code 0 (min 80 (count code)))))
 
-  (pr/let [{:keys [code]} (msa/generate-candidate model-map xy-task {})]
-    (assert-true "code is a string" (string? code))
-    (assert-true "code is non-empty" (pos? (count code)))
-    (assert-true "code contains fn or trace"
-                 (or (str/includes? code "fn")
-                     (str/includes? code "trace")))
-    (assert-true "code contains dist/gaussian"
-                 (str/includes? code "dist/gaussian"))
-    (println "    generated code:" (pr-str (subs code 0 (min 80 (count code)))))
+        ;; The generated code should be eval-able
+        (let [gf (msa/eval-model code)]
+          (assert-true "generated code evals (or nil)"
+                       true) ;; Soft check: LLM output may fail
+          (when gf
+            (assert-true "generated code produces DynamicGF" (instance? dyn/DynamicGF gf)))))
 
-    ;; The generated code should be eval-able
-    (let [gf (msa/eval-model code)]
-      (assert-true "generated code evals (or nil)"
-                   true) ;; Soft check: LLM output may fail
-      (when gf
-        (assert-true "generated code produces DynamicGF" (instance? dyn/DynamicGF gf)))))
+      ;; -- 2.1 generate-candidate: causal model --
+      (println "\n-- 2.1 generate-candidate: strength-time task --")
 
-  ;; -- 2.1 generate-candidate: causal model --
-  (println "\n-- 2.1 generate-candidate: strength-time task --")
+      (pr/let [task {:name "strength-time"
+                     :description "A racer has strength ~ gaussian(5,2). Finish time depends on strength: time ~ gaussian(30/strength, 0.5)."
+                     :variables [:strength :time]
+                     :observations {:time 4.0}
+                     :query :strength}
+               {:keys [code]} (msa/generate-candidate model-map task {})]
+        (assert-true "produces code" (string? code))
+        (assert-true "code non-empty" (pos? (count code)))
+        (println "    generated code:" (pr-str (subs code 0 (min 80 (count code))))))
 
-  (pr/let [task {:name "strength-time"
-                 :description "A racer has strength ~ gaussian(5,2). Finish time depends on strength: time ~ gaussian(30/strength, 0.5)."
-                 :variables [:strength :time]
-                 :observations {:time 4.0}
-                 :query :strength}
-           {:keys [code]} (msa/generate-candidate model-map task {})]
-    (assert-true "produces code" (string? code))
-    (assert-true "code non-empty" (pos? (count code)))
-    (println "    generated code:" (pr-str (subs code 0 (min 80 (count code))))))
+      ;; -- 2.2 synthesize-and-rank --
+      (println "\n-- 2.2 synthesize-and-rank: produces ranked candidates --")
 
-  ;; -- 2.2 synthesize-and-rank --
-  (println "\n-- 2.2 synthesize-and-rank: produces ranked candidates --")
+      (pr/let [candidates (msa/synthesize-and-rank model-map xy-task {:n 5})]
+        (assert-true "returns a vector" (vector? candidates))
+        (assert-equal "has 5 candidates" 5 (count candidates))
+        (let [with-weight (filter #(and (:weight %) (js/isFinite (:weight %))) candidates)]
+          (assert-true "at least 1 has finite weight" (pos? (count with-weight)))
+          (println "    " (count with-weight) "/" (count candidates) " with finite weight")
+          (when (> (count with-weight) 1)
+            ;; Verify sorted descending by weight
+            (let [weights (mapv :weight with-weight)]
+              (assert-true "sorted descending by weight"
+                           (= weights (vec (sort > weights)))))))
+        ;; Each candidate should have expected keys
+        (doseq [[i c] (map-indexed vector candidates)]
+          (when (< i 3)
+            (println (str "    [" i "] weight=" (when (:weight c) (.toFixed (:weight c) 2))
+                          " code=" (pr-str (subs (str (:code c)) 0 (min 50 (count (str (:code c))))))))))
+        (assert-true "candidates have :code" (every? #(contains? % :code) candidates))
+        (assert-true "candidates have :weight" (every? #(contains? % :weight) candidates)))
 
-  (pr/let [candidates (msa/synthesize-and-rank model-map xy-task {:n 5})]
-    (assert-true "returns a vector" (vector? candidates))
-    (assert-equal "has 5 candidates" 5 (count candidates))
-    (let [with-weight (filter #(and (:weight %) (js/isFinite (:weight %))) candidates)]
-      (assert-true "at least 1 has finite weight" (pos? (count with-weight)))
-      (println "    " (count with-weight) "/" (count candidates) " with finite weight")
-      (when (> (count with-weight) 1)
-        ;; Verify sorted descending by weight
-        (let [weights (mapv :weight with-weight)]
-          (assert-true "sorted descending by weight"
-                       (= weights (vec (sort > weights)))))))
-    ;; Each candidate should have expected keys
-    (doseq [[i c] (map-indexed vector candidates)]
-      (when (< i 3)
-        (println (str "    [" i "] weight=" (when (:weight c) (.toFixed (:weight c) 2))
-                      " code=" (pr-str (subs (str (:code c)) 0 (min 50 (count (str (:code c))))))))))
-    (assert-true "candidates have :code" (every? #(contains? % :code) candidates))
-    (assert-true "candidates have :weight" (every? #(contains? % :weight) candidates)))
+      ;; -- 2.2 synthesize-and-rank: with larger N --
+      (println "\n-- 2.2 synthesize-and-rank: N=3 for strength-time --")
 
-  ;; -- 2.2 synthesize-and-rank: with larger N --
-  (println "\n-- 2.2 synthesize-and-rank: N=3 for strength-time --")
+      (pr/let [task {:name "strength-time"
+                     :description "A racer has strength ~ gaussian(5,2). Time = gaussian(30/strength, 0.5)."
+                     :variables [:strength :time]
+                     :observations {:time 4.0}
+                     :query :strength}
+               candidates (msa/synthesize-and-rank model-map task {:n 3})]
+        (assert-equal "has 3 candidates" 3 (count candidates))
+        (assert-true "all have :code" (every? :code candidates)))
 
-  (pr/let [task {:name "strength-time"
-                 :description "A racer has strength ~ gaussian(5,2). Time = gaussian(30/strength, 0.5)."
-                 :variables [:strength :time]
-                 :observations {:time 4.0}
-                 :query :strength}
-           candidates (msa/synthesize-and-rank model-map task {:n 3})]
-    (assert-equal "has 3 candidates" 3 (count candidates))
-    (assert-true "all have :code" (every? :code candidates)))
+      ;; -- 2.3 End-to-end MSA --
+      (println "\n-- 2.3 end-to-end MSA: x-causes-y --")
 
-  ;; -- 2.3 End-to-end MSA --
-  (println "\n-- 2.3 end-to-end MSA: x-causes-y --")
+      (pr/let [result (msa/msa model-map xy-task {:n 5 :particles 200})]
+        (assert-true "result has :model" (contains? result :model))
+        (assert-true "result has :posterior" (contains? result :posterior))
+        (assert-true "result has :candidates" (contains? result :candidates))
 
-  (pr/let [result (msa/msa model-map xy-task {:n 5 :particles 200})]
-    (assert-true "result has :model" (contains? result :model))
-    (assert-true "result has :posterior" (contains? result :posterior))
-    (assert-true "result has :candidates" (contains? result :candidates))
+        ;; Posterior checks
+        (let [post (:posterior result)]
+          (assert-true "posterior has :mean" (contains? post :mean))
+          (assert-true "posterior has :variance" (contains? post :variance))
+          (assert-true "posterior mean is a number" (number? (:mean post)))
+          ;; Template mode is DEPRECATED (genmlx-n4ds): it was built for a fine-tuned
+          ;; model that is not in the roster. A non-fine-tuned 0.8b cannot reliably
+          ;; synthesize the right causal model, so we assert MECHANICS (finite
+          ;; posterior over a valid synthesized GF), not semantic accuracy. Knowledge
+          ;; mode (2.5) is the keeper. Semantic correctness is covered model-free by
+          ;; synthesis_exact_test + the wired synthesis->exact-evidence path.
+          (assert-true "posterior mean is finite (template-mode mechanics)" (js/isFinite (:mean post)))
+          ;; some-> : a nil mean (no valid candidate) must not throw and kill the
+          ;; file before the knowledge-mode sections — the FAIL above already
+          ;; records it (deprecated template mode; checkpoint-dependent output).
+          (println "    posterior mean:" (some-> (:mean post) (.toFixed 3)))
+          (when (:variance post)
+            (println "    posterior var:" (some-> (:variance post) (.toFixed 3)))))
 
-    ;; Posterior checks
-    (let [post (:posterior result)]
-      (assert-true "posterior has :mean" (contains? post :mean))
-      (assert-true "posterior has :variance" (contains? post :variance))
-      (assert-true "posterior mean is a number" (number? (:mean post)))
-      ;; Template mode is DEPRECATED (genmlx-n4ds): it was built for a fine-tuned
-      ;; model that is not in the roster. A non-fine-tuned 0.8b cannot reliably
-      ;; synthesize the right causal model, so we assert MECHANICS (finite
-      ;; posterior over a valid synthesized GF), not semantic accuracy. Knowledge
-      ;; mode (2.5) is the keeper. Semantic correctness is covered model-free by
-      ;; synthesis_exact_test + the wired synthesis->exact-evidence path.
-      (assert-true "posterior mean is finite (template-mode mechanics)" (js/isFinite (:mean post)))
-      ;; some-> : a nil mean (no valid candidate) must not throw and kill the
-      ;; file before the knowledge-mode sections — the FAIL above already
-      ;; records it (deprecated template mode; checkpoint-dependent output).
-      (println "    posterior mean:" (some-> (:mean post) (.toFixed 3)))
-      (when (:variance post)
-        (println "    posterior var:" (some-> (:variance post) (.toFixed 3)))))
+        ;; Model should be a map with :gf as a DynamicGF (or nil)
+        (when (:gf (:model result))
+          (assert-true "model gf is DynamicGF" (instance? dyn/DynamicGF (:gf (:model result)))))
 
-    ;; Model should be a map with :gf as a DynamicGF (or nil)
-    (when (:gf (:model result))
-      (assert-true "model gf is DynamicGF" (instance? dyn/DynamicGF (:gf (:model result)))))
+        ;; Candidates vector
+        (assert-true "candidates is a vector" (vector? (:candidates result)))
+        (println "    candidates:" (count (:candidates result))))
 
-    ;; Candidates vector
-    (assert-true "candidates is a vector" (vector? (:candidates result)))
-    (println "    candidates:" (count (:candidates result))))
+      ;; -- 2.3 end-to-end MSA: strength-time --
+      (println "\n-- 2.3 end-to-end MSA: strength-time --")
 
-  ;; -- 2.3 end-to-end MSA: strength-time --
-  (println "\n-- 2.3 end-to-end MSA: strength-time --")
+      (pr/let [task {:name "strength-time"
+                     :description "A racer has strength ~ gaussian(5,2). Finish time = gaussian(30/strength, 0.5)."
+                     :variables [:strength :time]
+                     :observations {:time 4.0}
+                     :query :strength}
+               result (msa/msa model-map task {:n 3 :particles 200})]
+        (assert-true "result has :model" (contains? result :model))
+        (assert-true "result has :posterior" (contains? result :posterior))
+        (let [post (:posterior result)]
+          (assert-true "posterior mean is a number" (number? (:mean post)))
+          ;; LLM may not perfectly capture 30/strength; just verify it's a reasonable number
+          (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
+          ;; some-> : nil-safe (see the 2.3 x-causes-y note) — the quantized 0.8b
+          ;; copies "30/strength" verbatim into the candidate code (invalid CLJS),
+          ;; so all template-mode candidates can fail eval => posterior nil.
+          (println "    posterior mean:" (some-> (:mean post) (.toFixed 3)))))
 
-  (pr/let [task {:name "strength-time"
-                 :description "A racer has strength ~ gaussian(5,2). Finish time = gaussian(30/strength, 0.5)."
-                 :variables [:strength :time]
-                 :observations {:time 4.0}
-                 :query :strength}
-           result (msa/msa model-map task {:n 3 :particles 200})]
-    (assert-true "result has :model" (contains? result :model))
-    (assert-true "result has :posterior" (contains? result :posterior))
-    (let [post (:posterior result)]
-      (assert-true "posterior mean is a number" (number? (:mean post)))
-      ;; LLM may not perfectly capture 30/strength; just verify it's a reasonable number
-      (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
-      ;; some-> : nil-safe (see the 2.3 x-causes-y note) — the quantized 0.8b
-      ;; copies "30/strength" verbatim into the candidate code (invalid CLJS),
-      ;; so all template-mode candidates can fail eval => posterior nil.
-      (println "    posterior mean:" (some-> (:mean post) (.toFixed 3)))))
+      ;; -- 2.4 generate-knowledge-candidate (base model) --
+      (println "\n-- 2.4 generate-knowledge-candidate: sensor fusion --")
 
-  ;; -- 2.4 generate-knowledge-candidate (base model) --
-  (println "\n-- 2.4 generate-knowledge-candidate: sensor fusion --")
+      (pr/let [{:keys [code dist-map variables]}
+               (msa/generate-knowledge-candidate base-model-map sensor-fusion-task {})]
+        (assert-true "code is a string" (string? code))
+        (assert-true "code is non-empty" (pos? (count code)))
+        (assert-true "code contains fn" (str/includes? code "fn"))
+        (assert-true "code contains trace" (str/includes? code "trace"))
+        (assert-true "dist-map is a map" (map? dist-map))
+        (assert-true "variables is a vector" (vector? variables))
+        (println "    generated code:" (pr-str (subs code 0 (min 80 (count code)))))
 
-  (pr/let [{:keys [code dist-map variables]}
-           (msa/generate-knowledge-candidate base-model-map sensor-fusion-task {})]
-    (assert-true "code is a string" (string? code))
-    (assert-true "code is non-empty" (pos? (count code)))
-    (assert-true "code contains fn" (str/includes? code "fn"))
-    (assert-true "code contains trace" (str/includes? code "trace"))
-    (assert-true "dist-map is a map" (map? dist-map))
-    (assert-true "variables is a vector" (vector? variables))
-    (println "    generated code:" (pr-str (subs code 0 (min 80 (count code)))))
+        ;; The generated code should be eval-able
+        (let [gf (msa/eval-model code)]
+          (assert-true "generated code evals (or nil)" true)
+          (when gf
+            (assert-true "generated code produces DynamicGF" (instance? dyn/DynamicGF gf))
+            (let [tr (p/simulate gf [])]
+              (assert-true "simulates with choices"
+                           (some? (:choices tr)))))))
 
-    ;; The generated code should be eval-able
-    (let [gf (msa/eval-model code)]
-      (assert-true "generated code evals (or nil)" true)
-      (when gf
-        (assert-true "generated code produces DynamicGF" (instance? dyn/DynamicGF gf))
-        (let [tr (p/simulate gf [])]
-          (assert-true "simulates with choices"
-                       (some? (:choices tr)))))))
+      ;; -- 2.5 end-to-end MSA: :mode :knowledge --
+      (println "\n-- 2.5 end-to-end MSA: :mode :knowledge sensor fusion --")
 
-  ;; -- 2.5 end-to-end MSA: :mode :knowledge --
-  (println "\n-- 2.5 end-to-end MSA: :mode :knowledge sensor fusion --")
+      (pr/let [result (msa/msa base-model-map sensor-fusion-task
+                               {:mode :knowledge :n 5 :particles 300})]
+        (assert-true "result has :model" (contains? result :model))
+        (assert-true "result has :posterior" (contains? result :posterior))
+        (assert-true "result has :candidates" (contains? result :candidates))
 
-  (pr/let [result (msa/msa base-model-map sensor-fusion-task
-                           {:mode :knowledge :n 5 :particles 300})]
-    (assert-true "result has :model" (contains? result :model))
-    (assert-true "result has :posterior" (contains? result :posterior))
-    (assert-true "result has :candidates" (contains? result :candidates))
+        ;; Posterior checks — generous tolerance for LLM-generated models
+        (let [post (:posterior result)]
+          (when post
+            (assert-true "posterior has :mean" (contains? post :mean))
+            (assert-true "posterior mean is a number" (number? (:mean post)))
+            (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
+            ;; Sensor fusion: true-value|sensor-a=10,sensor-b=14
+            ;; LLM models vary widely; just check it's a reasonable finite number
+            (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
+            (println "    posterior mean:" (.toFixed (:mean post) 3))
+            (when (:variance post)
+              (println "    posterior var:" (.toFixed (:variance post) 3)))))
 
-    ;; Posterior checks — generous tolerance for LLM-generated models
-    (let [post (:posterior result)]
-      (when post
-        (assert-true "posterior has :mean" (contains? post :mean))
-        (assert-true "posterior mean is a number" (number? (:mean post)))
-        (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
-        ;; Sensor fusion: true-value|sensor-a=10,sensor-b=14
-        ;; LLM models vary widely; just check it's a reasonable finite number
-        (assert-true "posterior mean is finite" (js/isFinite (:mean post)))
-        (println "    posterior mean:" (.toFixed (:mean post) 3))
-        (when (:variance post)
-          (println "    posterior var:" (.toFixed (:variance post) 3)))))
+        ;; Candidates vector
+        (assert-true "candidates is a vector" (vector? (:candidates result)))
+        (println "    candidates:" (count (:candidates result))))
 
-    ;; Candidates vector
-    (assert-true "candidates is a vector" (vector? (:candidates result)))
-    (println "    candidates:" (count (:candidates result))))
-
-  ;; -- Final summary --
-  (println)
-  (report "All tests (pure + model)"))
+      ;; -- Final summary --
+      (println)
+      (report "All tests (pure + model)")
+      (when (pos? @fail-count) (set! (.-exitCode js/process) 1)))))

@@ -197,4 +197,5 @@
 
 (pr/let [_ (check-model (first golden))
          _ (check-model (second golden))]
-  (println (str "\n=== forward-golden: " @pass " PASS, " @fail " FAIL ===")))
+  (println (str "\n=== forward-golden: " @pass " PASS, " @fail " FAIL ==="))
+  (when (pos? @fail) (set! (.-exitCode js/process) 1)))

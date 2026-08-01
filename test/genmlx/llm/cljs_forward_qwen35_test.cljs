@@ -58,4 +58,5 @@
                  " diff:" (.toFixed (js/Math.abs (- cljs-score up-score)) 4))
         (assert-true "owned-forward score matches upstream-forward within bf16 tol (<6)"
                      (< (js/Math.abs (- cljs-score up-score)) 6.0)))
-      (println (str "\n=== cljs-forward-qwen35: " @pass " PASS, " @fail " FAIL ===")))))
+      (println (str "\n=== cljs-forward-qwen35: " @pass " PASS, " @fail " FAIL ==="))
+      (when (pos? @fail) (set! (.-exitCode js/process) 1)))))

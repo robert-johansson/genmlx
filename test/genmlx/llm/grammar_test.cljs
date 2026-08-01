@@ -14,7 +14,8 @@
             [genmlx.choicemap :as cm]
             [genmlx.dist :as dist]
             [promesa.core :as pr]
-            [instaparse.core :as insta]))
+            [instaparse.core :as insta]
+            ["fs" :as fs]))
 
 ;; ============================================================
 ;; Test helpers
@@ -39,7 +40,9 @@
 (defn- report []
   (let [p @pass-count f @fail-count]
     (println (str "\n=== " p "/" (+ p f) " PASS ==="))
-    (when (pos? f) (println (str "!!! " f " FAILURES !!!")))))
+    (when (pos? f)
+      (println (str "!!! " f " FAILURES !!!"))
+      (set! (.-exitCode js/process) 1))))
 
 ;; ============================================================
 ;; 1. DFA engine tests (pure, no model)
@@ -189,115 +192,119 @@
 
 (def home-dir (.-HOME (.-env js/process)))
 
-(pr/let [model-map (llm/load-model (str home-dir "/.cache/models/qwen3-0.6b"))]
-  (let [tokenizer (:tokenizer model-map)
-        model (:model model-map)]
+(if-not (.existsSync fs (str home-dir "/.cache/models/qwen3-0.6b/model.safetensors"))
+  (do (println "SKIP llm-grammar-test token-masking section: qwen3-0.6b checkpoint absent at"
+               (str home-dir "/.cache/models/qwen3-0.6b"))
+      (report))
+  (pr/let [model-map (llm/load-model (str home-dir "/.cache/models/qwen3-0.6b"))]
+    (let [tokenizer (:tokenizer model-map)
+          model (:model model-map)]
 
-    (println "\n-- token index --")
-    (let [token-index (gram/build-token-index tokenizer)]
-      (assert-equal "token index size" (llm/vocab-size tokenizer) (count token-index))
-      (assert-true "token 0 is '!'" (= "!" (nth token-index 0)))
-      ;; BPE decoding: Ġ prefix → leading space
-      (assert-true "BPE space decoding" (= " " (subs (nth token-index 9906) 0 1))))
+      (println "\n-- token index --")
+      (let [token-index (gram/build-token-index tokenizer)]
+        (assert-equal "token index size" (llm/vocab-size tokenizer) (count token-index))
+        (assert-true "token 0 is '!'" (= "!" (nth token-index 0)))
+        ;; BPE decoding: Ġ prefix → leading space
+        (assert-true "BPE space decoding" (= " " (subs (nth token-index 9906) 0 1))))
 
-    (println "\n-- mask computation --")
-    (let [constraint (gram/compile-constraint tokenizer "\\d{3}-\\d{4}")
-          dfa (:dfa constraint)
-          token-index (:token-index constraint)]
+      (println "\n-- mask computation --")
+      (let [constraint (gram/compile-constraint tokenizer "\\d{3}-\\d{4}")
+            dfa (:dfa constraint)
+            token-index (:token-index constraint)]
 
-      ;; At start: only single-digit tokens valid
-      (let [mask (gram/get-mask constraint (:start dfa))
-            valid-ids (filterv #(zero? (aget mask %)) (range (count token-index)))]
-        (assert-equal "start: exactly 10 valid tokens" 10 (count valid-ids))
-        (assert-true "start: valid tokens are digits"
-                     (every? #(re-matches #"[0-9]" (nth token-index %)) valid-ids)))
+        ;; At start: only single-digit tokens valid
+        (let [mask (gram/get-mask constraint (:start dfa))
+              valid-ids (filterv #(zero? (aget mask %)) (range (count token-index)))]
+          (assert-equal "start: exactly 10 valid tokens" 10 (count valid-ids))
+          (assert-true "start: valid tokens are digits"
+                       (every? #(re-matches #"[0-9]" (nth token-index %)) valid-ids)))
 
-      ;; After "123": only "-" valid
-      (let [state (gram/dfa-advance-string dfa (:start dfa) "123")
-            mask (gram/get-mask constraint state)
-            valid-ids (filterv #(zero? (aget mask %)) (range (count token-index)))]
-        (assert-equal "after '123': exactly 1 valid token" 1 (count valid-ids))
-        (assert-equal "after '123': valid token is '-'" "-" (nth token-index (first valid-ids))))
+        ;; After "123": only "-" valid
+        (let [state (gram/dfa-advance-string dfa (:start dfa) "123")
+              mask (gram/get-mask constraint state)
+              valid-ids (filterv #(zero? (aget mask %)) (range (count token-index)))]
+          (assert-equal "after '123': exactly 1 valid token" 1 (count valid-ids))
+          (assert-equal "after '123': valid token is '-'" "-" (nth token-index (first valid-ids))))
 
-      ;; Masks precomputed for small DFA
-      (assert-true "masks precomputed" (some? (:masks constraint)))
-      (assert-equal "mask count = alive states" (count (:alive dfa)) (count (:masks constraint))))
+        ;; Masks precomputed for small DFA
+        (assert-true "masks precomputed" (some? (:masks constraint)))
+        (assert-equal "mask count = alive states" (count (:alive dfa)) (count (:masks constraint))))
 
-    ;; ============================================================
-    ;; 3. Constrained generation tests (needs model)
-    ;; ============================================================
+      ;; ============================================================
+      ;; 3. Constrained generation tests (needs model)
+      ;; ============================================================
 
-    (let [constraint (gram/compile-constraint tokenizer "\\d{3}-\\d{4}")
-          gf (gram/constrain (llm-core/make-llm-gf model-map) constraint)
-          prompt-ids [6939 25 220] ;; "Phone: "
-          token-index (:token-index constraint)
-          eos-id (:eos-id constraint)
-          phone-re #"\d{3}-\d{4}"
-          decode-gen (fn [trace]
-                       (let [gen-ids (->> (subvec (:retval trace) (count prompt-ids))
-                                          (remove #(= % eos-id)))]
-                         (apply str (map #(nth token-index %) gen-ids))))]
+      (let [constraint (gram/compile-constraint tokenizer "\\d{3}-\\d{4}")
+            gf (gram/constrain (llm-core/make-llm-gf model-map) constraint)
+            prompt-ids [6939 25 220] ;; "Phone: "
+            token-index (:token-index constraint)
+            eos-id (:eos-id constraint)
+            phone-re #"\d{3}-\d{4}"
+            decode-gen (fn [trace]
+                         (let [gen-ids (->> (subvec (:retval trace) (count prompt-ids))
+                                            (remove #(= % eos-id)))]
+                           (apply str (map #(nth token-index %) gen-ids))))]
 
-      (println "\n== Constrained simulate ==")
+        (println "\n== Constrained simulate ==")
 
-      ;; simulate produces valid phone numbers
-      (pr/let [trace (p/simulate gf [prompt-ids 8])]
-        (let [text (decode-gen trace)]
-          (assert-true "simulate: output matches regex" (some? (re-matches phone-re text)))
-          (assert-true "simulate: score is finite" (js/isFinite (mx/item (:score trace))))
-          (assert-true "simulate: score is negative" (neg? (mx/item (:score trace))))
+        ;; simulate produces valid phone numbers
+        (pr/let [trace (p/simulate gf [prompt-ids 8])]
+          (let [text (decode-gen trace)]
+            (assert-true "simulate: output matches regex" (some? (re-matches phone-re text)))
+            (assert-true "simulate: score is finite" (js/isFinite (mx/item (:score trace))))
+            (assert-true "simulate: score is negative" (neg? (mx/item (:score trace))))
 
-          ;; Multiple simulates produce variety
-          (pr/let [t1 (p/simulate gf [prompt-ids 8])
-                   t2 (p/simulate gf [prompt-ids 8])
-                   t3 (p/simulate gf [prompt-ids 8])]
-            (let [texts (mapv decode-gen [t1 t2 t3])]
-              (assert-true "simulate: all match regex"
-                           (every? #(some? (re-matches phone-re %)) texts))
-              (assert-true "simulate: not all identical"
-                           (< 1 (count (set texts))))
+            ;; Multiple simulates produce variety
+            (pr/let [t1 (p/simulate gf [prompt-ids 8])
+                     t2 (p/simulate gf [prompt-ids 8])
+                     t3 (p/simulate gf [prompt-ids 8])]
+              (let [texts (mapv decode-gen [t1 t2 t3])]
+                (assert-true "simulate: all match regex"
+                             (every? #(some? (re-matches phone-re %)) texts))
+                (assert-true "simulate: not all identical"
+                             (< 1 (count (set texts))))
 
-              (println "\n== Constrained generate ==")
+                (println "\n== Constrained generate ==")
 
-              ;; generate: condition on first 3 tokens
-              (let [obs (-> (cm/choicemap)
-                            (cm/set-value :t0 (mx/scalar 19 mx/int32)) ;; "4"
-                            (cm/set-value :t1 (mx/scalar 16 mx/int32)) ;; "1"
-                            (cm/set-value :t2 (mx/scalar 20 mx/int32)))] ;; "5"
-                (pr/let [{:keys [trace weight]} (p/generate gf [prompt-ids 8] obs)]
-                  (let [text (decode-gen trace)]
-                    (assert-true "generate: output matches regex" (some? (re-matches phone-re text)))
-                    (assert-true "generate: starts with '415'" (clojure.string/starts-with? text "415"))
-                    (assert-true "generate: weight is finite" (js/isFinite (mx/item weight)))
-                    (assert-true "generate: score is finite" (js/isFinite (mx/item (:score trace))))
+                ;; generate: condition on first 3 tokens
+                (let [obs (-> (cm/choicemap)
+                              (cm/set-value :t0 (mx/scalar 19 mx/int32)) ;; "4"
+                              (cm/set-value :t1 (mx/scalar 16 mx/int32)) ;; "1"
+                              (cm/set-value :t2 (mx/scalar 20 mx/int32)))] ;; "5"
+                  (pr/let [{:keys [trace weight]} (p/generate gf [prompt-ids 8] obs)]
+                    (let [text (decode-gen trace)]
+                      (assert-true "generate: output matches regex" (some? (re-matches phone-re text)))
+                      (assert-true "generate: starts with '415'" (clojure.string/starts-with? text "415"))
+                      (assert-true "generate: weight is finite" (js/isFinite (mx/item weight)))
+                      (assert-true "generate: score is finite" (js/isFinite (mx/item (:score trace))))
 
-                    (println "\n== Instaparse validation ==")
+                      (println "\n== Instaparse validation ==")
 
-                    (let [phone-parser (insta/parser "S = #'[0-9]{3}-[0-9]{4}'")
-                          hello-parser (insta/parser "S = 'hello' <' '> 'world'")
-                          hello-only (insta/parser "S = 'hello'")]
-                      (assert-true "instaparse: matching string"
-                                   (not (insta/failure? (phone-parser "123-4567"))))
-                      (assert-true "instaparse: rejects non-matching"
-                                   (insta/failure? (phone-parser "abc")))
-                      (assert-true "instaparse: returns parse tree"
-                                   (vector? (hello-parser "hello world")))
-                      (assert-true "instaparse: returns failure on bad input"
-                                   (insta/failure? (hello-only "goodbye"))))
+                      (let [phone-parser (insta/parser "S = #'[0-9]{3}-[0-9]{4}'")
+                            hello-parser (insta/parser "S = 'hello' <' '> 'world'")
+                            hello-only (insta/parser "S = 'hello'")]
+                        (assert-true "instaparse: matching string"
+                                     (not (insta/failure? (phone-parser "123-4567"))))
+                        (assert-true "instaparse: rejects non-matching"
+                                     (insta/failure? (phone-parser "abc")))
+                        (assert-true "instaparse: returns parse tree"
+                                     (vector? (hello-parser "hello world")))
+                        (assert-true "instaparse: returns failure on bad input"
+                                     (insta/failure? (hello-only "goodbye"))))
 
-                    (println "\n== Different pattern: hex color ==")
+                      (println "\n== Different pattern: hex color ==")
 
-                    (let [hex-constraint (gram/compile-constraint tokenizer "#[0-9a-f]{6}")
-                          hex-gf (gram/constrain (llm-core/make-llm-gf model-map) hex-constraint)
-                          hex-index (:token-index hex-constraint)
-                          hex-eos (:eos-id hex-constraint)]
-                      (pr/let [htrace (p/simulate hex-gf [prompt-ids 10])]
-                        (let [htext (->> (subvec (:retval htrace) (count prompt-ids))
-                                         (remove #(= % hex-eos))
-                                         (map #(nth hex-index %))
-                                         (apply str))]
-                          (assert-true "hex: output matches #[0-9a-f]{6}"
-                                       (some? (re-matches #"#[0-9a-f]{6}" htext)))
-                          (println "  hex color:" htext)
+                      (let [hex-constraint (gram/compile-constraint tokenizer "#[0-9a-f]{6}")
+                            hex-gf (gram/constrain (llm-core/make-llm-gf model-map) hex-constraint)
+                            hex-index (:token-index hex-constraint)
+                            hex-eos (:eos-id hex-constraint)]
+                        (pr/let [htrace (p/simulate hex-gf [prompt-ids 10])]
+                          (let [htext (->> (subvec (:retval htrace) (count prompt-ids))
+                                           (remove #(= % hex-eos))
+                                           (map #(nth hex-index %))
+                                           (apply str))]
+                            (assert-true "hex: output matches #[0-9a-f]{6}"
+                                         (some? (re-matches #"#[0-9a-f]{6}" htext)))
+                            (println "  hex color:" htext)
 
-                          (report))))))))))))))
+                            (report)))))))))))))))
