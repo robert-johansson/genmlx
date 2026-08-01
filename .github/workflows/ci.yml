@@ -1,0 +1,63 @@
+name: CI
+
+# WHAT THIS CAN AND CANNOT DO (bean genmlx-m5l2, 2026-08-01)
+#
+# It CANNOT run the test battery. GenMLX loads `@genmlx/core`, a Rust/NAPI
+# addon built from the `mlx-node` submodule against Metal or CUDA
+# (`node packages/genmlx-core/build.mjs`). GitHub-hosted runners have neither
+# GPU, so every `nbb` invocation would fail at `(js/require "@genmlx/core")`.
+# Nothing here substitutes for the hand-run battery on a real host
+# (`TEST_TIME_SCALE=6 test/run.sh all` on the RTX box; see CLAUDE.md for the
+# per-host scale factors).
+#
+# It CAN run `test/run.sh check`, which needs only bash + coreutils and is a
+# genuine gate:
+#   - the tier manifest matches the in-file `;; @tier` tags (no drift)
+#   - every test file on disk is classified exactly once (the anti-rot rule)
+#   - no excluded file contains a `(deftest` that would then never run
+#   - EVERY asserting file can actually FAIL (rules 9/10/11, genmlx-n061) —
+#     36 tiered files could not, including 40 of the 49 under test/genmlx/llm/,
+#     so this is the check that keeps the whole LLM layer visible
+#
+# Deliberately gated on genmlx-n061 having landed first: wiring CI while a
+# green `run.sh` was not evidence would have institutionalised a false green.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: test manifest + failure-gate integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false   # the native build cannot run here anyway
+
+      - name: test/run.sh check
+        run: bash test/run.sh check
+
+      # NOT included: a "no untracked files" hygiene gate. It would be VACUOUS
+      # here — CI runs on a fresh clone, so `git ls-files --others` is empty by
+      # construction and the check could never fail. That is precisely the
+      # anti-pattern this audit is enforcing against (CLAUDE.md: "an assertion
+      # that would still pass if the function returned a plausible constant is
+      # not coverage"). The stray-file invariant is a local `git status`
+      # discipline and has to stay one.
+
+      - name: no TODO/FIXME markers in src/
+        # This tree has carried zero of these across ~60k lines; keeping it
+        # that way is cheap and the discipline is real (verified 2026-08-01).
+        run: |
+          if grep -rnE 'TODO|FIXME|XXX|HACK' src/ --include='*.cljs' --include='*.cljc'; then
+            echo "Marker found in src/ — resolve it or file a bean instead."
+            exit 1
+          fi
+          echo "clean: no TODO/FIXME/XXX/HACK in src/"
