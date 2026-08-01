@@ -78,6 +78,15 @@
                                  (.join path dir "tokenizer.json"))
           _       (.copyFileSync fs (.join path real-tok-dir "tokenizer_config.json")
                                  (.join path dir "tokenizer_config.json"))
+          ;; mlx-node v0.0.10 #108 ("make model templates authoritative for all
+          ;; continuations") requires a model-provided chat template next to the
+          ;; tokenizer; qwen3.5-0.8b keeps its template in chat_template.jinja
+          ;; rather than inline in tokenizer_config.json, so copying only the two
+          ;; files above now fails the load with "Model-provided chat template
+          ;; not found" (genmlx-itux).
+          _       (let [src (.join path real-tok-dir "chat_template.jinja")]
+                    (when (.existsSync fs src)
+                      (.copyFileSync fs src (.join path dir "chat_template.jinja"))))
           model   (.load (.-Qwen35Model gcore) dir)
           _       (assert-true "tiny Qwen3.5 model loads from the random checkpoint"
                                (some? model))
@@ -238,6 +247,12 @@
                                                 (.join path cdir "tokenizer.json"))
                               _  (.copyFileSync fs (.join path real-tok-dir "tokenizer_config.json")
                                                 (.join path cdir "tokenizer_config.json"))
+                              ;; v0.0.10 #108: the template must travel with the
+                              ;; tokenizer (genmlx-itux) — same reason as the
+                              ;; make-trainer fixture above.
+                              _  (let [src (.join path real-tok-dir "chat_template.jinja")]
+                                   (when (.existsSync fs src)
+                                     (.copyFileSync fs src (.join path cdir "chat_template.jinja"))))
                               rk (drifts cdir 20.0 seed)
                               rf (drifts cdir 0.0 seed)]
                         (.rmSync fs cdir #js {:recursive true :force true})
