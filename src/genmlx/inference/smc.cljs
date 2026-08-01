@@ -49,15 +49,34 @@
 (defn rejuvenate-trace
   "Apply `steps` MH rejuvenation moves to a single trace over `selection`.
    Each step regenerates the selection and accepts via the MH ratio.
-   `step-keys` is a per-step sequence of PRNG keys (or nils)."
+   `step-keys` is a per-step sequence of PRNG keys (or nils).
+
+   Each step key is split into a PROPOSAL key and an ACCEPT key. Threading only
+   the accept key — as this did before genmlx-0zr4 — leaves the proposal drawn
+   from the gen-fn's own ::key metadata, which `make-regen-result` copies to the
+   rebuilt trace unchanged. In seeded mode that key is fixed per particle, so
+   all K regenerates split the SAME key over the SAME site order against the
+   SAME retained values and propose the BIT-IDENTICAL value every step. That is
+   a bias, not merely a mixing loss: the composite acceptance 1-(1-r)^K against
+   a frozen proposal is not pi-invariant for K>1. Measured on mu~N(0,3),
+   y~N(mu,1), y=2.8 (exact posterior N(2.52, 0.9487)): K=8 gave sd 1.356 with
+   the frozen proposal vs 0.997 with a per-step one.
+
+   This is the shape already used by `vsmc-rejuvenate` below, by
+   `mcmc/mh-step`, and by `kernel.cljs` (genmlx-vv3t fixed the identical defect
+   there and did not reach this call site). Unseeded mode is unaffected: the
+   ::auto-key sentinel draws fresh entropy on every GFI call."
   [trace selection step-keys]
   (reduce (fn [t rk]
-            (let [{:keys [trace weight]} (p/regenerate (:gen-fn t) t selection)]
+            (let [[propose-key accept-key] (rng/split-or-nils rk)
+                  gf (:gen-fn t)
+                  gf (if propose-key (dyn/with-key gf propose-key) gf)
+                  {:keys [trace weight]} (p/regenerate gf t selection)]
               ;; MH ratios are only valid for joint-scored regenerate results
               ;; (genmlx-lbae) — particles enter with the stripped model, so
               ;; this only fires if the entry strip regresses (genmlx-540f).
               (tr/assert-joint! trace :rejuvenate-trace)
-              (if (u/accept-mh? (mx/realize weight) rk) trace t)))
+              (if (u/accept-mh? (mx/realize weight) accept-key) trace t)))
           trace step-keys))
 
 (defn break-trace-graph!
@@ -520,13 +539,25 @@
                   ;; scale from the reference's projected weight, which
                   ;; systematically disfavored the reference in the final
                   ;; weighted draw (breaking cSMC invariance for pmcmc).
-                  results (mapv (fn [i trace]
-                                  (let [r (p/update (:gen-fn trace) trace obs-t)
+                  ;; Re-key each particle from step-rk before its update.
+                  ;; step-rk was destructured at the top of this branch and
+                  ;; then NEVER USED (genmlx-0zr4): a seeded particle kept its
+                  ;; t=0 key for the whole filter, so post-resample duplicates
+                  ;; shared one key and could never diverge — rejuvenation had
+                  ;; nothing to diversify. In no-key mode step-rk is nil and
+                  ;; the gen-fn is passed through untouched.
+                  update-keys (if step-rk
+                                (rng/split-n step-rk particles)
+                                (repeat particles nil))
+                  results (mapv (fn [i trace uk]
+                                  (let [gf (cond-> (:gen-fn trace)
+                                             uk (dyn/with-key uk))
+                                        r (p/update gf trace obs-t)
                                         r (assoc r :weight
                                                  (p/project particle-model (:trace r)
                                                             obs-sel))]
                                     (break-particle-graph! r i)))
-                                (range particles) traces')
+                                (range particles) traces' update-keys)
                   new-traces (mapv :trace results)
                   update-weights (mapv :weight results)
                   new-weights (mapv mx/add weights' update-weights)

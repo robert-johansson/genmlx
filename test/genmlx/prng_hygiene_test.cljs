@@ -254,4 +254,64 @@
           "downstream :z differs when the parent continuation is re-collided
            with index sampling — the 3-way disjoint split has real effect"))))
 
+;; ---------------------------------------------------------------------------
+;; genmlx-0zr4: rejuvenation must thread a PROPOSAL key, not just an accept key.
+;;
+;; This is a POSITIVE oracle, and the distinction matters: every pre-existing
+;; test in this file asserts same-seed BIT-IDENTITY, which the defect satisfied
+;; PERFECTLY — a frozen proposal key is maximally reproducible. What it did NOT
+;; satisfy is that the K moves within one timestep explore. Before the fix all
+;; K regenerates split the same key over the same site order against the same
+;; retained values and proposed the bit-identical value every step, so the
+;; composite acceptance 1-(1-r)^K ran against a frozen proposal — not
+;; pi-invariant for K>1. Measured on the exact posterior N(2.52, 0.9487):
+;; K=8 gave sd 1.356 frozen vs 0.997 with a per-step proposal key.
+;; ---------------------------------------------------------------------------
+
+(deftest rejuvenation-threads-a-proposal-key
+  (testing "smc/rejuvenate-trace actually USES its per-step keys for proposals"
+    (let [tr (:trace (p/generate (dyn/with-key xy-model (rng/fresh-key 31))
+                                 [] (cm/choicemap :y0 (mx/scalar 1.0))))
+          selection (sel/select :x)
+          k1 (rng/fresh-key 32)
+          distinct-keys (rng/split-n (rng/fresh-key 33) 8)
+          repeated-keys (repeat 8 k1)
+          a (x-of (smc/rejuvenate-trace tr selection distinct-keys))
+          b (x-of (smc/rejuvenate-trace tr selection repeated-keys))]
+      ;; THE discriminator. Pre-fix the step key reached only accept-mh?, so the
+      ;; PROPOSAL came from the gen-fn's frozen ::key and was bit-identical at
+      ;; every step regardless of the key sequence — making these two runs
+      ;; indistinguishable. Post-fix the proposals track the keys, so eight
+      ;; distinct keys and eight copies of one key explore differently.
+      (is (not= a b)
+          "K distinct step keys and K copies of one key give different results
+           (pre-fix they were identical: the proposal ignored the step key)")))
+  (testing "an UNKEYED regenerate against the same trace repeats"
+    (let [tr (:trace (p/generate (dyn/with-key xy-model (rng/fresh-key 34))
+                                 [] (cm/choicemap :y0 (mx/scalar 1.0))))
+          selection (sel/select :x)
+          ;; The mechanism behind the defect: with no proposal key threaded the
+          ;; gen-fn keeps its stored ::key, so two consecutive regenerates
+          ;; return the SAME value. Pinning it catches a refactor that drops
+          ;; the split in rejuvenate-trace.
+          a (x-of (:trace (p/regenerate (:gen-fn tr) tr selection)))
+          b (x-of (:trace (p/regenerate (:gen-fn tr) tr selection)))]
+      (is (= a b)
+          "unkeyed regenerate is deterministic — this is WHY the proposal key
+           must be threaded per step"))))
+
+(deftest csmc-rejuvenation-diversifies-duplicates
+  (testing "seeded cSMC with rejuvenation does not collapse to one particle"
+    (let [obs-seq [(cm/choicemap :y0 (mx/scalar 1.0))
+                   (cm/choicemap :y1 (mx/scalar 1.2))]
+          ref-trace (p/simulate (dyn/with-key xy-model (rng/fresh-key 34)) [])
+          r (smc/csmc {:particles 16 :key (rng/fresh-key 35)
+                       :rejuvenation-steps 4}
+                      xy-model [] obs-seq ref-trace)
+          xs (mapv x-of (:traces r))]
+      ;; Pre-fix, a seeded particle kept its t=0 key for the whole filter, so
+      ;; post-resample duplicates shared one key and could never diverge.
+      (is (> (count (distinct xs)) 1)
+          "resampled duplicates diverge under rejuvenation"))))
+
 (cljs.test/run-tests)
