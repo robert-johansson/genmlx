@@ -13,9 +13,17 @@ ClojureScript's immutable data, open multimethods, and macro system map perfectl
 onto the GFI's mathematical structure. MLX's lazy graphs, unified memory, and
 broadcasting reinforce this — functional-style array programming without penalty.
 
-~51,700 lines of ClojureScript across 126 source files (as of 2026-07-07;
-`wc -l` over `src/**/*.cljs` + `*.cljc`). Purely functional, data-driven,
-GPU end-to-end.
+Purely functional, data-driven, GPU end-to-end. For the current size, run
+the command rather than trusting a number that drifts:
+
+```bash
+find src -name '*.cljs' -o -name '*.cljc' | wc -l          # source files
+cat $(find src -name '*.cljs' -o -name '*.cljc') | wc -l   # lines
+```
+
+(For scale: ~60,100 lines across 140 files on 2026-08-01, up from ~51,700
+across 126 on 2026-07-07 — this tree grows ~16%/month, which is why the
+literal number was stale within three weeks and is now a command.)
 
 ## Three-layer purity architecture
 
@@ -311,7 +319,7 @@ src/genmlx/
   # Layer 5: Combinators (Map, Unfold, Switch, Scan, Mask, Mix, Recurse, etc.)
   combinators.cljs, vmap.cljs
 
-  # Layer 6: Inference (35+ algorithms across 29 files)
+  # Layer 6: Inference (35+ algorithms across 30 files)
   inference/ — importance, mcmc, smc, smcp3, vi, adev, amortized, kernel,
   util, diagnostics, analytical, conjugate, auto_analytical, kalman, ekf,
   ekf_nd, hmm_forward, enumerate, exact, fisher, compiled_gradient,
@@ -353,7 +361,7 @@ The implementation layers map onto the three-layer purity model:
   Layer 3: DSL + Schema     (gen macro, dynamic, schema, schemas, inspect — pure)
   Layer 4: Distributions    (dist/core, dist/macros, dist — 36 constructors, pure)
   Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
-  Layer 6: Inference         (29 files, 35+ algorithms — pure)
+  Layer 6: Inference         (30 files, 35+ algorithms — pure)
   Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
                              method_selection — pure)
   Layer 8: Supporting       (vectorized, gradients, learning, nn, serialize, gfi, verify,
@@ -731,6 +739,25 @@ After any change, verify:
   kept a junk drawer from silently accumulating). Keep ephemeral work in an
   external scratch location; promote only deliberate keepers back into the tree.
 
+## Test-suite honesty contract
+
+`test/run.sh` classifies a file by its **exit code** plus one anchored grep for
+the cljs.test summary. A hand-rolled harness that counts failures in an atom,
+prints `FAIL: ...` and exits 0 is recorded **PASS**, and its log is then deleted.
+36 tiered files were in that state on 2026-08-01 — including 40 of the 49 under
+`test/genmlx/llm/`, i.e. **the whole LLM layer was invisible to the battery**
+(`genmlx-n061`). `test/run.sh check` now enforces this; see `test/TESTING.md` for
+the four accepted gate shapes and the `;; @gate delegated|exception — <reason>`
+markers. Consequences worth remembering:
+
+- A green battery from before 2026-08-01 is **not** evidence for those files.
+- `(set! (.-exitCode js/process) 1)`, never `(js/process.exit 1)`: the latter
+  truncates the very summary line the failure report needs.
+- In a promesa-based test the gate MUST sit inside the final `p/let` body. At
+  end-of-file it runs before the chain resolves and always reads a zero counter.
+- There is **no CI** (`.github/workflows/` is a docs deploy). Every published
+  number in this repo is a manual attestation with a hand-run battery behind it.
+
 ## Milestone delivery protocol
 
 When working on a milestone (L1-M2, L1-M3, etc.):
@@ -760,8 +787,7 @@ When working on a milestone (L1-M2, L1-M3, etc.):
 Project work is tracked with **beans** (a flat-file issue tracker; tasks live in
 `.beans/`). A `SessionStart` hook runs `beans prime`, which injects the beans
 usage guide — current types, statuses, and priorities — into context every
-session, so you don't read a TODO file. The local guide `beans.md` documents the
-workflow and the fixed type/status/priority boundary in depth.
+session, so you don't read a TODO file.
 
 Priorities map the old P-levels: `critical` ≈ P0 (fix now), `high` ≈ P1 (build
 next); the `draft` status holds captured ideas and explorations (old P2/P3).
@@ -778,8 +804,50 @@ When working on a task:
 When the user captures a new idea, create a `draft` bean with 2-3 sentences of
 context. Promote to `todo` (and add "done means" criteria) when ready to spec.
 
+### Three rules the 2026-08-01 health audit paid for (genmlx-pif1)
+
+Twelve auditors checked ~40 independent mathematical derivations across the GFI,
+the analytical closed forms, MALA/HMC/NUTS, the resamplers and ~20 log-prob
+normalizers, and found **zero formula errors**. Every defect was a *seam*. These
+three rules target the seams directly.
+
+**1. Every "done means" checklist ends with a sibling sweep.**
+
+> *List every other call site or sibling implementation of this same class, and
+> state for each whether it was fixed or why it does not apply.*
+
+**5 of 6 audit findings had a COMPLETED bean as their direct ancestor** — each
+fixed the reported instance and left the structurally identical siblings
+unenumerated. `genmlx-7oen` swept nine distribution families and left three plus
+the compiled twin; `genmlx-symr` fixed `[T]`-*shaped* sigma and left
+latent-*dependent* sigma, in a bean body that states the root cause;
+`genmlx-vv3t` fixed a proposal key in `kernel.cljs` and left the identical one in
+`smc.cljs`; `genmlx-7qbr` fixed non-finites in the hash and left the payload. In
+four of six cases the correct implementation already existed in-tree, sometimes
+in the same file. The beans are excellent at recording **why** and record nothing
+about **where else**.
+
+**2. An assertion that would still pass if the function returned a plausible
+constant is not coverage.**
+
+Every finding needed a *positive* oracle. Negative ones — "nothing crashed", "the
+weight is finite", "the same seed reproduces" — cannot detect any of them: a
+frozen-PRNG-key defect satisfies same-seed determinism *perfectly*, which is why
+`prng_hygiene_test` passed for months over `genmlx-0zr4`. When you fix a defect,
+**reinstate it and watch the new test fail** before you believe the test.
+
+**3. A static detector may only accept a pattern it has affirmatively proven.**
+
+The highest-risk surface in this codebase is the static analyzers over quoted
+source forms (`conjugacy.cljs`, `linear_gaussian.cljs`, `affine.cljs`,
+`compiled_ops.cljs`, `util.cljs`'s address derivation). They must be
+*conservative*: a false negative costs speed, a false positive costs correctness
+**silently**. Every single-argument inspection (`(nth dist-args natural-idx)`),
+every probe-based acceptance, and every "checks the diagonal only" shortcut is a
+bug until shown otherwise. Three independent instances were found on one day —
+`genmlx-5ytq`, `genmlx-yy8u`, `genmlx-su6q`.
+
 ## Related documents
 
-- `beans.md` — Task tracking guide (beans workflow, the fixed type/status/priority boundary)
 - `ARCHITECTURE.md` — The GFI as external contract, the pure-handler mechanism, the compilation ladder, and the data-driven dispatch stack (as built)
 - `README.md` — Quick start, examples, public API overview

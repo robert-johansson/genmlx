@@ -3,14 +3,29 @@
 Two experiment suites back the results-bearing claims. Both are
 one-command, crash-safe, and record provenance into their outputs.
 
+> **The artifacts currently committed under `results/` are a dated snapshot,
+> not a current run.** The dominant freeze commit is 477 commits behind `main`,
+> dated 2026-06-13, produced on darwin/arm64 (Metal), and 24 of 26 `source_hash`
+> values no longer match. See [`results/PROVENANCE.md`](../results/PROVENANCE.md)
+> for the full accounting and the known correctness caveats. Cite these numbers
+> only with their date and platform attached.
+
 ## Requirements
 
-- macOS on Apple Silicon (Metal GPU; MLX has no other backend here)
+- **Either** macOS on Apple Silicon (Metal) **or** Linux with an NVIDIA GPU
+  (CUDA — validated on aarch64 Jetson AGX Thor sm_110 and x86_64 RTX PRO 6000
+  sm_120). Tolerances are **per-ARCH**, not per-backend: the same law has
+  measured Metal ~0 / sm_110 0.003 / sm_120 0.199, so a result reproduced on a
+  different architecture is expected to differ in the last digits. Record the
+  platform with any number you publish.
 - [Bun](https://bun.sh) ≥ 1.3 (`bun run --bun nbb` resolves the
   project-pinned nbb from `package.json` — do not use a globally
   installed nbb)
-- `npm install` (pulls `@mlx-node/core` / `@mlx-node/lm`; the `mlx-node`
-  git submodule pins the exact native source the binary is built from)
+- The native addon: `cd mlx-node && yarn install && node packages/genmlx-core/build.mjs`.
+  That builds **`@genmlx/core`**, which is what GenMLX actually loads — `yarn
+  build` builds `@mlx-node/core`, which GenMLX never requires, and its
+  `build:ts` leg is known-broken. `package.json` depends on `@genmlx/core` +
+  `nbb` only. The `mlx-node` git submodule pins the exact native source.
 - Nothing else GPU-heavy running: the suites are strictly serial on the
   GPU by design (sustained parallel Metal load risks the
   uninterruptible-sleep wedge documented in `test/run_sbc.sh`)
