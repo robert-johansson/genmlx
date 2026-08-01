@@ -1,4 +1,5 @@
 ;; @tier slow
+;; @gate delegated — requiring agentmodels.ch02-webppl runs its self-check, which exits 1 on any failed check
 ;; agentmodels.org Ch 2 (WebPPL primer) port — suite wrapper.
 ;;
 ;; The runnable example examples/agentmodels/ch02_webppl.cljs self-checks on load:

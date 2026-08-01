@@ -1,4 +1,5 @@
 ;; @tier fast
+;; @gate exception — no assertions; the contract is only that these Unfold/splice ops run without throwing (see genmlx-n061 residual)
 (ns genmlx.unfold-splice-test
   (:require [genmlx.mlx :as mx]
             [genmlx.dist :as dist]
@@ -46,4 +47,3 @@
   (println "  PASS"))
 
 (println "\nAll Unfold splice tests passed!")
-(.exit js/process 0)

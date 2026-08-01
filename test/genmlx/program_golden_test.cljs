@@ -153,3 +153,4 @@
 
 (mx/force-gc!)
 (report)
+(when (pos? @fail-count) (set! (.-exitCode js/process) 1))

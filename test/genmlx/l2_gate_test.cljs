@@ -23,6 +23,8 @@
 ;; Benchmark model: 5-site static Gaussian
 ;; ---------------------------------------------------------------------------
 
+
+(def ^:private fail (atom 0))
 (def bench-model
   (gen []
     (let [a (trace :a (dist/gaussian 0 1))
@@ -90,7 +92,12 @@
     (println (str "\nCorrectness check:"))
     (println (str "  GFI score:    " (mx/item gfi-s)))
     (println (str "  Tensor score: " (mx/item ts-s)))
-    (println (str "  Match: " (< (js/Math.abs (- (mx/item gfi-s) (mx/item ts-s))) 1e-4))))
+    ;; This is the Level-2 CORRECTNESS invariant, not a speedup ratio: the
+    ;; tensor-native score must equal the GFI score. It was printed and never
+    ;; gated, so a regression here could not turn the battery red (genmlx-n061).
+    (let [match? (< (js/Math.abs (- (mx/item gfi-s) (mx/item ts-s))) 1e-4)]
+      (when-not match? (swap! fail inc))
+      (println (str "  Match: " match?))))
 
   (println "\n--- Gate 0a: Raw function calls (no mx/compile-fn) ---")
   (let [gfi-timing (bench #(let [s (gfi-score-fn latent-tensor)]
@@ -132,3 +139,5 @@
                     :else "NO DIFFERENCE (expected — mx/compile-fn captures the same graph)")))))
 
 (println "\n--- Gate 0 complete ---")
+
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

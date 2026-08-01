@@ -16,6 +16,8 @@
             [genmlx.dynamic :as dyn]
             [genmlx.gen :refer [gen]]))
 
+(def ^:private fail (atom 0))
+
 (defn bench [f n warmup]
   (dotimes [_ warmup] (f))
   (let [t0 (js/performance.now)
@@ -109,6 +111,7 @@
                     (range 20))
       unique (count (set results))]
   (println (str "  20 calls with fresh noise: " unique "/20 unique"))
+  (when-not (> unique 10) (swap! fail inc))
   (println (str "  Randomness: " (if (> unique 10) "CORRECT" "BROKEN")))
 
   ;; Deterministic with same noise?
@@ -117,6 +120,7 @@
         _ (mx/eval! noise uniforms)
         r1 (let [r (compiled init-params noise uniforms)] (mx/eval! r) (vec (mx/->clj r)))
         r2 (let [r (compiled init-params noise uniforms)] (mx/eval! r) (vec (mx/->clj r)))]
+    (when-not (= r1 r2) (swap! fail inc))
     (println (str "  Same noise → same result: " (= r1 r2)))))
 
 ;; ---------------------------------------------------------------------------
@@ -145,6 +149,13 @@
         (println (str "  K=" k ":\t" (.toFixed cost 2) " ms  ("
                       (.toFixed (/ cost k) 4) " ms/step)")))
       (catch :default e
+        ;; This block is a chain-length SCALING BENCHMARK (K up to 200, 50
+        ;; trials). A resource/OOM error here is a capacity fact about the
+        ;; host — smaller GPU, or the 4-8-way tier parallelism run.sh now uses
+        ;; — not a correctness regression, so it must not turn the battery red
+        ;; (genmlx-n061 review). Any OTHER exception still counts.
+        (when-not (re-find #"(?i)memory|alloc|buffer|resource limit" (str (.-message e)))
+          (swap! fail inc))
         (println (str "  K=" k " FAILED: " (.-message e)))))))
 
 ;; ---------------------------------------------------------------------------
@@ -225,6 +236,7 @@
   (println (str "  50 chains × 100 steps (compiled):"))
   (println (str "    slope:     mean=" (.toFixed mean-slope 3) "  var=" (.toFixed var-slope 4)))
   (println (str "    intercept: mean=" (.toFixed mean-int 3) "  var=" (.toFixed var-int 4)))
+  (when-not (> var-slope 0.001) (swap! fail inc))
   (println (str "    Chains explore? " (if (> var-slope 0.001) "YES" "NO — stuck!")))
   (println (str "    Unique endpoints: " (count (set samples)) "/50")))
 
@@ -319,3 +331,5 @@
 (println "  4-5x speedup over eager compiled-mh (200 steps).")
 (println "  Block collection K=20: 4x+ with correct sample diversity.")
 (println "  Long chains (2000+ steps) stable — no Metal resource crash.\n")
+
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

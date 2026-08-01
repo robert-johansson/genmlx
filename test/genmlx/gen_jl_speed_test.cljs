@@ -1,4 +1,5 @@
 ;; @tier medium
+;; @gate exception — benchmark only; the contract is that the simulate/generate/update/IS/MH/compiled-MH/HMC paths run without throwing, and nbb exits non-zero on an unhandled error
 (ns genmlx.gen-jl-speed-test
   "Speed benchmark: GenMLX vs Gen.jl.
 

@@ -806,6 +806,14 @@
     (pr/handle (fn [r e]
                  (alter-var-root #'llm/generate-text-raw (constantly real-generate-text-raw))
                  (when e (assert-true (str "sjns plumbing test threw: " (ex-message e)) false))
+                 ;; Terminal point of the only async chain in this file.
+                 ;; MEASURED (genmlx-n061): nbb awaits only the LAST top-level form.
+                 ;; This chain is followed by (report), so it is NOT awaited, and a
+                 ;; rejection inside it would otherwise exit 0 silently. It settles in
+                 ;; microtasks today — which is why (report) does see these assertions —
+                 ;; but that is an accident of the pr/resolved stub, not a guarantee.
+                 ;; This gate is what makes the exit code independent of it.
+                 (when (pos? @fail-count) (set! (.-exitCode js/process) 1))
                  r)))
 
 ;; ============================================================
@@ -814,3 +822,6 @@
 
 (mx/force-gc!)
 (report)
+;; Covers the synchronous sections (1-26) even if the async tail above is never
+;; reached; the async assertions are gated inside that chain's pr/handle.
+(when (pos? @fail-count) (set! (.-exitCode js/process) 1))

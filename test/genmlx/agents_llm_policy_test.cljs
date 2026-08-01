@@ -1,4 +1,5 @@
 ;; @tier slow
+;; @gate delegated — (flag/run-or-skip) in examples/agents_llm_policy.cljs exits 1 on any failed check
 ;; agents × llm flagship (ROADMAP Phase 3, item 4, Direction 1: LLM-as-policy) — suite wrapper.
 ;;
 ;; The runnable example examples/agents_llm_policy.cljs builds an agent whose POLICY

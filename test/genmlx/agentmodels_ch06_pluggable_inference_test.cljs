@@ -1,4 +1,5 @@
 ;; @tier slow
+;; @gate delegated — (ch06/-main) runs the example's checks via agentmodels.harness/chk/report!, which exits 1 on any failure
 ;; agentmodels Ch 6 ("Efficient inference") port — suite wrapper.
 ;;
 ;; Ch 6 is AUTHORED NATIVELY as the genmlx.agents pluggable-inference chapter:

@@ -1,4 +1,5 @@
 ;; @tier fast
+;; @gate exception — benchmark only; the contract is that these mx/compile-fn and score paths run without throwing, and nbb exits non-zero on an unhandled error
 (ns compile-fn-test
   (:require [genmlx.mlx :as mx]
             [genmlx.mlx.random :as rng]))

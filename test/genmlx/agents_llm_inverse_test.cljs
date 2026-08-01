@@ -1,4 +1,5 @@
 ;; @tier slow
+;; @gate delegated — (flag/run-or-skip) in examples/agents_llm_inverse.cljs exits 1 on any failed check
 ;; agents × llm flagship (ROADMAP Phase 3, item 4, Direction 2: LLM reasons OVER an
 ;; agent model) — suite wrapper.
 ;;

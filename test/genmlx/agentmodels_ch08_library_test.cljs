@@ -1,4 +1,5 @@
 ;; @tier slow
+;; @gate delegated — requiring agentmodels.ch08-library-guide runs its self-check, which exits 1 on any failure
 ;; agentmodels.org Ch 8 (WebPPL agents library quick-start) port — suite wrapper.
 ;;
 ;; The runnable example examples/agentmodels/ch08_library_guide.cljs self-checks on

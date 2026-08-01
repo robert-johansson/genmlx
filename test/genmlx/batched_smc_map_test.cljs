@@ -9,6 +9,8 @@
             [genmlx.inference.smc :as smc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
+(def ^:private fail (atom 0))
+
 (println "\n=== batched-smc-unfold map-state test ===")
 
 ;; Test 1: Map-valued state
@@ -42,7 +44,7 @@
   (println (str "  :b mean: " (.toFixed (mx/item (mx/mean (:b states))) 2)))
   (if (and (js/isFinite lml) (map? states) (= [200] (mx/shape (:a states))))
     (println "  PASS")
-    (println "  FAIL")))
+    (do (swap! fail inc) (println "  FAIL"))))
 
 ;; Test 2: Scalar state (backward compat)
 (println "\nTest 2: scalar state (backward compat)")
@@ -63,7 +65,7 @@
   (println (str "  log-ML: " (.toFixed lml 2)))
   (if (js/isFinite lml)
     (println "  PASS")
-    (println "  FAIL")))
+    (do (swap! fail inc) (println "  FAIL"))))
 
 (println "\nAll tests complete.")
-(.exit js/process 0)
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

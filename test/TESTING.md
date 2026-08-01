@@ -51,6 +51,42 @@ A Metal **CRASH** (SIGTRAP/SIGSEGV) or a **TIMEOUT** is a **FAIL**, never a sile
 `run.sh` exits non-zero if any file does not cleanly PASS. (The old `run_all.sh` counted
 crashes as passes — that is exactly what eroded confidence in the suite.)
 
+### Every asserting file MUST be able to fail
+
+`run.sh` classifies on the child's **exit code** plus one anchored grep for the cljs.test
+summary line. A hand-rolled harness that counts failures in an atom, prints `FAIL: ...`
+and then exits 0 is recorded **PASS**, and its log is deleted at the end of the tier.
+On 2026-08-01, **36 tiered files were in exactly that state** — including 40 of the 49
+under `test/genmlx/llm/`, i.e. the whole LLM layer was invisible to the battery
+(bean `genmlx-n061`). `test/run.sh check` now fails if any `fast`/`medium`/`slow` file
+has no failure gate, so the class cannot come back.
+
+A file satisfies the gate in one of four ways:
+
+| shape | how it gates |
+|---|---|
+| `cljs.test` | `(cljs.test/run-tests)` exits non-zero on a failing `is` — nothing to add |
+| hand-rolled harness | `(when (pos? @fail-count) (set! (.-exitCode js/process) 1))` |
+| wrapper around an example | `;; @gate delegated — <the ns it requires, and how that ns exits non-zero>` |
+| pure smoke test, no assertions | `;; @gate exception — <why "does not throw" is the whole contract>` |
+
+Both `;; @gate` markers **require a trailing reason**, so the exemption is auditable
+rather than a rubber stamp. A file that asserts nothing and is not a smoke test belongs
+in the `bench` tier, where a clean exit is PASS by design.
+
+Prefer `(set! (.-exitCode js/process) 1)` over `(js/process.exit 1)`: `process.exit`
+truncates pending stdout (losing the very summary line the failure report needs) and
+kills in-flight async work.
+
+**Placement matters in async files.** Most `test/genmlx/llm/*` tests are promesa-based.
+Their top level returns a promise immediately, so a gate appended at end-of-file runs
+*before any assertion has executed* and always reads 0. In those files the gate belongs
+**inside the final `p/let` body, right after the summary `println`**.
+
+A related trap: an unconditional `(js/process.exit 0)` defeats the gate no matter what
+the counter says. `check` rejects one unless it is a documented skip — print
+`SKIP <reason>` immediately before it, as the checkpoint-absent paths do.
+
 ## Adding a test
 
 Create `test/genmlx/<name>_test.cljs` as usual, then **add one line to `test/tiers.txt`**.

@@ -1,4 +1,5 @@
 ;; @tier slow
+;; @gate delegated — (flag/run-or-skip) in examples/external_env.cljs exits 1 on any failed check
 ;; FIRST EXTERNAL ENVIRONMENT (ROADMAP Phase 3, item 5) — suite wrapper.
 ;;
 ;; The runnable example examples/external_env.cljs reifies the agent/environment

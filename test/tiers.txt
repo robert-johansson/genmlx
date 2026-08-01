@@ -316,6 +316,7 @@ fast test/genmlx/mcmc_defaults_test.cljs core
 slow test/genmlx/mcmc_detailed_balance_test.cljs
 medium test/genmlx/mcmc_diagnostics_test.cljs
 fast test/genmlx/mcmc_elim_filter_test.cljs core
+fast test/genmlx/mcmc_persist_degrade_test.cljs
 medium test/genmlx/mcmc_property_test.cljs
 slow test/genmlx/mcmc_stationary_test.cljs
 fast test/genmlx/mcmc_warmup_reproducibility_test.cljs core

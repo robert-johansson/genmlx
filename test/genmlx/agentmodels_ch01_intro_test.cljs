@@ -1,4 +1,5 @@
 ;; @tier slow
+;; @gate delegated — requiring agentmodels.ch01-intro runs its (-main), whose chk/report! exits 1 on any failed check
 ;; agentmodels.org Ch 1 (Introduction) port — suite wrapper.
 ;;
 ;; The runnable example examples/agentmodels/ch01_intro.cljs self-checks on load:

@@ -316,3 +316,5 @@
 (let [p @pass-count f @fail-count]
   (println (str "\n=== synthesis-exact: " p "/" (+ p f) " PASS ==="))
   (when (pos? f) (println (str "!!! " f " FAILURES !!!"))))
+
+(when (pos? @fail-count) (set! (.-exitCode js/process) 1))

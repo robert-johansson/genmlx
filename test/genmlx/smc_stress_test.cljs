@@ -10,6 +10,8 @@
             [genmlx.inference.smc :as smc])
   (:require-macros [genmlx.gen :refer [gen]]))
 
+(def ^:private fail (atom 0))
+
 ;; HMM parameters — transition-logits MUST be [K,K] via reshape (mx/array
 ;; doesn't support nested JS arrays — they produce NaN)
 (def K 2)
@@ -57,7 +59,7 @@
       error (js/Math.abs (- log-ml exact-log-ml))]
   (println "  log-ML:" (.toFixed log-ml 2) "(exact:" (.toFixed exact-log-ml 2) ")")
   (println "  |error|:" (.toFixed error 2) "time:" (.toFixed elapsed 0) "ms")
-  (println (if (< error 15) "  PASS" "  FAIL")))
+  (println (if (< error 15) "  PASS" (do (swap! fail inc) "  FAIL"))))
 
 (mx/force-gc!)
 
@@ -71,7 +73,7 @@
       error (js/Math.abs (- log-ml exact-log-ml))]
   (println "  log-ML:" (.toFixed log-ml 2) "(exact:" (.toFixed exact-log-ml 2) ")")
   (println "  |error|:" (.toFixed error 2) "time:" (.toFixed elapsed 0) "ms")
-  (println (if (< error 5) "  PASS" "  FAIL")))
+  (println (if (< error 5) "  PASS" (do (swap! fail inc) "  FAIL"))))
 
 (mx/force-gc!)
 
@@ -85,7 +87,7 @@
       error (js/Math.abs (- log-ml exact-log-ml))]
   (println "  log-ML:" (.toFixed log-ml 2) "(exact:" (.toFixed exact-log-ml 2) ")")
   (println "  |error|:" (.toFixed error 2) "time:" (.toFixed elapsed 0) "ms")
-  (println (if (< error 15) "  PASS" "  FAIL")))
+  (println (if (< error 15) "  PASS" (do (swap! fail inc) "  FAIL"))))
 
 (mx/force-gc!)
 
@@ -99,6 +101,8 @@
       error (js/Math.abs (- log-ml exact-log-ml))]
   (println "  log-ML:" (.toFixed log-ml 2) "(exact:" (.toFixed exact-log-ml 2) ")")
   (println "  |error|:" (.toFixed error 2) "time:" (.toFixed elapsed 0) "ms")
-  (println (if (< error 10) "  PASS" "  FAIL")))
+  (println (if (< error 10) "  PASS" (do (swap! fail inc) "  FAIL"))))
 
 (println "\n=== All tests complete ===")
+
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

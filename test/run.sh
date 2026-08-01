@@ -247,6 +247,84 @@ do_check() {
     echo "$MANIFEST is STALE vs the in-file @tier tags — run: test/run.sh tags --write"
     fail=1
   fi
+  # 9. every asserting file must be ABLE to fail. do_one classifies on the exit
+  #    code plus one anchored grep for the cljs.test summary; a hand-rolled
+  #    harness that counts failures in an atom, prints "  FAIL: ..." and then
+  #    exits 0 is recorded PASS and its log is deleted at the end of the tier.
+  #    36 tiered files were in exactly that state on 2026-08-01 — including 40
+  #    of the 49 under test/genmlx/llm/, i.e. the whole LLM layer was invisible
+  #    to the battery (bean genmlx-n061). A file passes this check by either
+  #    using cljs.test (whose run-tests exits non-zero on a failing `is`) or
+  #    carrying an explicit nonzero-exit gate on its own failure counter.
+  #    `bench` is exempt by design: bench files assert nothing and do_one
+  #    already treats a clean bench exit as PASS. `exclude` never runs.
+  #    Two honest shapes have no local gate and declare so with a `;; @gate`
+  #    line near the top, so the exemption is explicit and greppable:
+  #      ;; @gate delegated — the gate lives in the ns this file requires
+  #                           (e.g. agentmodels.harness/report!, which exits 1)
+  #      ;; @gate exception — no assertions at all; the contract is only that
+  #                           these operations run without throwing, and nbb
+  #                           already exits non-zero on an unhandled error
+  #    Both require a trailing reason so the claim is auditable, not a rubber
+  #    stamp. A file that asserts nothing and is not a smoke test is a bench.
+  local ungated
+  ungated="$(for t in fast medium slow; do manifest_files_for_tier "$t"; done | while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      grep -qE 'run-tests|js/process\.exit 1|\.exit js/process 1|\(set! \(\.-exitCode js/process\) 1\)|js/process\.exit \(if|\.exit js/process \(if|^;; @gate (delegated|exception) — .+' "$f" || echo "$f"
+    done)"
+  if [ -n "$ungated" ]; then
+    echo "NO FAILURE GATE — these would be recorded PASS even if every assertion failed."
+    echo "  Add:  (when (pos? @fail-count) (set! (.-exitCode js/process) 1))"
+    echo "  In a promesa-based file the gate MUST go inside the final p/let body,"
+    echo "  after the summary println — at end-of-file it runs before the chain resolves."
+    echo "  A file that asserts nothing belongs in the bench tier instead."
+    echo "$ungated" | sed 's/^/  /'; fail=1
+  fi
+  # 10. ... and none of them may hardcode an UNCONDITIONAL zero exit, which
+  #     defeats the gate no matter what the counter says. Three files did
+  #     (genmlx-n061). A documented capability/checkpoint SKIP legitimately
+  #     exits 0 — it prints "SKIP ..." first, so a zero exit within three lines
+  #     of a SKIP print is allowed and anything else is not. A deliberate early
+  #     exit that is NOT a skip must carry the counter:
+  #     (.exit js/process (if (pos? @fail) 1 0)).
+  local zeroexit
+  zeroexit="$(for t in fast medium slow; do manifest_files_for_tier "$t"; done | while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      awk '/SKIP/ {skip=NR}
+           /\(\.exit js\/process 0\)|\(js\/process\.exit 0\)/ {
+             if (NR - skip > 3) { print FILENAME; exit }
+           }' "$f"
+    done)"
+  if [ -n "$zeroexit" ]; then
+    echo "UNCONDITIONAL ZERO EXIT — the failure gate can never fire in:"
+    echo "  (a checkpoint/capability SKIP is exempt: print \"SKIP ...\" immediately before it)"
+    echo "$zeroexit" | sed 's/^/  /'; fail=1
+  fi
+  # 11. Rule 9 proves a gate EXISTS, not that it can RUN. In a promesa-based
+  #     file the top level returns a promise immediately, so a gate written as
+  #     the last TOP-LEVEL form executes before any assertion has landed and
+  #     always reads a zero counter — the exact mistake rule 9 was written to
+  #     prevent, which its grep would happily accept. An in-chain gate is
+  #     always indented (it sits inside a p/let or pr/handle body); a gate at
+  #     column 0 in an async file is a red flag worth a human look.
+  local misplaced
+  misplaced="$(for t in fast medium slow; do manifest_files_for_tier "$t"; done | while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      grep -qE 'promesa|p/let|pr/let|pr/handle' "$f" || continue
+      grep -qE '^\((when|if) \(pos\? @' "$f" || continue
+      # A column-0 gate is fine when the file ALSO carries an indented one:
+      # that is the belt-and-braces shape (in-chain gate covers the async
+      # tail, column-0 gate covers the synchronous sections) and is correct
+      # under either await semantics. Only a LONE column-0 gate is suspect.
+      grep -qE '^[[:space:]]+\((when|if) \(pos\? @|^[[:space:]]+\(set! \(\.-exitCode' "$f" || echo "$f"
+    done)"
+  if [ -n "$misplaced" ]; then
+    echo "ASYNC FILE WITH ONLY A COLUMN-0 GATE — it may run before the chain resolves:"
+    echo "  (move it inside the final p/let / pr/handle body, after the summary println,"
+    echo "   or keep both: an indented in-chain gate for the async tail plus the"
+    echo "   column-0 one for the synchronous sections — that combination is accepted)"
+    echo "$misplaced" | sed 's/^/  /'; fail=1
+  fi
 
   if [ "$fail" -eq 0 ]; then
     local ncore; ncore="$(manifest_files_for_tier core | grep -c .)"
@@ -329,6 +407,7 @@ do_one() {
 
 # ---- tier runner ------------------------------------------------------------
 rdir=""   # global so the EXIT trap can see it under `set -u`
+keepdir="" # created lazily on the first not-clean tier; survives cleanup's rm -rf
 run_tiers() {
   local tiers=("$@") overall=0
   rdir="$(mktemp -d "${TMPDIR:-/tmp}/genmlx_tests.XXXXXX")"
@@ -372,13 +451,36 @@ run_tiers() {
         grep -hE '(^| )FAIL|ERROR|Exception|[1-9][0-9]* (failures|errors)|SIGTRAP|Resource limit' "$rdir/$key.log" 2>/dev/null | head -3 | sed 's/^/      | /'
       fi
     done < <(cat "$rdir"/*.result 2>/dev/null | sort -t$'\t' -k3)
+    # Accounting check: every dispatched file must have produced a verdict. A
+    # worker killed before do_one wrote its .result (OOM killer, a reaped
+    # process tree, an xargs launch failure) would otherwise just VANISH from
+    # the tally — "48 passed, 0 not-passed" out of 50 dispatched reads as a
+    # clean tier. Missing verdicts are failures, not absences (genmlx-n061).
+    local accounted=$((tpass + tfail))
+    if [ "$accounted" -ne "$n" ]; then
+      echo "  ACCOUNTING  $accounted verdicts for $n dispatched files — no result from:"
+      local mf
+      while IFS= read -r mf; do
+        [ -z "$mf" ] && continue
+        [ -f "$rdir/$(echo "$mf" | tr '/.' '__').result" ] || { echo "      $mf"; tfail=$((tfail+1)); }
+      done < <(printf '%s\n' "$files" | grep .)
+    fi
     echo "   $tier: $tpass passed, $tfail not-passed"
     grand_pass=$((grand_pass+tpass)); grand_fail=$((grand_fail+tfail))
+    # Preserve the evidence when the tier was not clean. do_one's tail above
+    # shows at most three lines, and the EXIT trap rm -rf's $rdir — so without
+    # this the full log of a failure is gone by the time anyone reads the
+    # summary. Copy OUT of $rdir into a dir cleanup does not touch.
+    if [ "$tfail" -gt 0 ]; then
+      [ -z "$keepdir" ] && keepdir="$(mktemp -d "${TMPDIR:-/tmp}/genmlx_failures.XXXXXX")"
+      cp "$rdir"/*.log "$keepdir/" 2>/dev/null || true
+    fi
     rm -f "$rdir"/*.result "$rdir"/*.log
   done
 
   echo "═══════════════════════════════════════════"
   echo "TOTAL: $grand_pass passed, $grand_fail not-passed"
+  [ -n "$keepdir" ] && echo "full logs for the not-passed files: $keepdir"
   [ "$grand_fail" -eq 0 ] || overall=1
   if [ "$overall" -eq 0 ]; then echo "RESULT: PASS"; else echo "RESULT: FAIL"; fi
   return "$overall"
