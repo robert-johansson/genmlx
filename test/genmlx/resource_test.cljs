@@ -77,13 +77,48 @@
         (is (< active-mem (* 50 1024 1024)) "active memory bounded")))))
 
 (deftest clear-cache-effect-test
-  (testing "clear-cache effect"
-    (let [_ (doseq [_ (range 100)]
-              (let [a (rng/normal (rng/fresh-key) [100])]
-                (mx/eval! a)))
-          cache-before (mx/get-cache-memory)
-          _ (mx/clear-cache!)
-          cache-after (mx/get-cache-memory)]
-      (is (<= cache-after cache-before) "clear-cache reduces cache"))))
+  (testing "clear-cache! releases the free-buffer pool"
+    ;; What is under test, stated precisely: clear-cache! drops MLX's pool of
+    ;; freed-but-retained buffers. It says nothing about ACTIVE memory, which is
+    ;; why the pool has to be filled deliberately rather than assumed.
+    ;;
+    ;; genmlx-6e5i: this used to be (<= cache-after cache-before) straight after
+    ;; a plain allocation loop. That loop puts nothing IN the pool -- the array
+    ;; wrappers are still live, so `active` grows while `cache` stays ~0 -- and
+    ;; it only passed because incidental finalization usually landed some buffer
+    ;; there first. Under 4-way parallel GPU load it did not: cache-before read
+    ;; 0, cache-after read 48 (one buffer finalized between the two samples),
+    ;; and a true invariant failed as 48 <= 0. Widening the comparison with
+    ;; slack would have hidden that. The repair is to ESTABLISH the precondition
+    ;; and to make the signal large enough that a stray 48-byte buffer cannot
+    ;; decide the outcome.
+    (let [;; Buffers must be held LIVE and released together. Allocating and
+          ;; dropping one at a time parks nothing: the allocator simply hands
+          ;; back the same buffer each iteration, so the pool never grows (that
+          ;; is why the old loop left it at ~0 in the first place).
+          fill! (fn [] (let [held (mapv (fn [_] (doto (rng/normal (rng/fresh-key) [250000])
+                                                  mx/eval!))
+                                        (range 50))]
+                         (count held)))]
+      ;; Two rounds, because finalization lags by one: round 2's allocation is
+      ;; what collects round 1's wrappers, and jsc-cleanup! then drains those
+      ;; finalizers WITHOUT dropping the pool (force-gc! would clear it,
+      ;; defeating the point). Measured on sm_120: this parks ~50 MB of 1 MB
+      ;; buffers in the pool, ~10^6x the ambient noise that broke the old
+      ;; assertion.
+      (fill!)
+      (mx/jsc-cleanup!)
+      (mx/clear-cache!)
+      (fill!)
+      (mx/jsc-cleanup!)
+      (let [cache-before (mx/get-cache-memory)
+            _ (mx/clear-cache!)
+            cache-after (mx/get-cache-memory)]
+        (is (> cache-before (* 4 1024 1024))
+            (str "precondition: pool holds > 4 MB before the clear (got "
+                 cache-before " bytes)"))
+        (is (< cache-after (quot cache-before 100))
+            (str "clear-cache! releases the pool (" cache-before " -> "
+                 cache-after " bytes)"))))))
 
 (cljs.test/run-tests)
