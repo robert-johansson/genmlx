@@ -146,11 +146,14 @@
 (defn- resolve-device [device]
   (case device :cpu mx/cpu :gpu mx/gpu nil))
 
-(defn- with-device [device f]
+(defn- with-device
+  "Sibling of `mcmc/with-device`; both now delegate the scope to the membrane's
+   `mx/with-default-device*` instead of hand-rolling let/try/finally. Until
+   genmlx-okeu `mx/set-default-device!` was a no-op, so `:device` was dead here
+   too — which is what made `compiled-vi` indistinguishable from `vi`."
+  [device f]
   (if-let [d (resolve-device device)]
-    (let [prev (mx/default-device)]
-      (mx/set-default-device! d)
-      (try (f) (finally (mx/set-default-device! prev))))
+    (mx/with-default-device* d f)
     (f)))
 
 (defn compiled-vi

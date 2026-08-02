@@ -1710,16 +1710,50 @@
 ;; CONFIGURATION — device, constants
 ;; =========================================================================
 
-(defn default-device
-  "Always returns \"gpu\". MLX on Apple Silicon uses Metal GPU for all
-   array operations; there is no CPU array backend. This function does
-   not query actual device state — it returns a hardcoded constant."
-  [] "gpu")
-(defn set-default-device!
-  "No-op. MLX on Apple Silicon has no per-operation device selection —
-   Metal GPU is always used. Retained for API compatibility with code
-   that wraps operations in device-switching blocks."
-  [_d] nil)
 (def cpu "cpu")
 (def gpu "gpu")
+
+(defn default-device
+  "The process-wide default MLX device — `cpu` or `gpu`.
+
+   Queries native state; this is NOT a constant. Both are real targets: MLX
+   ships a full CPU backend and mlx-sys compiles it in (`MLX_BUILD_CPU=ON`,
+   crates/mlx-sys/build.rs). The former version of this function returned a
+   hardcoded \"gpu\" and its docstring asserted MLX had no CPU array backend
+   — both were false (genmlx-okeu)."
+  [] (.defaultDevice c))
+
+(defn set-default-device!
+  "Set the process-wide default MLX device to `cpu` or `gpu`.
+
+   EFFECTFUL, and process-wide — this is the one Layer-0 knob that changes
+   where every later graph evaluates. Ops given an explicit stream are
+   unaffected, but everything else follows it, and mlx-node's paged
+   primitives are GPU-only and throw on a CPU stream (`PagedAttention CPU
+   NYI`). A process that also decodes an LLM must not leave the default on
+   `cpu` — scope it with `with-default-device*` instead.
+
+   Throws on an unknown name, and ALSO if the change did not take effect:
+   the native shim logs and swallows its own exceptions, so a bare call
+   cannot be trusted to have done anything.
+
+   Why it exists: a GPU eval costs a fixed dispatch latency regardless of
+   problem size, so tiny graphs pay it for nothing. Measured on an M4 mini,
+   2-op kernel over 32 elements, eval per call: cpu 18.4 µs vs gpu 165.1 µs
+   (8.96x). Per-arch — the M2 Max / sm_110 / sm_120 columns are unmeasured.
+   Large models are unaffected; leave them on `gpu`."
+  [d]
+  (.setDefaultDevice c d)
+  nil)
+
+(defn with-default-device*
+  "Run `thunk` with the default device set to `d`, restoring the previous
+   device afterwards — including on a throw. The blessed way to use the CPU
+   path: a bare `set-default-device!` hands a process-wide flip to the caller
+   and nothing puts it back."
+  [d thunk]
+  (let [prev (default-device)]
+    (set-default-device! d)
+    (try (thunk)
+         (finally (set-default-device! prev)))))
 

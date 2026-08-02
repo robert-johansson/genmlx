@@ -22,7 +22,7 @@ The export surface is enumerated from the **live `@genmlx/core` runtime module**
 this is what `membrane_coverage_test` partitions, and it is the authority. The package
 ships **no `types` field**; its `index.d.ts` is a regenerated snapshot that can lag the
 runtime, so any audit that reads a `.d.ts` can be wrong. Concretely, the live surface
-has **225** function exports (2026-06-21 W-B / genmlx-hg7q added the `valueAndGrad` /
+has **239** function exports as of 2026-08-02 (2026-06-21 W-B / genmlx-hg7q added the `valueAndGrad` /
 `computeGradients` module free fns — they moved from MxArray methods to module exports;
 2026-07-07 genmlx-lgbx added `conv2d` / `scatterAdd` / `putAlongAxis` — the first two
 FFI-shimmed but never exported, the last newly shimmed via `scatter_add_axis`;
@@ -44,16 +44,28 @@ test disagree, the test is right.
 
 | | Count |
 |---|---:|
-| Function exports (`typeof === "function"`, incl. classes) | **225** |
-| → Wrapped in the membrane | **177** |
-| → Intentionally omitted | **48** |
+| Function exports (`typeof === "function"`, incl. classes) | **239** |
+| → Wrapped in the membrane | **185** |
+| → Intentionally omitted | **54** |
 
-`wrapped ⊎ omitted = 225` — the partition tiles the surface exactly (asserted by
+Resynced 2026-08-02 (genmlx-okeu). These had drifted badly: the table read
+225/177/48 against a live surface of 237, having missed the genmlx-cqgx compile
+trio, the genmlx-7prh captured pair, and the genmlx-d0b608fa cold-tier five.
+The numbers above are derived from the assertions in `coverage-accounting-test`,
+which is the machine-checked source — if this table and that test disagree, the
+test is right and this file is stale again.
+
+`wrapped ⊎ omitted = 239` — the partition tiles the surface exactly (asserted by
 `coverage-accounting-test`). Non-function exports (DType constants etc.) and
 per-class *method* coverage (e.g. `MxArray.addmm` / `argpartition`) are out of
 scope for this floor — see *Deferred* below.
 
-## Wrapped (176)
+## Wrapped (185)
+
+Includes the device pair `defaultDevice` / `setDefaultDevice` (added to
+`@genmlx/core` 2026-08-02 via mlx-node `0bfee24`; wrapped in the `mlx.cljs`
+CONFIGURATION section as `default-device` / `set-default-device!` /
+`with-default-device*` — genmlx-sko3, genmlx-okeu).
 
 Not enumerated here (a static list would drift). The membrane binds every export
 not on the omission allowlist below — covering the full pure-math / reduction /
@@ -72,12 +84,12 @@ architecture generation).
 To list the wrapped set, run the audit recipe and take the complement of the
 omissions.
 
-## Intentionally omitted (47)
+## Intentionally omitted (54)
 
 Each export below is deliberately **not** in the pure compute membrane. The
 category records where the capability belongs instead.
 
-### Functions (26)
+### Functions (29)
 
 | Export | Category | Reason |
 |---|---|---|
@@ -87,9 +99,12 @@ category records where the capability belongs instead.
 | `convertForeignWeights`, `convertGgufToSafetensors`, `convertModel`, `convertParquetToJsonl` | `:model-conversion` | Offline weight/format conversion tooling — not graph ops. |
 | `createPaddleocrVlConfig`, `createQianfanOcrConfig`, `documentToXlsx`, `formatDocument`, `saveToXlsx`, `parsePaddleResponse`, `parseToolCallsFromText`, `parseVlmOutput` | `:ocr-vlm-document` | OCR / vision-language / document pipelines — bind via `@mlx-node/lm` vision (`llm/vision.cljs`). |
 | `compileFn` | `:compile-strategy-bypass` | Native MLX graph-caching compile, deliberately bypassed — GenMLX compilation uses noise transforms + the expression compiler (Level 1), not MLX's compile. |
+| `calibrateActivationAmaxRaw` | `:model-conversion` | FP8 activation-amax calibration for the nvidia quant recipe (adopted wholesale in the d58a upstream sync). Driven by `mlx calibrate` at convert time — an offline tool, never a graph op. |
+| `quantizedQmvMicrobench` | `:benchmark-microbench` | Quantized-QMV perf-measurement entry point exposed by the CUDA genmlx-core build, not a graph op (surface re-pin for the Jetson Thor / CUDA port). |
+| `seedGlobalRng` | `:calling-thread-rng` | Seeds MLX's process-global RNG. GenMLX's inference PRNG is keyed and functional (`mlx/random.cljs`), and reproducible TRAINING generation rides the `GrpoEngineConfig` `seed` field applied on the model thread. Kept as a primitive for main-thread unkeyed draws in probes/tests (genmlx-at2q). |
 | `coldCacheDrain`, `coldCacheStats`, `coldSidecarStats`, `coldRestoreFamilies`, `gdnPrefixCheckpointLimit` | `:agent-cold-tier` | The `mlx agent` cold KV tier — process-wide counters, a family allowlist and a flush hook for the CLI agent's disk-backed prefix cache (upstream PR #100, merged 2026-07-29). GenMLX never opens that tier: its branchable KV cache is the owned path in `llm/backend.cljs` (per-branch persistent cache values under `with-llm-branches*`), and the agent tier is Metal-gated besides (`agentPagedCacheSupported`). Counters and a drain hook, not graph ops. |
 
-### Classes (26)
+### Classes (25)
 
 A JS `class` is a function export, so it counts toward the runtime surface and
 must be accounted for. None are wrapped as compute ops.
@@ -98,7 +113,7 @@ must be accounted for. None are wrapped as compute ops.
 |---|---|---|
 | `SftTrainingEngine`, `NativeRewardRegistry`, `Gradients`, `OutputStore`, `ResponseStore` | `:training-orchestration` | Remaining training engines + result/registry types — bind in `world/train.cljs` as Phase 1-4 tap them. `GrpoTrainingEngine` is already **wrapped** there (`genmlx-zftr`). |
 | `Gemma4Model`, `HarrierModel`, `Lfm2Model`, `Qwen3Model`, `Qwen35Model`, `Qwen35MoeModel`, `Qwen3Tokenizer`, `BatchGenerationResult`, `GenerationResult`, `ChatStreamHandle` | `:llm-orchestration` | Loaded-model / tokenizer / generation classes — bound via `@mlx-node/lm` ChatSession (`msa.cljs` / `backend.cljs`). The per-token GFI path reaches the low-level forward, not these. |
-| `DocLayoutModel`, `DocOrientationModel`, `DocUnwarpModel`, `PrivacyFilterModel`, `QianfanOCRModel`, `TextDetModel`, `TextRecModel`, `VLModel`, `VlmChatResult`, `VlmProcessedImage` | `:ocr-vlm-document` | OCR / vision-language pipeline classes — `@mlx-node/lm` vision. |
+| `DocLayoutModel`, `DocOrientationModel`, `DocUnwarpModel`, `PrivacyFilterModel`, `QianfanOCRModel`, `TextDetModel`, `TextRecModel`, `VLModel`, `VlmChatResult` | `:ocr-vlm-document` | OCR / vision-language pipeline classes — `@mlx-node/lm` vision. (`VlmProcessedImage` was listed here until 2026-08-02; upstream deleted the export, and the allowlist had already dropped it — this doc was the last stale copy.) |
 | `Tensor` | `:foreign-tensor-type` | A foreign tensor class distinct from `MxArray` (the membrane's value type). |
 
 ## Deferred (separate beans, not part of this floor)

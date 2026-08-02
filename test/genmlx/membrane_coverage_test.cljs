@@ -273,9 +273,11 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 237 (count exported-fns))
+      (is (= 239 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 237; 2026-07-28 genmlx-cqgx added the persistent-"
+               " fns (pinned at 239; 2026-08-02 genmlx-sko3 added the device "
+               "pair defaultDevice/setDefaultDevice — both WRAPPED, see "
+               "mlx.cljs CONFIGURATION; 2026-07-28 genmlx-cqgx added the persistent-"
                "compile trio compileCreate/compiledCall/compiledFree, then "
                "genmlx-7prh added compiledCallCaptured/compiledIsCaptured; "
                "2026-07-29 the upstream d0b608fa merge added the agent cold-tier "

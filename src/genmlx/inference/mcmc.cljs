@@ -31,13 +31,15 @@
 
 (defn- with-device
   "Run f with the given MLX device as default, restoring the original after.
-   If device is nil, runs f with no device change."
+   If device is nil, runs f with no device change.
+
+   Scoping is the membrane's (`mx/with-default-device*`) rather than a local
+   let/try/finally — this was a hand-rolled duplicate of it. Note that until
+   genmlx-okeu `mx/set-default-device!` was a no-op, so this whole option was
+   silently dead; it now does what it always claimed to."
   [device f]
   (if-let [d (resolve-device device)]
-    (let [prev (mx/default-device)]
-      (mx/set-default-device! d)
-      (try (f)
-           (finally (mx/set-default-device! prev))))
+    (mx/with-default-device* d f)
     (f)))
 
 ;; ---------------------------------------------------------------------------
