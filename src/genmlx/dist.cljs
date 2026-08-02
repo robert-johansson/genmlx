@@ -1327,6 +1327,118 @@
     (mx/where erf? near tail)))
 
 ;; ---------------------------------------------------------------------------
+;; Far-tail truncated-normal sampling (genmlx-smrk)
+;; ---------------------------------------------------------------------------
+
+(def ^:private TAIL-THRESHOLD
+  "Reflected lower bound above which the native inverse-CDF sampler is unusable.
+   MLX's random::truncated_normal draws uniform(erf(a/sqrt2), erf(b/sqrt2)); at
+   a = 3 that lower endpoint is erf(2.12) = 0.99722, still well clear of 1.0 in
+   float32, so the native path is exact below here and is kept."
+  (mx/scalar 3.0))
+
+;; Kept in-domain so the UNSELECTED tail branch is always finite: any interval
+;; above TAIL-THRESHOLD works, [4,5] is simply a cheap representative.
+(def ^:private TAIL-DUMMY-LO (mx/scalar 4.0))
+(def ^:private TAIL-DUMMY-HI (mx/scalar 5.0))
+;; Floor for the seed sweep only — keeps log(z) in domain if the asymptotic
+;; undershoots on the first pass; never reached once the sweep has converged.
+(def ^:private SEED-FLOOR (mx/scalar 1e-6))
+
+(defn- log-phi
+  "log of the standard-normal PDF."
+  [z]
+  (mx/negative (mx/add LOG-2PI-HALF (mx/multiply HALF (mx/square z)))))
+
+(defn- log-q-inverse
+  "Solve log-q(z) = target for z >= lo, in the upper tail.
+
+   Two stages, both branchless and differentiable:
+
+   1. Seed from the tail asymptotic log Q(z) ~ -z^2/2 - log z - log(2pi)/2,
+      i.e. the fixed point z = sqrt(2s - 2 log z) with s = -target - log(2pi)/2.
+      Three sweeps put the seed within ~1e-3 of the root over the whole domain.
+   2. Newton on f(z) = log-q(z) - target. Since f'(z) = -phi(z)/Q(z), the step
+      is (log-q z - target) * exp(log-q z - log-phi z) — the Mills ratio, which
+      is ~1/z in the tail, so the step is well scaled at every magnitude and
+      needs no damping.
+
+   Two of each is the measured float32 floor, not a guess. Sweeping V over a
+   400-point grid on [3.1,4], [4,5], [7,8], [10,20], [7,1000], [50,60] and the
+   narrow [5,5.001], the worst |z - z_at(8,8)| is 9.5e-7 at (2,2) — one float32
+   ULP at z = 7 — and (3,3) and (4,4) do not improve it. Dropping to a single
+   Newton step is 10-100x worse (1e-5 .. 1e-4), so 2 is the knee.
+
+   Each iteration costs a full log-q, which is ~27 kernel launches; this is the
+   hot part of the sampler, so the count is worth keeping honest."
+  [target lo]
+  (let [s (mx/maximum (mx/subtract (mx/negative target) LOG-2PI-HALF) ONE)
+        two-s (mx/multiply TWO s)
+        seed (reduce (fn [z _]
+                       (mx/sqrt (mx/maximum (mx/subtract two-s
+                                                         (mx/multiply TWO (mx/log z)))
+                                            SEED-FLOOR)))
+                     (mx/sqrt two-s)
+                     (range 2))]
+    (reduce (fn [z _]
+              (let [lq (log-q z)]
+                (mx/add z (mx/multiply (mx/subtract lq target)
+                                       (mx/exp (mx/subtract lq (log-phi z)))))))
+            (mx/maximum seed lo)
+            (range 2))))
+
+(defn- truncated-normal-standard
+  "z ~ TruncatedNormal(0, 1) on [a, b], of the given shape.
+
+   MLX's native `random::truncated_normal` (random.cpp:324, ported from JAX) is
+   an inverse-CDF draw through `erf`/`erfinv`. Beyond ~5-6 sigma `erf(a/sqrt2)`
+   and `erf(b/sqrt2)` both round to 1.0f, so `uniform(a,b)` is degenerate at
+   1.0, `erfinv(1)` is +inf, and the trailing clip turns that into a bound —
+   every draw from (0,1,7,8) came back as exactly 8.0, which LOOKS in-bounds
+   and is why no bounds assertion ever caught it (genmlx-smrk).
+
+   The tail branch below does the same inverse-CDF draw in LOG space, where
+   nothing saturates. Sampling Q uniformly on [Q(b), Q(a)] is
+     log Q_t = log Q(a) + log(exp d - V*expm1 d),   d = log Q(b) - log Q(a)
+   which stays exact as d -> -inf (it degenerates to log Q(a) + log V), and
+   `log-q-inverse` maps it back to z.
+
+   Native is retained below TAIL-THRESHOLD, where it is exact and cheaper.
+   Both branches are always evaluated (MLX has no lazy branch), so a
+   truncated-normal draw costs the tail arithmetic even in the central case.
+
+   The two branches deliberately SHARE one key rather than splitting it. That
+   is safe because exactly one of them reaches the result on any given lane, so
+   no draw is ever a function of both and the correlation between them is
+   unobservable. It is also worth 2.8 ms per call: `rng/split` measured 2.77 ms
+   on sm_120, more than the whole tail arithmetic, and splitting here would buy
+   independence that nothing can observe. (Do not 'restore' the split for
+   hygiene — the reason it is absent is measured, not an oversight.)"
+  [key a b shape]
+  (let [key (rng/ensure-key key)
+        ;; Reflect an entirely-non-positive interval onto the upper tail, the
+        ;; same move log-normal-mass makes — the native sampler is broken on
+        ;; BOTH far tails, symmetrically.
+        refl? (mx/less-equal b ZERO)
+        a' (mx/where refl? (mx/negative b) a)
+        b' (mx/where refl? (mx/negative a) b)
+        tail? (mx/greater a' TAIL-THRESHOLD)
+        ;; In-domain dummies keep the unselected branch finite, so mx/where's
+        ;; backward pass cannot manufacture a NaN.
+        at (mx/where tail? a' TAIL-DUMMY-LO)
+        bt (mx/where tail? b' TAIL-DUMMY-HI)
+        la (log-q at)
+        d  (mx/subtract (log-q bt) la)
+        v  (rng/uniform key shape)
+        target (mx/add la (mx/log (mx/subtract (mx/exp d)
+                                               (mx/multiply v (mx/expm1 d)))))
+        ;; the exact root lies in [at, bt]; the clip only absorbs float32 residue
+        z-tail (mx/clip (log-q-inverse target at) at bt)]
+    (mx/where tail?
+              (mx/where refl? (mx/negative z-tail) z-tail)
+              (rng/truncated-normal key a b shape))))
+
+;; ---------------------------------------------------------------------------
 ;; Truncated Normal
 ;; ---------------------------------------------------------------------------
 
@@ -1336,21 +1448,17 @@
   (validate (check-positive "truncated-normal" "sigma" sigma)
             (check-less-than "truncated-normal" "lo" lo "hi" hi))
   (sample [key]
-          (let [z (rng/truncated-normal key
-                                        (mx/divide (mx/subtract lo mu) sigma)
-                                        (mx/divide (mx/subtract hi mu) sigma)
-                                        [])]
+          (let [z (truncated-normal-standard key
+                                             (mx/divide (mx/subtract lo mu) sigma)
+                                             (mx/divide (mx/subtract hi mu) sigma)
+                                             [])]
             (mx/add mu (mx/multiply sigma z))))
   (log-prob [v]
     ;; log p(v) = log N(v; mu, sigma) - log(Phi(b) - Phi(a))
     ;; where a = (lo - mu)/sigma, b = (hi - mu)/sigma
             (let [z (mx/divide (mx/subtract v mu) sigma)
-          ;; Standard normal log-pdf
-                  log-phi (mx/negative
-                           (mx/add LOG-2PI-HALF
-                                   (mx/multiply HALF (mx/square z))))
-          ;; Subtract log(sigma)
-                  log-pdf (mx/subtract log-phi (mx/log sigma))
+          ;; Standard normal log-pdf, minus log(sigma)
+                  log-pdf (mx/subtract (log-phi z) (mx/log sigma))
           ;; Normalization in log space — see log-normal-mass. The old
           ;; `log(max(Phi(b) - Phi(a), 1e-38))` clamp is gone: it did not
           ;; bound the far-tail error, it only relabelled it (the clamp is
@@ -1362,10 +1470,10 @@
                   in-bounds (mx/multiply (mx/greater-equal v lo) (mx/less-equal v hi))]
               (mx/where in-bounds (mx/subtract log-pdf log-norm) NEG-INF)))
   (reparam [key]
-           (let [z (rng/truncated-normal key
-                                         (mx/divide (mx/subtract lo mu) sigma)
-                                         (mx/divide (mx/subtract hi mu) sigma)
-                                         [])]
+           (let [z (truncated-normal-standard key
+                                              (mx/divide (mx/subtract lo mu) sigma)
+                                              (mx/divide (mx/subtract hi mu) sigma)
+                                              [])]
              (mx/add mu (mx/multiply sigma z)))))
 
 (defmethod dc/dist-sample-n* :truncated-normal [d key n]
@@ -1373,7 +1481,7 @@
         key (rng/ensure-key key)
         a (mx/divide (mx/subtract lo mu) sigma)
         b (mx/divide (mx/subtract hi mu) sigma)
-        z (rng/truncated-normal key a b [n])]
+        z (truncated-normal-standard key a b [n])]
     (mx/add mu (mx/multiply sigma z))))
 
 ;; ---------------------------------------------------------------------------

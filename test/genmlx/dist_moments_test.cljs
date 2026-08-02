@@ -421,6 +421,77 @@
       (is (h/z-test-passes? 1.8915 samples) "mean converges to 1.8915")
       (is (h/close? 1.5062 (h/sample-variance samples) 0.2) "variance converges to 1.5062"))))
 
+;; --------------------------------------------------------------------------
+;; Far tail (genmlx-smrk)
+;; --------------------------------------------------------------------------
+;; MLX's native random::truncated_normal (random.cpp:324) draws
+;; uniform(erf(a/sqrt2), erf(b/sqrt2)). Beyond ~5-6 sigma BOTH endpoints round
+;; to 1.0f, so the uniform is degenerate, erfinv(1) is +inf, and the trailing
+;; clip returns a BOUND: every one of 2000 draws from (0,1,7,8) came back as
+;; exactly 8.0. That value is in-bounds, so no support or range assertion could
+;; ever see it — these have to be moment tests against the closed form, which is
+;; the only oracle a "plausible constant" cannot satisfy.
+;;
+;; Reference moments are float64, from the Mills-ratio continued fraction, and
+;; cross-checked by the +/- mirror below.
+
+(defn- rel-close?
+  "Relative closeness. Used for the far-tail variances (1e-2 .. 1e-4): an
+   ABSOLUTE tolerance like the 0.1 above would be satisfied by the degenerate
+   sampler, whose variance is exactly 0 — i.e. it would not be coverage."
+  [expected actual tol]
+  (< (js/Math.abs (/ (- actual expected) expected)) tol))
+
+(deftest truncated-normal-far-tail-moments
+  (doseq [[label mu sigma lo hi ref-mean ref-var]
+          [["TN(0,1,7,8)"     0 1.0    7    8    7.13706716  0.0177928870]
+           ["TN(0,1,-8,-7)"   0 1.0   -8   -7   -7.13706716  0.0177928870]
+           ["TN(0,1,10,20)"   0 1.0   10   20   10.09809323  0.0094453766]
+           ["TN(0,0.1,1,2)"   0 0.1    1    2    1.00980932  0.0000944538]
+           ["TN(0,1,3.5,4.5)" 0 1.0  3.5  4.5    3.73726694  0.0435425878]]]
+    (testing label
+      (let [samples (sample-n-realize (dist/truncated-normal mu sigma lo hi) N)
+            n-distinct (count (distinct samples))]
+        (is (h/z-test-passes? ref-mean samples)
+            (str label " mean converges to " ref-mean
+                 " (got " (h/sample-mean samples) ")"))
+        (is (rel-close? ref-var (h/sample-variance samples) 0.15)
+            (str label " variance converges to " ref-var
+                 " (got " (h/sample-variance samples) ")"))
+        ;; the defect signature itself: a clipped sampler emits ONE value
+        (is (> n-distinct (* 0.9 N))
+            (str label " draws are not degenerate (distinct " n-distinct "/" N ")"))
+        (is (every? #(and (<= lo %) (<= % hi)) samples)
+            (str label " every draw lies in [lo,hi]"))))))
+
+(deftest truncated-normal-far-tail-mirror
+  (testing "the +/- far tails are exact mirrors (the negative tail was equally broken)"
+    ;; Same key, reflected bounds: the sampler reflects internally, so these
+    ;; must agree to the last bit rather than merely in distribution.
+    (let [key (h/deterministic-key)
+          pos (mx/->clj (dc/dist-sample-n (dist/truncated-normal 0 1 7 8) key N))
+          neg (mx/->clj (dc/dist-sample-n (dist/truncated-normal 0 1 -8 -7) key N))]
+      (is (every? (fn [[p n]] (= p (- n))) (map vector pos neg))
+            "every far-tail draw mirrors its negated-bounds twin exactly"))))
+
+(deftest truncated-normal-far-tail-all-sampling-paths
+  ;; Sibling sweep: dist-sample, dist-reparam and dist-sample-n* all route
+  ;; through one helper — asserted independently rather than assumed.
+  ;; vsimulate/vgenerate shape-batched sampling goes through dist-sample-n*,
+  ;; so it is covered by the third row.
+  (testing "scalar sample, reparam and batched sampling are all fixed"
+    (let [d (dist/truncated-normal 0 1 7 8)
+          draw (fn [f off n]
+                 (mapv (fn [i] (mx/item (f d (rng/fresh-key (+ off i))))) (range n)))]
+      (doseq [[nm xs] [["dist-sample"    (draw dc/dist-sample 9000 300)]
+                       ["dist-reparam"   (draw dc/dist-reparam 9300 300)]
+                       ["dist-sample-n*" (sample-n-realize d N)]]]
+        (is (> (count (distinct xs)) (* 0.9 (count xs)))
+            (str nm ": draws are not degenerate (distinct "
+                 (count (distinct xs)) "/" (count xs) ")"))
+        (is (h/z-test-passes? 7.13706716 xs 4.0)
+            (str nm ": mean converges to 7.13707 (got " (h/sample-mean xs) ")"))))))
+
 ;; ==========================================================================
 ;; Categorical
 ;; ==========================================================================
