@@ -18,6 +18,8 @@
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.dist :as dist]
             [genmlx.mlx :as mx]
+            [genmlx.dist.core :as dc]
+            [genmlx.mlx.random :as rng]
             [genmlx.test-helpers :as h]))
 
 ;; ---------------------------------------------------------------------------
@@ -704,6 +706,53 @@
   (testing "Truncated-Normal value gradients: analytical vs FD"
     (let [{:keys [failed]} (run-gradient-specs truncated-normal-value-specs)]
       (is (zero? failed) "all Truncated-Normal value gradient checks pass"))))
+
+;; ---------------------------------------------------------------------------
+;; Truncated-Normal REPARAM pathwise gradient (genmlx-84mq)
+;;
+;; Every other spec above differentiates log-prob. This one differentiates the
+;; SAMPLE PATH, which is a different code path (dc/dist-reparam) and the only
+;; one where the bounds' dependence on mu can go missing:
+;;   d/dmu [mu + sigma*z(a(mu), b(mu))] = 1 + sigma*(dz/da*da/dmu + dz/db*db/dmu)
+;; MLX's native `random::truncated_normal` propagates no gradient through
+;; lower/upper, so before the fix the central region returned a bare 1.0 with the
+;; bracketed term silently dropped, while the far tail (log-space inverse CDF)
+;; was correct — the two branches disagreed, and the gradient jumped as mu moved
+;; a bound across TAIL-THRESHOLD. A finiteness-only check cannot see any of this,
+;; which is why these rows compare against a finite difference.
+;;
+;; The key is FIXED so reparam is a deterministic smooth function of mu and
+;; central differences are valid. The tail rows also guard the NaN regression
+;; mode: both branches are always evaluated, so the central branch must use
+;; in-domain dummy bounds out there or where's backward yields 0*inf = NaN.
+;; ---------------------------------------------------------------------------
+(def ^:private tn-reparam-key (rng/fresh-key 7))
+
+(defn- tn-reparam-at [mu sigma lo hi]
+  (dc/dist-reparam (dist/truncated-normal mu sigma lo hi) tn-reparam-key))
+
+(def truncated-normal-reparam-specs
+  [{:name "central [-2,2] @mu=0"       :mu 0.0  :sigma 1.0 :lo -2.0 :hi 2.0}
+   {:name "central [-2,2] @mu=0.5"     :mu 0.5  :sigma 1.0 :lo -2.0 :hi 2.0}
+   {:name "central [-3,1] @mu=-1"      :mu -1.0 :sigma 1.0 :lo -3.0 :hi 1.0}
+   {:name "central narrow [-0.5,0.5]"  :mu 0.0  :sigma 1.0 :lo -0.5 :hi 0.5}
+   {:name "far tail [7,8]"             :mu 0.0  :sigma 1.0 :lo 7.0  :hi 8.0}
+   {:name "far tail [-8,-7]"           :mu 0.0  :sigma 1.0 :lo -8.0 :hi -7.0}
+   {:name "threshold crossing [3.5,4.5] @mu=1" :mu 1.0 :sigma 1.0 :lo 3.5 :hi 4.5}])
+
+(deftest truncated-normal-reparam-gradient-matches-fd
+  (testing "Truncated-Normal reparam pathwise d/dmu: autograd vs FD, both branches"
+    (doseq [{:keys [name mu sigma lo hi]} truncated-normal-reparam-specs]
+      (let [ag (mx/item ((mx/grad (fn [m] (tn-reparam-at m sigma lo hi))) (mx/scalar mu)))
+            hh 1e-3
+            f+ (mx/item (tn-reparam-at (mx/scalar (+ mu hh)) sigma lo hi))
+            f- (mx/item (tn-reparam-at (mx/scalar (- mu hh)) sigma lo hi))
+            fd (/ (- f+ f-) (* 2 hh))]
+        (is (js/isFinite ag)
+            (str "reparam d/dmu is finite (no 0*inf from the unselected branch): " name))
+        (is (< (js/Math.abs (- ag fd)) (max 5e-2 (* 0.05 (js/Math.abs fd))))
+            (str "reparam d/dmu matches FD: " name
+                 " (autograd " (.toFixed ag 5) " vs fd " (.toFixed fd 5) ")"))))))
 
 (deftest von-mises-value-gradient-matches-fd
   (testing "Von-Mises value gradients: analytical vs FD"

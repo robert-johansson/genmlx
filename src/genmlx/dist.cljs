@@ -1341,6 +1341,15 @@
 ;; above TAIL-THRESHOLD works, [4,5] is simply a cheap representative.
 (def ^:private TAIL-DUMMY-LO (mx/scalar 4.0))
 (def ^:private TAIL-DUMMY-HI (mx/scalar 5.0))
+
+;; Mirror of the above for the DIFFERENTIABLE central branch (genmlx-84mq). Both
+;; branches are always evaluated, so in the tail case the central branch would
+;; otherwise compute Phi(7) = Phi(8) = 1.0, hence erfinv(1) = +inf; the forward
+;; clip hides that, but mx/where's backward multiplies the unselected branch by
+;; 0 and 0*inf = NaN — which is exactly how the tail gradient started returning
+;; NaN. Any in-domain interval works; [-1, 1] is a cheap representative.
+(def ^:private CENTRAL-DUMMY-LO (mx/scalar -1.0))
+(def ^:private CENTRAL-DUMMY-HI (mx/scalar 1.0))
 ;; Floor for the seed sweep only — keeps log(z) in domain if the asymptotic
 ;; undershoots on the first pass; never reached once the sweep has converged.
 (def ^:private SEED-FLOOR (mx/scalar 1e-6))
@@ -1414,7 +1423,8 @@
    on sm_120, more than the whole tail arithmetic, and splitting here would buy
    independence that nothing can observe. (Do not 'restore' the split for
    hygiene — the reason it is absent is measured, not an oversight.)"
-  [key a b shape]
+  ([key a b shape] (truncated-normal-standard key a b shape false))
+  ([key a b shape differentiable?]
   (let [key (rng/ensure-key key)
         ;; Reflect an entirely-non-positive interval onto the upper tail, the
         ;; same move log-normal-mass makes — the native sampler is broken on
@@ -1433,10 +1443,37 @@
         target (mx/add la (mx/log (mx/subtract (mx/exp d)
                                                (mx/multiply v (mx/expm1 d)))))
         ;; the exact root lies in [at, bt]; the clip only absorbs float32 residue
-        z-tail (mx/clip (log-q-inverse target at) at bt)]
+        z-tail (mx/clip (log-q-inverse target at) at bt)
+        ;; Central branch. `rng/truncated-normal` is MLX's native inverse-CDF
+        ;; draw — exact and cheaper, but it propagates NO gradient through
+        ;; `lower`/`upper`, so every `d/dmu`, `d/dsigma` term that reaches z
+        ;; through the standardized bounds is silently dropped (genmlx-84mq).
+        ;; That is invisible for `sample` (values are correct) and wrong for
+        ;; `reparam`, so the differentiable form is opt-in per call site: the
+        ;; same inverse CDF written in CLJS, where a and b carry their
+        ;; dependence. It reuses the tail branch's uniform for the reason the
+        ;; docstring gives — exactly one branch reaches the result per lane, so
+        ;; sharing is unobservable and saves a 2.77 ms rng/split.
+        z-central (if differentiable?
+                    ;; In-domain dummies when the TAIL branch will win, for the same
+                    ;; reason at/bt exist above: Phi saturates to 1.0 out there, so
+                    ;; erfinv(1) = inf and where's backward turns 0*inf into NaN.
+                    (let [ac (mx/where tail? CENTRAL-DUMMY-LO a)
+                          bc (mx/where tail? CENTRAL-DUMMY-HI b)
+                          phi (fn [x] (mx/multiply HALF
+                                                   (mx/add ONE (mx/erf (mx/divide x SQRT-TWO)))))
+                          pa (phi ac)
+                          pb (phi bc)
+                          p  (mx/add pa (mx/multiply v (mx/subtract pb pa)))
+                          z  (mx/multiply SQRT-TWO
+                                          (mx/erfinv (mx/subtract (mx/multiply TWO p) ONE)))]
+                      ;; the exact root lies in [ac, bc]; clip absorbs float32 residue,
+                      ;; mirroring the tail branch
+                      (mx/clip z ac bc))
+                    (rng/truncated-normal key a b shape))]
     (mx/where tail?
               (mx/where refl? (mx/negative z-tail) z-tail)
-              (rng/truncated-normal key a b shape))))
+              z-central))))
 
 ;; ---------------------------------------------------------------------------
 ;; Truncated Normal
@@ -1470,10 +1507,17 @@
                   in-bounds (mx/multiply (mx/greater-equal v lo) (mx/less-equal v hi))]
               (mx/where in-bounds (mx/subtract log-pdf log-norm) NEG-INF)))
   (reparam [key]
+           ;; differentiable? = true (genmlx-84mq): z depends on mu/sigma through
+           ;; BOTH standardized bounds, so the pathwise derivative is
+           ;;   d/dmu [mu + sigma*z(a(mu), b(mu))] = 1 + sigma*(dz/da*da/dmu + dz/db*db/dmu)
+           ;; The native central sampler drops the bracketed term and returns a bare 1.0.
+           ;; `sample` above deliberately stays on the native path — values are correct
+           ;; there and it is cheaper; only the gradient path needs the CLJS inverse CDF.
            (let [z (truncated-normal-standard key
                                               (mx/divide (mx/subtract lo mu) sigma)
                                               (mx/divide (mx/subtract hi mu) sigma)
-                                              [])]
+                                              []
+                                              true)]
              (mx/add mu (mx/multiply sigma z)))))
 
 (defmethod dc/dist-sample-n* :truncated-normal [d key n]
