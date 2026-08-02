@@ -217,9 +217,16 @@
 
 (deftest inv-wishart-statistics
   (mx/clear-cache!)
-  (testing "E[X] = Psi / (df - k - 1)"
+  ;; df must sit ABOVE the k+3 boundary for the MEAN to have finite variance:
+  ;; Var(X_ii) = 2*psi_ii^2 / [(df-k-1)^2 (df-k-3)], infinite at df = k+3 = 5.
+  ;; At df=5 the marginal is inverse-gamma(shape (df-k+1)/2 = 2, scale 1/2) —
+  ;; Pareto tail index 2. Measured on Thor sm_110: max 63.6 in 4000 draws, and
+  ;; ONE such draw moves a 500-sample mean by 0.127, i.e. nearly the whole old
+  ;; +/-0.15 band. So the mean assertions move to df=8, and the boundary case
+  ;; keeps its coverage via the MEDIAN, which exists at df=5. (genmlx-y4ln)
+  (testing "E[X] = Psi / (df - k - 1), at df=8 where the variance is finite"
     (let [Psi (mx/eye 2)
-          d (dist/inv-wishart 5 Psi)
+          d (dist/inv-wishart 8 Psi)
           n 500
           samples (mapv (fn [_]
                           (let [X (dist/sample d)]
@@ -228,8 +235,21 @@
           mean-00 (/ (reduce + (map #(get-in % [0 0]) samples)) n)
           mean-11 (/ (reduce + (map #(get-in % [1 1]) samples)) n)
           mean-01 (/ (reduce + (map #(get-in % [0 1]) samples)) n)]
-      (is (h/close? 0.5 mean-00 0.15) "inv-wishart E[X[0,0]] ~ 0.5")
-      (is (h/close? 0.5 mean-11 0.15) "inv-wishart E[X[1,1]] ~ 0.5")
-      (is (h/close? 0.0 mean-01 0.1) "inv-wishart E[X[0,1]] ~ 0"))))
+      ;; E[X_ii] = 1/(8-2-1) = 0.2. Measured over 20 reps: sd 0.0063 / 0.0065 /
+      ;; 0.0060, so +/-0.05 is ~8 sd — TIGHTER than the old +/-0.15, not widened.
+      (is (h/close? 0.2 mean-00 0.05) "inv-wishart E[X[0,0]] ~ 0.2 (df=8)")
+      (is (h/close? 0.2 mean-11 0.05) "inv-wishart E[X[1,1]] ~ 0.2 (df=8)")
+      (is (h/close? 0.0 mean-01 0.05) "inv-wishart E[X[0,1]] ~ 0 (df=8)")))
+  (testing "df = k+3 boundary: assert a statistic that EXISTS there (median)"
+    (let [d (dist/inv-wishart 5 (mx/eye 2))
+          n 500
+          xs (sort (mapv (fn [_]
+                           (let [X (dist/sample d)]
+                             (mx/eval! X) (get-in (mx/->clj X) [0 0])))
+                         (range n)))
+          med (nth xs (quot n 2))]
+      ;; median of inverse-gamma(2, 1/2) = 0.5 / median(Gamma(2,1)) = 0.5/1.6783
+      ;; = 0.2979. Measured over 20 reps: 0.29685 +/- 0.01352, so +/-0.08 is ~6 sd.
+      (is (h/close? 0.2979 med 0.08) "inv-wishart median X[0,0] ~ 0.298 (df=5)"))))
 
 (cljs.test/run-tests)
