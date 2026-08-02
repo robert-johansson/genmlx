@@ -13,8 +13,17 @@
             [genmlx.llm.structured :as st]
             [genmlx.llm.schema-grammar :as sg]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [promesa.core :as pr]
             ["fs" :as fs]))
+
+;; Every sampling site is SEEDED (gen-structured :key), the convention
+;; structured_test.cljs already established and this file was missed by
+;; (genmlx-bytb). Rationale, unchanged from there: the :int leaf is unbounded
+;; (schema_grammar's int-regex ignores :max), so an unseeded draw can run away
+;; emitting digits and truncate mid-structure against :max-bytes. MLX's RNG is
+;; bit-reproducible, so a pinned key makes each draw a fixed input rather than
+;; a coin flip. st/score teacher-forces a given value and needs no key.
 
 (def ^:private pass (atom 0))
 (def ^:private fail (atom 0))
@@ -72,12 +81,70 @@
                     (if (= :positive (key (apply max-key val posterior))) "  ✓ matches observed" "")))
 
       ;; conditioning composition: fix the verdict, let the model fill the rating
-      (println "\n  -- generate with verdict fixed to :good --")
-      (pr/let [g (st/generate m review-schema (:positive hyp->ids) {:verdict :good} opts)]
-        (println "    " (pr-str (:value g)) " weight:" (.toFixed (:weight g) 3))
-        (assert-true "conditioned value conforms" (:ok? g))
-        (assert-true "fixed field honored" (= :good (:verdict (:value g))))
-        (assert-true "conditioning weight finite" (js/isFinite (:weight g)))))
+      ;;
+      ;; This block used to be a single UNSEEDED semantic claim -- "the model's
+      ;; free-form rating happens to conform" -- which is a coin flip, not a
+      ;; test (genmlx-bytb: measured flaky in BOTH arms of a powered A/B, 2/17
+      ;; and 3/14 failures). Seeding alone would not have fixed it either: it
+      ;; would just have frozen one lucky draw. So the per-draw assertions below
+      ;; are the ones that hold for EVERY seed by construction, and the semantic
+      ;; conformance rate is pinned separately as a measured number.
+      ;;
+      ;; Measured 2026-08-02 (qwen3.5-0.8b, sm_120), seeds 1..20: 15/20 conform.
+      ;; The 5 misses are NOT grammar violations: seeds 2,3,10,18 fill the byte
+      ;; budget with a digit run, and seed 11 emits the well-formed but
+      ;; JS-out-of-range {:rating 316166762481384775667719 :verdict :good}.
+      ;; Raising :max-bytes does not help -- 64 and 128 gave identical outcomes
+      ;; on all 20 seeds, because the int regex is unbounded.
+      (println "\n  -- generate with verdict fixed to :good (seeded) --")
+      (let [seeds [1 2 3 4 5 6]
+            gs (mapv (fn [s]
+                       (st/generate m review-schema (:positive hyp->ids) {:verdict :good}
+                                    (assoc opts :key (rng/fresh-key s))))
+                     seeds)
+            n-ok (count (filter :ok? gs))
+            capped? (fn [g] (>= (count (:text g)) (:max-bytes opts)))
+            ;; the full conditioned language: rating digits, verdict pinned
+            well-formed? (fn [g] (some? (re-matches #"\{:rating \d+ :verdict :good\}" (:text g))))]
+        (doseq [[s g] (map vector seeds gs)]
+          (println (str "     seed " s "  ok=" (boolean (:ok? g))
+                        "  weight=" (.toFixed (:weight g) 3) "  " (pr-str (:text g)))))
+        (println (str "     conformance " n-ok "/" (count seeds)
+                      "  (measured 15/20 over seeds 1..20 on 2026-08-02)"))
+
+        ;; (1) determinism -- the direct anti-regression for the unseeded defect
+        (let [again (st/generate m review-schema (:positive hyp->ids) {:verdict :good}
+                                 (assoc opts :key (rng/fresh-key 1)))]
+          (assert-true "seeded generation is reproducible (same key -> same text)"
+                       (= (:text (first gs)) (:text again))))
+
+        ;; (2) conditioning is honored on EVERY draw: the fixed field can never
+        ;; take the other enum value, whether or not the draw completed.
+        (assert-true "no draw ever emits the excluded :verdict :bad"
+                     (not-any? #(re-find #":verdict :bad" (:text %)) gs))
+
+        ;; (3) every draw is ON-GRAMMAR: a non-conforming draw may only be a
+        ;; byte-budget truncation, never an illegal string. This is what the
+        ;; constrained decoder actually promises.
+        (assert-true "every draw is on-grammar (conforming, well-formed, or capped)"
+                     (every? #(or (:ok? %) (well-formed? %) (capped? %)) gs))
+
+        ;; (4) the importance weight is always a real log-evidence
+        (assert-true "conditioning weight finite on every draw"
+                     (every? #(js/isFinite (:weight %)) gs))
+        (assert-true "conditioning weight <= 0 on every draw (log-evidence)"
+                     (every? #(<= (:weight %) 1e-4) gs))
+
+        ;; (5) the semantic rate, pinned as a band rather than a coin flip. A red
+        ;; here is not automatically a regression -- it means the model's sampled
+        ;; outputs moved (different arch, different checkpoint) and the number
+        ;; above needs re-measuring. It is deterministic on a fixed arch.
+        (assert-true (str "conformance rate >= 3/6 on the pinned seeds (got " n-ok "/6)")
+                     (>= n-ok 3))
+
+        ;; (6) the original semantic claim, now scoped to the draws that parsed
+        (assert-true "every conforming draw honors the fixed field"
+                     (every? #(= :good (:verdict (:value %))) (filter :ok? gs)))))
 
     ;; =========================================================
     ;; ct1r — schema-as-program-grammar synthesis
@@ -87,7 +154,10 @@
      [expr-schema [:map [:op [:enum :+ :- :*]] [:a [:int {:min 0}]] [:b [:int {:min 0}]]]
       pr-raw (llm/encode tok "Emit one arithmetic op as EDN, e.g. {:op :+ :a 2 :b 3}\nEDN: ")
       prompt-ids (vec pr-raw)
-      r (st/sample m expr-schema prompt-ids opts)]
+      ;; seeded for the same reason as t3z5 above -- two unbounded :int leaves
+      ;; here, so an unseeded draw carries the same digit-runaway risk. Measured
+      ;; 2026-08-02: 12/12 conformance over seeds 1..12, deterministic per seed.
+      r (st/sample m expr-schema prompt-ids (assoc opts :key (rng/fresh-key 1)))]
       (println "  synthesized program:" (pr-str (:value r)) "text:" (pr-str (:text r)))
       (assert-true "program parses+validates against the DSL schema" (:ok? r))
       (assert-true "program is well-formed (op + two int operands)"
@@ -101,8 +171,8 @@
           (println "  evaluated:" a (name op) b "=" result)
           (assert-true "synthesized program is executable" (number? result))))
       ;; every sample is a valid program by construction
-      (pr/let [r2 (st/sample m expr-schema prompt-ids opts)
-               r3 (st/sample m expr-schema prompt-ids opts)]
+      (pr/let [r2 (st/sample m expr-schema prompt-ids (assoc opts :key (rng/fresh-key 2)))
+               r3 (st/sample m expr-schema prompt-ids (assoc opts :key (rng/fresh-key 3)))]
         (assert-true "all 3 syntheses are valid programs by construction"
                      (every? :ok? [r r2 r3]))))
 
