@@ -292,9 +292,15 @@
   (assert-true "quadratic: affine emission DECLINES"
                (zero? (:affine-families es)))
   ;; The exact stacked family must still engage — this pins that the affine
-  ;; detector declined, not the whole family machinery.
-  (assert-true "quadratic: exact stacked family still engages"
-               (zero? (:per-site-lps es)))
+  ;; detector declined, not the whole family machinery. Under the kill switch
+  ;; (GENMLX_AFFINE_FAMILY=0) the stacked emission is disabled TOO, so there the
+  ;; per-site path is the correct expectation; asserting zero unconditionally
+  ;; turned the kill switch red (genmlx-yy8u re-measurement, 2026-08-02).
+  (if rung2-on?
+    (assert-true "quadratic: exact stacked family still engages"
+                 (zero? (:per-site-lps es)))
+    (assert-true "quadratic (knob off): per-site lps survive"
+                 (pos? (:per-site-lps es))))
   (doseq [q [0.6 3.0 10.0]]
     (let [ts (mx/item ((:score-fn built) (mx/array [q])))
           hs (handler-assess-score quad-model [] ob [[:slope q]])]
