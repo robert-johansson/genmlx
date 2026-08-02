@@ -10,7 +10,7 @@
             [genmlx.dist.core :as dc]
             [genmlx.mlx.constants :refer [LOG-2PI ZERO ONE TWO HALF
                                           NEG-INF LOG-2PI-HALF MLX-PI LOG-PI
-                                          SQRT-TWO TWO-PI]])
+                                          SQRT-TWO TWO-PI LOG-2]])
   (:require-macros [genmlx.dist.macros :refer [defdist]]))
 
 ;; ---------------------------------------------------------------------------
@@ -1250,6 +1250,83 @@
     (rng/randint key (int (mx/realize lo)) (inc (int (mx/realize hi))) [n])))
 
 ;; ---------------------------------------------------------------------------
+;; Standard-normal tail mass in log space (genmlx-g2iu)
+;; ---------------------------------------------------------------------------
+
+(def ^:private ERFC-COEFFS
+  "Numerical Recipes' Chebyshev fit for erfc (`erfcc`), lowest-order term last
+   for Horner evaluation. Documented fractional error < 1.2e-7 — float32
+   epsilon — so in LOG space it is an absolute error of ~1.2e-7 nats at every
+   argument, which is why it can be evaluated without ever exponentiating."
+  (mapv mx/scalar
+        [0.17087277 -0.82215223 1.48851587 -1.13520398 0.27886807
+         -0.18628806 0.09678418 0.37409196 1.00002368 -1.26551223]))
+
+(defn- log-q
+  "log(1 - Phi(x)), the log upper-tail mass of the standard normal, for x >= 0.
+
+   erfcc is `t * exp(P(t) - u^2)`; we return `log t + P(t) - u^2` and never
+   form the exponential. That is the whole point: at x = 7 the tail mass is
+   1.3e-12, which `1 - erf(x)` cannot represent in float32 (both terms round
+   to 1.0) but which -27.4 nats represents exactly.
+
+   Only defined for x >= 0 — every caller here reflects first."
+  [x]
+  (let [u (mx/divide x SQRT-TWO)
+        t (mx/divide ONE (mx/add ONE (mx/multiply HALF u)))
+        poly (reduce (fn [acc c] (mx/add c (mx/multiply t acc)))
+                     (first ERFC-COEFFS)
+                     (rest ERFC-COEFFS))]
+    (mx/subtract (mx/add (mx/log t) (mx/subtract poly (mx/multiply u u)))
+                 LOG-2)))
+
+(defn- log-normal-mass
+  "log(Phi(b) - Phi(a)) for a <= b, accurate on both tails and across zero.
+
+   The naive `log(Phi(b) - Phi(a))` via `0.5(1 + erf(.))` collapses beyond
+   ~5-6 sigma: both terms round to 1.0, the difference underflows, and since
+   this value is SUBTRACTED from a log-density the collapse became a large
+   positive bonus (genmlx-g2iu). Two moves remove it:
+
+     1. Reflect an entirely-non-positive interval onto the upper tail, using
+        Phi(b) - Phi(a) = Phi(-a) - Phi(-b). One code path now serves both
+        tails — the old code was wrong on BOTH, symmetrically.
+     2. Off the origin, work in log space: Q(a) - Q(b) = exp(log Q(a)) *
+        (1 - exp(log Q(b) - log Q(a))), i.e. `log-q a + log(-expm1 d)`. No
+        term ever rounds to 1.0, so nothing cancels.
+
+   The erf difference is kept where it is strictly better — while a' <= 0 it
+   is cancellation-FREE (the two erf values straddle zero, so the subtraction
+   is really an addition), and while b' <= 1 both erf values are small enough
+   to carry full relative precision. Measured against a float64 reference the
+   crossover is continuous and the branch taken is the more accurate one at
+   every interval tried.
+
+   Residual float32 limit, stated rather than hidden: a very NARROW interval
+   in the far tail differences two large logs, e.g. [5, 5.00001] carries ~7e-3
+   nats of error. That is inherent to float32 and is bounded, unlike the 60-nat
+   sign-flipped bonus it replaces. A zero-WIDTH interval returns -Inf here
+   (hence +Inf density), which is the honest limit of a point mass; `validate`
+   already rejects lo >= hi, so it can only arise if (hi-lo)/sigma underflows."
+  [a b]
+  (let [refl? (mx/less-equal b ZERO)
+        a' (mx/where refl? (mx/negative b) a)
+        b' (mx/where refl? (mx/negative a) b)
+        erf? (mx/logical-or (mx/less-equal a' ZERO) (mx/less-equal b' ONE))
+        ;; Both branches are fed IN-DOMAIN arguments in both cases, so the
+        ;; unselected branch stays finite and mx/where's backward pass cannot
+        ;; manufacture a NaN. The (0,2) and (-1,1) dummies never reach the
+        ;; result and carry no gradient: the where on the INPUT already zeroes
+        ;; their cotangent.
+        qa (log-q (mx/where erf? ZERO a'))
+        qb (log-q (mx/where erf? TWO b'))
+        tail (mx/add qa (mx/log (mx/negative (mx/expm1 (mx/subtract qb qa)))))
+        ea (mx/erf (mx/divide (mx/where erf? a' (mx/negative ONE)) SQRT-TWO))
+        eb (mx/erf (mx/divide (mx/where erf? b' ONE) SQRT-TWO))
+        near (mx/log (mx/multiply HALF (mx/subtract eb ea)))]
+    (mx/where erf? near tail)))
+
+;; ---------------------------------------------------------------------------
 ;; Truncated Normal
 ;; ---------------------------------------------------------------------------
 
@@ -1274,19 +1351,13 @@
                                    (mx/multiply HALF (mx/square z))))
           ;; Subtract log(sigma)
                   log-pdf (mx/subtract log-phi (mx/log sigma))
-          ;; Normalization: approximate Phi via erf
-                  a (mx/divide (mx/subtract lo mu) sigma)
-                  b (mx/divide (mx/subtract hi mu) sigma)
-                  phi-a (mx/multiply HALF
-                                     (mx/add ONE
-                                             (mx/erf (mx/divide a SQRT-TWO))))
-                  phi-b (mx/multiply HALF
-                                     (mx/add ONE
-                                             (mx/erf (mx/divide b SQRT-TWO))))
-                  ;; Clamp to avoid log(0) = -Inf when bounds are very close
-                  ;; (phi-b ≈ phi-a → difference ≈ 0)
-                  log-norm (mx/log (mx/maximum (mx/subtract phi-b phi-a)
-                                               (mx/array 1e-38)))
+          ;; Normalization in log space — see log-normal-mass. The old
+          ;; `log(max(Phi(b) - Phi(a), 1e-38))` clamp is gone: it did not
+          ;; bound the far-tail error, it only relabelled it (the clamp is
+          ;; what turned the collapse into a fixed +87.5 nat bonus).
+                  log-norm (log-normal-mass
+                            (mx/divide (mx/subtract lo mu) sigma)
+                            (mx/divide (mx/subtract hi mu) sigma))
           ;; Bounds check
                   in-bounds (mx/multiply (mx/greater-equal v lo) (mx/less-equal v hi))]
               (mx/where in-bounds (mx/subtract log-pdf log-norm) NEG-INF)))

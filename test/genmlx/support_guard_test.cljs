@@ -27,9 +27,15 @@
      - beta: the mask is INCLUSIVE of 0 and 1, so unlike gamma's strict v>0 the
        0*(-Inf) boundary product escaped: beta(1,3) lp(0) and beta(2,1) lp(1)
        were NaN.
-   All three are fixed and pinned below. truncated-normal is NOT fixed: its
-   far tail is still wrong (see the PENDING section) and the real fix needs
-   mx/erfc at the membrane, which does not exist yet.
+   All three are fixed and pinned below.
+
+   truncated-normal (genmlx-g2iu) is now fixed too. Its normalizer collapsed
+   beyond ~5-6 sigma on BOTH tails, turning a subtracted log-normalizer into a
+   +61 nat bonus. This bean was long recorded as blocked on a native `mx/erfc`;
+   it was not — log(erfc) is computable in log space from `erf`/`expm1`/`log1p`,
+   all of which the membrane already exports, so the fix is pure ClojureScript
+   (`dist/log-normal-mass`). What remains genuinely native is the far-tail
+   SAMPLER, which saturates `erfinv` and returns a bound: genmlx-smrk.
 
    Run: bunx --bun nbb@1.4.208 test/genmlx/support_guard_test.cljs"
   (:require [genmlx.mlx :as mx]
@@ -39,19 +45,11 @@
 
 (def ^:private pass (atom 0))
 (def ^:private fail (atom 0))
-(def ^:private pending (atom 0))
 
 (defn assert-true [label v]
   (if v
     (do (swap! pass inc) (println "  PASS" label))
     (do (swap! fail inc) (println "  FAIL" label))))
-
-(defn assert-pending
-  "A KNOWN-WRONG row we are deliberately not asserting yet. Counted and printed
-   loudly so it can never be mistaken for coverage, and never silently green."
-  [label detail]
-  (swap! pending inc)
-  (println "  PENDING" label "--" detail))
 
 (def NEG-INF js/Number.NEGATIVE_INFINITY)
 
@@ -230,39 +228,77 @@
                    (every? js/isFinite lps)))))
 
 ;; ===========================================================================
-;; genmlx-4x5w RESIDUAL — truncated-normal far tail. NOT FIXED.
-(println "\n-- truncated-normal: bounds mask (fixed) + far tail (PENDING) --")
+;; genmlx-4x5w / genmlx-g2iu — truncated-normal: bounds mask AND far tail.
+(println "\n-- truncated-normal: bounds mask + far-tail normalizer (genmlx-g2iu) --")
 
-;; what IS guarded today: values outside [lo,hi] score -Inf.
+;; what IS guarded: values outside [lo,hi] score -Inf.
 (check-dist "truncated-normal(0,1,-2,2)" (dist/truncated-normal 0 1 -2 2)
             [-2.5 2.5 -10 10] [-1.9 0 1.9])
 
-;; what is NOT: the normalizer is 0.5(1+erf(b/sqrt2)) - 0.5(1+erf(a/sqrt2)).
+;; The defect: the normalizer WAS 0.5(1+erf(b/sqrt2)) - 0.5(1+erf(a/sqrt2)).
 ;; Beyond ~5-6 sigma both terms round to 1.0 in float32, the difference
-;; collapses to the 1e-38 clamp, and because log-norm is SUBTRACTED the result
-;; is a large POSITIVE bonus — a spurious attractor for any chain moving mu.
-;; The fix needs a complementary/log-space form (erfc), and mx/erfc does not
-;; exist at the membrane: @genmlx/core exports erf and erfinv only. Adding it
-;; is a native + coverage-matrix change (genmlx-0vwn), out of this bean's
-;; dist.cljs scope. Clamping cannot fix it — a clamp hides the magnitude while
-;; leaving the sign wrong. So this row is recorded, not asserted.
-(let [d1 (dist/truncated-normal 0 1 7 8)
-      d2 (dist/truncated-normal 0 0.1 1 2)
-      x1 (lp d1 7.1)
-      x2 (lp d2 1.0)]
-  (assert-pending "truncated-normal(0,1,7,8) lp(7.1)"
-                  (str "got " x1 ", truth ~ +1.3 (a +" (js/Math.round (- x1 1.3))
-                       " nat spurious bonus); needs mx/erfc"))
-  (assert-pending "truncated-normal(0,0.1,1,2) lp(1.0)"
-                  (str "got " x2 ", truth ~ +4.6 (a +" (js/Math.round (- x2 4.6))
-                       " nat spurious bonus); needs mx/erfc"))
-  ;; The one thing we CAN pin without erfc: the bug must not silently spread to
-  ;; the near-tail region that float32 still resolves.
+;; collapsed onto a 1e-38 clamp, and because log-norm is SUBTRACTED the result
+;; was a large POSITIVE bonus — a spurious attractor for any chain moving mu
+;; into the tail. `dist/log-normal-mass` now reflects onto one tail and works in
+;; log space, so nothing ever rounds to 1.0. Reference values below are from an
+;; independent float64 implementation (Mills-ratio continued fraction for the
+;; tail, erf Taylor series near the origin) cross-checked against the +/-
+;; mirror symmetry.
+;;
+;; Reinstating the old formula reproduces the exact defect these rows kill:
+;; [7,8] -> log-norm -87.498 instead of -27.385, i.e. lp(7.1) = +61.374.
+(let [tol 2e-3]
+  (assert-true (str "truncated-normal(0,1,7,8) lp(7.1) = +1.2609, not the old +61.374 "
+                    "(got " (lp (dist/truncated-normal 0 1 7 8) 7.1) ")")
+               (< (js/Math.abs (- (lp (dist/truncated-normal 0 1 7 8) 7.1) 1.2608555)) tol))
+  (assert-true (str "truncated-normal(0,0.1,1,2) lp(1.0) = +4.6149, not the old +38.882 "
+                    "(got " (lp (dist/truncated-normal 0 0.1 1 2) 1.0) ")")
+               (< (js/Math.abs (- (lp (dist/truncated-normal 0 0.1 1 2) 1.0) 4.6149316)) tol))
+  ;; SIBLING the original report missed: the NEGATIVE tail was equally broken,
+  ;; and by symmetry must now give the identical value.
+  (assert-true (str "truncated-normal(0,1,-8,-7) lp(-7.1) mirrors the +tail exactly "
+                    "(got " (lp (dist/truncated-normal 0 1 -8 -7) -7.1) ")")
+               (< (js/Math.abs (- (lp (dist/truncated-normal 0 1 -8 -7) -7.1) 1.2608555)) tol))
+  (assert-true "truncated-normal: +/- tails agree to float32 (mirror symmetry)"
+               (< (js/Math.abs (- (lp (dist/truncated-normal 0 1 7 8) 7.1)
+                                  (lp (dist/truncated-normal 0 1 -8 -7) -7.1)))
+                  1e-5))
+  ;; a narrow interval with its lower bound exactly at mu — the erf branch must
+  ;; stay cancellation-free there. log(Phi(1e-6)-Phi(0)) = log(3.9894e-7).
+  (assert-true (str "truncated-normal(0,1,0,1e-6) lp(0) = +13.8155 = -0.9189 + 14.7344 "
+                    "(got " (lp (dist/truncated-normal 0 1 0 1e-6) 0) ")")
+               (< (js/Math.abs (- (lp (dist/truncated-normal 0 1 0 1e-6) 0)
+                                  (- 14.734449 0.9189385)))
+                  1e-2))
+  ;; the near-tail region float32 always resolved must be unchanged:
   ;; log N(0;0,1) - log(Phi(2)-Phi(-2)) = -0.9189385 - log(0.9544997) = -0.8723565
-  (assert-true "truncated-normal(0,1,-2,2): lp(0) is the correct -0.8723565"
+  (assert-true "truncated-normal(0,1,-2,2): lp(0) is still the correct -0.8723565"
                (< (js/Math.abs (- (lp (dist/truncated-normal 0 1 -2 2) 0)
                                   -0.8723565))
                   1e-4)))
+
+;; POSITIVE ORACLE (CLAUDE.md rule 2): pinned constants alone would survive a
+;; plausible-constant regression in the normalizer. This does not — it integrates
+;; the density over [lo,hi] and demands 1. A wrong normalizer is a multiplicative
+;; error on the whole integral, so any drift shows up directly.
+(println "\n-- truncated-normal: the density integrates to 1 on every branch --")
+(doseq [[label mu sigma lo hi n]
+        [["central (0,1,-2,2)"      0 1.0   -2   2   20001]
+         ["far + tail (0,1,7,8)"    0 1.0    7   8   20001]
+         ["far - tail (0,1,-8,-7)"  0 1.0   -8  -7   20001]
+         ["narrow far (0,0.1,1,2)"  0 0.1    1   2  100001]
+         ["one-sided (0,1,0,4)"     0 1.0    0   4   20001]
+         ["offset (5,2,0,10)"       5 2.0    0  10   20001]]]
+  (let [dv   (/ (- hi lo) (dec n))
+        grid (mapv #(+ lo (* % dv)) (range n))
+        lps  (mx/->clj (dc/dist-log-prob (dist/truncated-normal mu sigma lo hi)
+                                         (mx/array (clj->js grid))))
+        ;; trapezoid rule, summed in float64 on the host
+        ps   (mapv js/Math.exp lps)
+        area (* dv (+ (* 0.5 (+ (first ps) (last ps)))
+                      (reduce + (subvec ps 1 (dec (count ps))))))]
+    (assert-true (str "truncated-normal " label ": integral = 1 (got " (.toFixed area 6) ")")
+                 (< (js/Math.abs (- area 1.0)) 2e-3))))
 
 ;; the NaN class specifically: no bounded-support dist may return NaN
 (println "\n-- no NaN from any bounded-support family, in or out of domain --")
@@ -334,6 +370,5 @@
                     (< (js/Math.abs (- (nth illegal 1) (nth legal 1))) 1e-6))))
 
 ;; ===========================================================================
-(println (str "\n== support-guard: " @pass " passed, " @fail " failed, "
-              @pending " pending (genmlx-4x5w truncated-normal residual) =="))
+(println (str "\n== support-guard: " @pass " passed, " @fail " failed =="))
 (when (pos? @fail) (set! (.-exitCode js/process) 1))
