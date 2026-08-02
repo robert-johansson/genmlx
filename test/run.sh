@@ -398,7 +398,19 @@ do_one() {
   # failures — e.g. llm/codegen_test prints "PASS: bad fn: 2 failures (expected 2,
   # got 2)" and was reported FAIL(asserts) while genuinely 91/91.
   elif grep -qE '^[[:space:]]*([1-9][0-9]* failures?,|[0-9]+ failures?, [1-9][0-9]* errors)' "$log"; then status="FAIL(asserts)"
-  elif grep -qE 'Ran 0 tests' "$log";                    then status="FAIL(0 tests)"
+  # Zero tests is right to fail for a file that failed to LOAD, and wrong for one
+  # that deliberately SKIPPED (genmlx-wg95): a correct per-arch skip scored red,
+  # dragged the battery to exit 1, and a permanently-red battery trains everyone to
+  # discount reds — the same corrosion the honesty contract exists to prevent.
+  # The distinction is explicit and machine-checkable, never inferred from the zero:
+  # an anchored SKIP print within three lines above the summary, the same marker and
+  # proximity rule `check` already uses for its failure-gate audit. A file that
+  # silently stops registering tests prints no such line and still scores FAIL.
+  elif grep -qE 'Ran 0 tests' "$log"; then
+    if awk '/^[[:space:]]*SKIP/ {s=NR}
+            /Ran 0 tests/ {if (s && NR-s <= 3) f=1}
+            END {exit !f}' "$log"; then status="SKIP"
+    else status="FAIL(0 tests)"; fi
   else status="PASS"; fi
   # bench files have no assertions: a clean exit is success regardless of FAIL-word noise
   if [ "$tier" = bench ] && [ "$code" -eq 0 ]; then status="PASS"; fi
@@ -425,7 +437,7 @@ run_tiers() {
   # costing 2-9 alphabetically-first files per battery even with do_one's
   # retry (measured across three 2026-07-27 Metal batteries; genmlx-lr9c).
   $NBB_CMD -e nil >/dev/null 2>&1 || true
-  local grand_pass=0 grand_fail=0
+  local grand_pass=0 grand_fail=0 grand_skip=0
   for tier in "${tiers[@]}"; do
     local files; files="$(manifest_files_for_tier "$tier")"
     local n; n="$(printf '%s\n' "$files" | grep -c . )"
@@ -440,9 +452,15 @@ run_tiers() {
       xargs -P "$j" -I {} bash -c 'do_one "$0" "$1" "$2"' "$tier" "$rdir" {} 2>/dev/null &
     wait $!
     # aggregate this tier
-    local r st dur fn tpass=0 tfail=0
+    local r st dur fn tpass=0 tfail=0 tskip=0
     while IFS=$'\t' read -r st dur fn; do
       if [ "$st" = PASS ]; then tpass=$((tpass+1));
+      # Skips are listed (so they stay VISIBLE — an invisible skip is how coverage
+      # quietly disappears) but tallied apart from both passed and not-passed, and
+      # they do not set the exit code.
+      elif [ "$st" = SKIP ]; then
+        tskip=$((tskip+1))
+        printf '  %-14s %6s  %s\n' "$st" "$dur" "$(basename "$fn")"
       else
         tfail=$((tfail+1))
         printf '  %-14s %6s  %s\n' "$st" "$dur" "$(basename "$fn")"
@@ -456,7 +474,7 @@ run_tiers() {
     # process tree, an xargs launch failure) would otherwise just VANISH from
     # the tally — "48 passed, 0 not-passed" out of 50 dispatched reads as a
     # clean tier. Missing verdicts are failures, not absences (genmlx-n061).
-    local accounted=$((tpass + tfail))
+    local accounted=$((tpass + tfail + tskip))
     if [ "$accounted" -ne "$n" ]; then
       echo "  ACCOUNTING  $accounted verdicts for $n dispatched files — no result from:"
       local mf
@@ -465,8 +483,13 @@ run_tiers() {
         [ -f "$rdir/$(echo "$mf" | tr '/.' '__').result" ] || { echo "      $mf"; tfail=$((tfail+1)); }
       done < <(printf '%s\n' "$files" | grep .)
     fi
-    echo "   $tier: $tpass passed, $tfail not-passed"
+    if [ "$tskip" -gt 0 ]; then
+      echo "   $tier: $tpass passed, $tfail not-passed, $tskip skipped"
+    else
+      echo "   $tier: $tpass passed, $tfail not-passed"
+    fi
     grand_pass=$((grand_pass+tpass)); grand_fail=$((grand_fail+tfail))
+    grand_skip=$((grand_skip+tskip))
     # Preserve the evidence when the tier was not clean. do_one's tail above
     # shows at most three lines, and the EXIT trap rm -rf's $rdir — so without
     # this the full log of a failure is gone by the time anyone reads the
@@ -479,7 +502,11 @@ run_tiers() {
   done
 
   echo "═══════════════════════════════════════════"
-  echo "TOTAL: $grand_pass passed, $grand_fail not-passed"
+  if [ "$grand_skip" -gt 0 ]; then
+    echo "TOTAL: $grand_pass passed, $grand_fail not-passed, $grand_skip skipped"
+  else
+    echo "TOTAL: $grand_pass passed, $grand_fail not-passed"
+  fi
   [ -n "$keepdir" ] && echo "full logs for the not-passed files: $keepdir"
   [ "$grand_fail" -eq 0 ] || overall=1
   if [ "$overall" -eq 0 ]; then echo "RESULT: PASS"; else echo "RESULT: FAIL"; fi

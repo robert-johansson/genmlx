@@ -87,6 +87,26 @@ A related trap: an unconditional `(js/process.exit 0)` defeats the gate no matte
 the counter says. `check` rejects one unless it is a documented skip — print
 `SKIP <reason>` immediately before it, as the checkpoint-absent paths do.
 
+### Skipping a file on a host that cannot run it
+
+A `cljs.test` file that skips still prints `Ran 0 tests`, and zero tests is normally a
+FAIL — correctly so, for a file that failed to *load*. To skip deliberately, print
+`SKIP <reason>` **at line start, within three lines above the `Ran 0 tests` summary**
+(a `println` at the top level of the skip branch does this naturally). The runner then
+scores the file `SKIP`: listed in the tier output so it stays visible, tallied in its own
+`skipped` column, and excluded from the exit code.
+
+The marker is required rather than inferred, and the distance rule is the point: a file
+that *silently* stops registering tests prints no `SKIP` line and still scores
+`FAIL(0 tests)`, so this cannot be used to make a broken file green. This is the same
+marker and proximity rule `check` uses to exempt a documented skip from the failure-gate
+audit.
+
+Before this existed, a correct per-arch skip (`vgenerate_compiled_test` on Metal) counted
+as not-passed and drove the whole battery to exit 1 — and a permanently-red battery
+teaches everyone to discount reds, which is the same corrosion the honesty contract exists
+to prevent (`genmlx-wg95`).
+
 ## Adding a test
 
 Create `test/genmlx/<name>_test.cljs` as usual, then **add one line to `test/tiers.txt`**.

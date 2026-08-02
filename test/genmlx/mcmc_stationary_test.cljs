@@ -16,6 +16,7 @@
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.importance :as is]
             [genmlx.inference.smc :as smc]
+            [genmlx.mlx.random :as rng]
             [genmlx.test-helpers :as th])
   (:require-macros [genmlx.gen :refer [gen]]))
 
@@ -172,10 +173,22 @@
             "HMC mean near 2.994")))
 
     (testing "NUTS mean near posterior"
-      ;; 50 samples (expensive), SE = 0.4468 / sqrt(50) = 0.0632
-      ;; tolerance = 3.5 * SE = 0.22
-      (let [samples   (mcmc/nuts {:samples 50 :burn 50 :step-size 0.05
-                                  :addresses [:mu] :compile? false :device :cpu}
+      ;; Tolerance 0.22 = 3.5 * 0.4468/sqrt(50), an IID standard error. NUTS draws are
+      ;; autocorrelated, so that derivation was wrong by the mixing efficiency — and at
+      ;; step-size 0.05 (about 1/9 of the posterior sd 0.4468) the chain barely moved:
+      ;; measured ESS 2.2 of 50 draws, true sd of the mean 0.3037, i.e. 4.8x the assumed
+      ;; SE. The band was 0.72 sd wide and failed ~20% of battery runs (genmlx-gmjm).
+      ;;
+      ;; The estimator was never biased — measured centre 2.9733 vs an analytic 2.9940
+      ;; (bias -0.021) — so the fix is mixing, not tolerance, and the band is UNCHANGED.
+      ;; step 0.05 -> 0.4 at identical cost: ESS 2.2 -> 28.2, sd 0.3037 -> 0.0841, centre
+      ;; 2.9952, 0/20 seeds failing (0.05: 4/20, 0.2: 3/20, 0.8 also 0/20 but its centre
+      ;; sits further out at 3.0115). Seeded on top, per genmlx-n7du: an unseeded NUTS
+      ;; band is a coin flip on every battery run, and when this one failed on 2026-07-27
+      ;; there was no way to recover WHICH assertion or what value it produced.
+      (let [samples   (mcmc/nuts {:samples 50 :burn 50 :step-size 0.4
+                                  :addresses [:mu] :compile? false :device :cpu
+                                  :key (rng/fresh-key 707)}
                                  model-b [] obs-b)
             nuts-mean (th/sample-mean (mapv first samples))]
         (swap! means assoc :NUTS nuts-mean)
