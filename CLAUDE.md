@@ -322,13 +322,14 @@ src/genmlx/
   # Layer 6: Inference (35+ algorithms across 30 files)
   inference/ — importance, mcmc, smc, smcp3, vi, adev, amortized, kernel,
   util, diagnostics, analytical, conjugate, auto_analytical, kalman, ekf,
-  ekf_nd, hmm_forward, enumerate, exact, fisher, compiled_gradient,
+  ekf_nd, hmm_forward, rb_mixture, enumerate, exact, fisher, compiled_gradient,
   compiled_optimizer, compiled_smc, differentiable, differentiable_resample,
   pmcmc, cost, steppable, translator
 
   # Layer 7: Compiled Paths (L1-L4 compilation pipeline)
   compiled.cljs, compiled_ops.cljs, compiled_gen.cljs, rewrite.cljs,
-  affine.cljs, conjugacy.cljs, dep_graph.cljs, method_selection.cljs
+  affine.cljs, conjugacy.cljs, dep_graph.cljs, method_selection.cljs,
+  linear_gaussian.cljs
 
   # Layer 8: Supporting Systems
   vectorized.cljs, gradients.cljs, learning.cljs, custom_gradient.cljs,
@@ -363,7 +364,7 @@ The implementation layers map onto the three-layer purity model:
   Layer 5: Combinators      (combinators, vmap — 10 combinators, pure)
   Layer 6: Inference         (30 files, 35+ algorithms — pure)
   Layer 7: Compiled Paths   (compiled, compiled_ops, rewrite, affine, conjugacy, dep_graph,
-                             method_selection — pure)
+                             method_selection, linear_gaussian — pure)
   Layer 8: Supporting       (vectorized, gradients, learning, nn, serialize, gfi, verify,
                              fit, dev — pure except dev.cljs atoms)
   Layer 9: LLM Integration  (llm/backend, core, grammar, bytes, codegen, msa, vision —
@@ -444,7 +445,7 @@ direct import of dynamic.cljs).
    infrastructure — no parallel implementations. The handler is ground truth.
 
 7. **The GFI algebraic laws.** The GFI algebraic theory (`gfi.cljs`) encodes
-   the laws from the thesis (84 as of 2026-07; count the `laws` vector for the
+   the laws from the thesis (85 as of 2026-08; count the `laws` vector for the
    current number) covering all operations, compositionality, gradients, and
    compiled path equivalence. `strip-compiled` forces handler path for testing.
 
@@ -546,9 +547,11 @@ The handler system has two parts:
 | regenerate | + `:weight :old-choices :selection` |
 | project | + `:weight :old-choices :selection :constraints` |
 
-Batched variants add `:batch-size` (int) and `:batched?` (true).
-The handler never inspects value shapes — MLX broadcasting handles
-`[N]`-shaped arrays transparently.
+Batched variants add `:batch-size` (int), `:batched?` (true), and
+`:batched-sub-regen`. All modes also carry `:param-store`; update/regenerate
+additionally carry `:old-splice-scores`/`:old-nested-splice-scores`; propose
+reuses simulate's state shape. The handler never inspects value shapes — MLX
+broadcasting handles `[N]`-shaped arrays transparently.
 
 **Regenerate has two transitions (genmlx-hmch, genmlx-yep2).** The *fast*
 `regenerate-transition` (per-site convention) is used when the selection is
