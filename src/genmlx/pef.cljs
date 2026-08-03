@@ -788,6 +788,10 @@
   "I5: every produced trace carries a legal score-type."
   [{:keys [model args]} key]
   (let [model (dyn/with-key (dyn/auto-key model) key)
+        ;; Deliberately narrower than schemas/TraceScoreType: PEF models are
+        ;; never enumerate-wrapped (:collapsed) and PEF ops never mint
+        ;; compiled-SMC tensor traces (:placeholder) — either tag appearing
+        ;; here IS a divergence this invariant exists to catch (genmlx-7fbp).
         legal #{:joint :marginal :beam-marginal}
         t (p/simulate model args)
         g (:trace (p/generate model args (subset-choicemap (:choices t) 5 2)))

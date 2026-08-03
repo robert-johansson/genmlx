@@ -31,7 +31,10 @@
 
      Returns: {:run (fn [gf args key opts] -> gfi-result)
                :score-type :joint|:marginal|:collapsed|:beam-marginal}
-     or nil if this dispatcher cannot handle the operation."))
+     or nil if this dispatcher cannot handle the operation.
+     (:placeholder is trace-metadata only — assigned by tensor-trace
+     constructors, never declared by a dispatcher; see
+     genmlx.schemas/TraceScoreType, genmlx-7fbp.)"))
 
 ;; ---------------------------------------------------------------------------
 ;; Stack resolution

@@ -26,7 +26,12 @@
             [genmlx.inference.exact :as exact]
             [genmlx.inference.mcmc :as mcmc]
             [genmlx.inference.kernel :as kern]
-            [genmlx.inference.importance :as imp])
+            [genmlx.inference.importance :as imp]
+            [genmlx.tensor-trace :as tt]
+            [genmlx.schemas :as schemas]
+            [genmlx.dispatch :as dispatch]
+            [genmlx.dev :as dev]
+            [malli.core :as m])
   (:require-macros [genmlx.gen :refer [gen]]))
 
 (def ^:private st-key :genmlx.trace/score-type)
@@ -471,5 +476,49 @@
 (deftest gfi-law-registered
   (is (contains? (set (map :name gfi/laws)) :score-type-soundness)
       "score-type soundness is part of the law catalog"))
+
+;; ============================================================
+;; 9. The legal score-type value set is LIVE schema, not reference doc
+;;    (genmlx-7fbp: :placeholder was produced by tensor_trace but absent
+;;     from the schemas.cljs enum, and nothing at runtime consulted the
+;;     enum at all)
+;; ============================================================
+
+(defn- dev-schema-violation?
+  "True iff (f) throws genmlx.dev's invalid-output schema violation."
+  [f]
+  (try (f) false
+       (catch :default e
+         (= ::dev/invalid-output (:type (ex-data e))))))
+
+(deftest placeholder-is-a-legal-trace-score-type
+  (let [pt (tt/make-placeholder-tensor-trace
+            {:gen-fn nil :args []
+             :values (mx/array [1.0 2.0]) :addr-index {:x 0 :y 1}
+             :score (mx/scalar 0.0) :retval nil})]
+    (is (= :placeholder (tr/score-type pt))
+        "the real producer tags :placeholder")
+    (is (m/validate schemas/TraceScoreType (tr/score-type pt))
+        "TraceScoreType accepts the produced tag (reverting the enum reddens this)")
+    (is (not (m/validate schemas/TraceScoreType :bogus))
+        "the enum is not vacuous")
+    (is (not (m/validate schemas/ScoreType :placeholder))
+        "dispatch-spec domain stays narrower: no dispatcher declares :placeholder")))
+
+(deftest dev-validation-consults-the-trace-score-type-enum
+  (let [base (p/simulate (dyn/with-key (two-gaussians) (rng/fresh-key 41)) [])
+        tagged-gf (fn [tag]
+                    (dyn/with-key
+                      (dispatch/with-dispatch (gen [] 0)
+                        (fn [_op _gf _args _key _opts]
+                          (tr/with-score-type base tag)))
+                      (rng/fresh-key 42)))]
+    (dev/start!)
+    (try
+      (is (= :placeholder (tr/score-type (p/simulate (tagged-gf :placeholder) [])))
+          "dev-mode validation ACCEPTS a placeholder-scored trace")
+      (is (dev-schema-violation? #(p/simulate (tagged-gf :bogus) []))
+          "dev-mode validation REJECTS an illegal score-type tag")
+      (finally (dev/stop!)))))
 
 (cljs.test/run-tests)

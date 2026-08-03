@@ -9,9 +9,10 @@
    [D] gen.dev/docs/stable/ref/core/gfi.
 
    Runtime validation (dev mode) consults BaseState, SubResult, and the
-   per-op *Return schemas; the remaining definitions (per-mode states,
-   TransitionSpec/ScoreType, model-schema shapes) are executable reference
-   documentation of the corresponding data shapes."
+   per-op *Return schemas — which validate trace score-type metadata via
+   ScoredTrace/TraceScoreType (genmlx-7fbp) — while the remaining
+   definitions (per-mode states, TransitionSpec, model-schema shapes) are
+   executable reference documentation of the corresponding data shapes."
   (:require [malli.util :as mu]
             [genmlx.choicemap :as cm]
             [genmlx.trace :as tr]))
@@ -38,6 +39,34 @@
 (def Trace
   "A GenMLX trace (anything satisfying tr/ITrace)."
   [:fn {:error/message "should be a Trace"} trace?])
+
+;; ---------------------------------------------------------------------------
+;; Score type metadata
+;; ---------------------------------------------------------------------------
+
+(def ScoreType
+  "Score encodings a dispatch-spec may declare (TransitionSpec).
+   :placeholder is deliberately absent: it is assigned only by tensor-trace
+   constructors (make-placeholder-tensor-trace, compiled SMC), never by a
+   dispatcher."
+  [:enum :joint :marginal :collapsed :beam-marginal])
+
+(def TraceScoreType
+  "Score encodings a trace's ::tr/score-type metadata may carry: ScoreType
+   plus :placeholder, the zero-score tensor-trace stand-in (genmlx-b2mj).
+   Consulted at runtime by ScoredTrace, so an illegal tag is a dev-mode
+   schema violation rather than dead reference documentation (genmlx-7fbp)."
+  (conj ScoreType :placeholder))
+
+(def ^:private legal-trace-score-types
+  (set (rest TraceScoreType)))
+
+(def ScoredTrace
+  "A Trace whose score-type metadata (default :joint for untagged traces)
+   is a legal TraceScoreType."
+  [:and Trace
+   [:fn {:error/message "illegal :genmlx.trace/score-type metadata"}
+    (fn [t] (contains? legal-trace-score-types (tr/score-type t)))]])
 
 ;; ---------------------------------------------------------------------------
 ;; Handler state schemas
@@ -113,19 +142,19 @@
 
 (def SimulateReturn
   "[T] Def 2.1.16, section 2.3.1 SIMULATE. Return value of p/simulate: a Trace."
-  Trace)
+  ScoredTrace)
 
 (def GenerateReturn
   "[T] section 2.3.1 GENERATE. Return value: {:trace Trace :weight MLX-scalar}."
   [:map
-   [:trace Trace]
+   [:trace ScoredTrace]
    [:weight some?]
    [:unused-constraints {:optional true} set?]])
 
 (def UpdateReturn
   "[T] section 2.3.1 UPDATE. Return value: {:trace Trace :weight MLX-scalar :discard ChoiceMap}."
   [:map
-   [:trace Trace]
+   [:trace ScoredTrace]
    [:weight some?]
    [:discard ChoiceMap]
    [:unused-constraints {:optional true} set?]])
@@ -133,7 +162,7 @@
 (def RegenerateReturn
   "[T] section 4.1.2, Eq 4.1. Return value: {:trace Trace :weight MLX-scalar}."
   [:map
-   [:trace Trace]
+   [:trace ScoredTrace]
    [:weight some?]])
 
 (def AssessReturn
@@ -152,14 +181,6 @@
 (def ProjectReturn
   "[D] project. Return value: an MLX scalar."
   some?)
-
-;; ---------------------------------------------------------------------------
-;; Score type metadata
-;; ---------------------------------------------------------------------------
-
-(def ScoreType
-  "Valid score encodings for transitions."
-  [:enum :joint :marginal :collapsed :beam-marginal])
 
 ;; ---------------------------------------------------------------------------
 ;; Dispatcher transition-spec
