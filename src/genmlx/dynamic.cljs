@@ -845,7 +845,13 @@
                      ;; prior, Kalman chain, LG block) makes the analytical
                      ;; marginal wrong — decline to the handler path.
                      (not (auto/any-addr-constrained?
-                            (:analytical-nonconj-deps schema) (:constraints opts))))
+                            (:analytical-nonconj-deps schema) (:constraints opts)))
+                     ;; Partial-group guard (genmlx-3k3x): decline when any
+                     ;; eliminated structure is partially active — a declining
+                     ;; structure beside a firing one yields a stochastic
+                     ;; weight that must not be tagged :marginal.
+                     (not (auto/some-structure-partially-constrained?
+                            (:analytical-structures schema) (:constraints opts))))
             {:run run-fn :score-type :marginal :label :analytical})
 
           :regenerate
@@ -888,6 +894,15 @@
                      ;; decline to the joint path.
                      (not (auto/any-addr-constrained?
                             (:analytical-nonconj-deps schema) (:constraints opts))))
+            ;; NOTE (genmlx-3k3x): the partial-group guard deliberately does
+            ;; NOT apply to :update — the analytical update folds constraints
+            ;; new-over-old, so effective obs coverage is the MERGED set,
+            ;; which is complete because the old trace is complete (a partial
+            ;; NEW constraint set updates a subset of obs, it does not leave
+            ;; obs unobserved). The update hazards are handled by the reopen
+            ;; guard and the jmk4 foreign-dep guard above. Applying the
+            ;; partial guard here wrongly declined exact single-obs updates
+            ;; of LG blocks (linear_gaussian_elim_test U1).
             {:run run-fn :score-type :marginal :label :analytical})
 
           nil)))))
@@ -1098,7 +1113,8 @@
    (genmlx-540f)."
   [:auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
    :auto-regenerate-transition :auto-regenerate-handlers
-   :auto-update-transition :auto-update-handlers :analytical-nonconj-deps])
+   :auto-update-transition :auto-update-handlers :analytical-nonconj-deps
+   :analytical-structures])
 
 (def alternate-path-schema-keys
   "Every schema key the dispatcher stack consults for a non-handler execution
@@ -1408,6 +1424,7 @@
                        (-> augmented
                            (assoc :auto-handlers (get-in plan [:rewrite-result :handlers]))
                            (assoc :analytical-nonconj-deps (:analytical-nonconj-deps plan))
+                           (assoc :analytical-structures (:analytical-structures plan))
                            (assoc :auto-regenerate-handlers regen-handlers)
                            (assoc :auto-regenerate-transition regen-transition)
                            (assoc :auto-update-handlers (when update-transition update-handlers))

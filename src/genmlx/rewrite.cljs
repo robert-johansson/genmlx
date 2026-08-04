@@ -293,6 +293,27 @@
                            (mapcat #(find-foreign-dependents schema % covered)
                                    latent-addrs)))
                        (concat chains lg-blocks)))
+         ;; Every eliminated structure's {latents, obs} — the partial-group
+         ;; guard set (genmlx-3k3x): the dispatcher declines the WHOLE op when
+         ;; any structure is partially active (latents free, some-but-not-all
+         ;; obs constrained), because per-structure fall-through beside a
+         ;; firing structure yields a stochastic weight tagged :marginal.
+         structures (vec (concat
+                          (keep (fn [r]
+                                  (cond
+                                    (instance? ConjugacyRule r)
+                                    {:latents #{(:prior-addr r)}
+                                     :obs (set (:obs-addrs r))}
+                                    (instance? RaoBlackwellRule r)
+                                    {:latents #{(:prior-addr r)}
+                                     :obs (set (:conjugate-obs-addrs r))}))
+                                rules)
+                          (map (fn [c] {:latents (set (:latent-addrs c))
+                                        :obs (set (:obs-addrs c))})
+                               chains)
+                          (map (fn [b] {:latents (set (:latent-addrs b))
+                                        :obs (set (:obs-addrs b))})
+                               lg-blocks)))
          result (apply-rewrites graph schema nil rules)
          auto-transition (when (seq (:handlers result))
                            (auto/make-address-dispatch
@@ -304,6 +325,7 @@
       :lg-blocks lg-blocks
       :declined-addrs declined
       :analytical-nonconj-deps nonconj-deps
+      :analytical-structures structures
       :stats {:total-sites (count (:nodes graph))
               :eliminated (count (:eliminated result))
               :residual (count (:nodes (:residual-graph result)))

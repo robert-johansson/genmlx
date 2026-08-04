@@ -840,6 +840,22 @@
   [addrs constraints]
   (boolean (some #(cm/has-value? (cm/get-submap constraints %)) addrs)))
 
+(defn some-structure-partially-constrained?
+  "True when any eliminated structure {:latents set :obs set} is PARTIALLY
+   active: no latent constrained AND some-but-not-all obs constrained. The
+   dispatcher then declines the whole analytical op (genmlx-3k3x): a
+   partially-constrained structure's handlers fall through to prior sampling
+   while another structure may still fire, making the op weight a stochastic
+   estimate that must not be tagged :marginal. All-or-none obs, and
+   latent-constrained structures (deterministic joint factors), are safe."
+  [structures constraints]
+  (boolean
+   (some (fn [{:keys [latents obs]}]
+           (and (not-any? #(cm/has-value? (cm/get-submap constraints %)) latents)
+                (let [k (count (filter #(cm/has-value? (cm/get-submap constraints %)) obs))]
+                  (and (pos? k) (< k (count obs))))))
+         structures)))
+
 (defn some-conjugate-obs-constrained?
   "Check if any observation site in a conjugate pair is actually constrained
    AND its prior is NOT constrained. If both prior and obs are constrained,

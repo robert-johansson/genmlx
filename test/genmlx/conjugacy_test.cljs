@@ -551,4 +551,61 @@
         (is (< (Math/abs (- est truth)) 0.15)
             (str "strip-IS@16384 " est " within band of quadrature " truth))))))
 
+;; ---------------------------------------------------------------------------
+;; Partial-group honesty (genmlx-3k3x, sibling of genmlx-jmk4)
+;;
+;; Per-group b470 gates are correct in isolation, but when one structure
+;; FIRES while another declines on a partially-constrained obs set, the op
+;; weight becomes marginal(fired) + one-particle-joint(sampled) — stochastic —
+;; while the trace still claimed :marginal (−1330 vs −28.8 on the harness's
+;; extended referee model). The op must decline whenever any eliminated
+;; structure is partially active (latents free, 0 < constrained < all obs).
+;; ---------------------------------------------------------------------------
+
+(deftest partial-group-honesty
+  (let [m (dyn/with-key
+            (gen []
+              (let [mu-a (trace :mu-a (dist/gaussian 0 10))
+                    mu-b (trace :mu-b (dist/gaussian 0 10))]
+                (trace :y0 (dist/gaussian mu-b 1))
+                (trace :y1 (dist/gaussian mu-b 1))
+                (trace :z (dist/gaussian mu-a 1))
+                [mu-a mu-b]))
+            (rng/fresh-key 31))]
+
+    (testing "one group fires, another partially declines => whole op declines"
+      (let [{:keys [trace]} (p/generate m [] (cm/choicemap :y0 (mx/scalar 0.5)
+                                                           :z (mx/scalar 1.0)))]
+        (is (= :joint (tr/score-type trace))
+            "partial mu-b group beside firing mu-a group must not claim :marginal")))
+
+    (testing "full constraint stays exact :marginal (regression)"
+      (let [{:keys [trace weight]} (p/generate m [] (cm/choicemap :y0 (mx/scalar 0.5)
+                                                                  :y1 (mx/scalar 0.7)
+                                                                  :z (mx/scalar 1.0)))
+            post-var (/ 1.0 (+ (/ 1 100.0) 1.0))
+            post-mean (* post-var 0.5)
+            closed (+ (host-norm-lp 0.5 0 (Math/sqrt 101))
+                      (host-norm-lp 0.7 post-mean (Math/sqrt (+ post-var 1)))
+                      (host-norm-lp 1.0 0 (Math/sqrt 101)))]
+        (is (= :marginal (tr/score-type trace)))
+        (is (< (Math/abs (- (mx/item weight) closed)) 1e-3)
+            (str "two-group exact marginal: got " (mx/item weight) " want " closed))))
+
+    (testing "chain + pair: partially-constrained chain obs => whole op declines"
+      (let [km (dyn/with-key
+                 (gen []
+                   (let [x0 (trace :x0 (dist/gaussian 0 1))
+                         x1 (trace :x1 (dist/gaussian x0 0.5))
+                         mu-c (trace :mu-c (dist/gaussian 0 10))]
+                     (trace :obs0 (dist/gaussian x0 0.1))
+                     (trace :obs1 (dist/gaussian x1 0.1))
+                     (trace :w (dist/gaussian mu-c 1))
+                     x1))
+                 (rng/fresh-key 32))
+            {:keys [trace]} (p/generate km [] (cm/choicemap :obs0 (mx/scalar 0.4)
+                                                            :w (mx/scalar 1.0)))]
+        (is (= :joint (tr/score-type trace))
+            "partially-constrained chain beside a firing pair must decline the op")))))
+
 (cljs.test/run-tests)
