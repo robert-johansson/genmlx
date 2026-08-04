@@ -257,6 +257,7 @@
               code (assemble-gen-fn variables dist-map)]
        {:code code
         :dist-map dist-map
+        :text text
         :variables variables}))))
 
 ;; ============================================================
@@ -307,6 +308,7 @@ Output ONLY the lines. No explanation.")
               dist-map (or (parse-math text) {})]
        {:code (assemble-gen-fn variables dist-map)
         :dist-map dist-map
+        :text text
         :variables variables}))))
 
 ;; ============================================================
