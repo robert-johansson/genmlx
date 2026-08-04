@@ -18,6 +18,8 @@
             [genmlx.inference.analytical :as ana]
             [genmlx.gen :refer [gen]]
             [genmlx.dynamic :as dyn]
+            [genmlx.trace :as tr]
+            [genmlx.inference.importance :as imp]
             [genmlx.protocols :as p]))
 
 ;; ---------------------------------------------------------------------------
@@ -438,5 +440,115 @@
       (is (= 49 (count pairs)) "50-site: 49 pairs detected")
       (is (< elapsed (* 10 h/time-scale))
           (str "50-site: detection < " (* 10 h/time-scale) "ms (took " elapsed "ms)")))))
+
+;; ---------------------------------------------------------------------------
+;; Mixed-emission Rao-Blackwell honesty (genmlx-jmk4)
+;;
+;; A prior with a CONSTRAINED non-conjugate child must not take the analytical
+;; path: the RB rule scores such children at the deterministic posterior mean
+;; with no correction (a plug-in approximation, rewrite.cljs RaoBlackwellRule),
+;; yet the trace claimed :marginal — wrong by -0.19 nats on this 3-site model
+;; and by hundreds of nats on larger shapes (found in the wild by the paper
+;; harness's held-out referee). The fix declines to the handler path; the
+;; UNconstrained-child case stays analytical (it is exact — the free child
+;; integrates out of the evidence).
+;; ---------------------------------------------------------------------------
+
+(defn- host-norm-lp [x mu sd]
+  (- (* -0.5 (Math/pow (/ (- x mu) sd) 2)) (Math/log sd) (* 0.5 (Math/log (* 2 Math/PI)))))
+
+(def ^:private t3-const (- (Math/log 2) (Math/log Math/PI) (* 0.5 (Math/log 3))))
+(defn- host-t3-lp [x] (+ t3-const (* -2 (Math/log (+ 1 (/ (* x x) 3))))))
+
+(defn- quad-log-ml
+  "log ∫ N(mu;0,10) t3(y0−mu) N(y1;mu,1) dmu by Riemann log-sum over a grid —
+   deterministic ground truth for the mixed model."
+  [y0 y1]
+  (let [n 8001 lo -40.0 hi 40.0 dx (/ (- hi lo) (dec n))
+        logs (map (fn [i]
+                    (let [mu (+ lo (* i dx))]
+                      (+ (host-norm-lp mu 0 10)
+                         (host-t3-lp (- y0 mu))
+                         (host-norm-lp y1 mu 1))))
+                  (range n))
+        m (apply max logs)]
+    (+ m (Math/log (reduce + (map #(Math/exp (- % m)) logs))) (Math/log dx))))
+
+(def ^:private mixed-model
+  (gen []
+    (let [mu (trace :mu (dist/gaussian 0 10))]
+      (trace :y0 (dist/student-t 3 mu 1))
+      (trace :y1 (dist/gaussian mu 1))
+      mu)))
+
+(deftest mixed-emission-rb-honesty
+  (let [m (dyn/with-key mixed-model (rng/fresh-key 11))]
+
+    (testing "constrained non-conjugate child => analytical path DECLINES"
+      (let [{:keys [trace]} (p/generate m [] (cm/choicemap :y0 (mx/scalar 1.0)
+                                                           :y1 (mx/scalar 1.2)))]
+        (is (= :joint (tr/score-type trace))
+            "mixed constrained model must not claim :marginal (plug-in approximation)")))
+
+    (testing "clean RB (t-child unconstrained) keeps the exact marginal"
+      (let [{:keys [trace weight]} (p/generate m [] (cm/choicemap :y1 (mx/scalar 1.2)))
+            closed (host-norm-lp 1.2 0 (Math/sqrt 101))]
+        (is (= :marginal (tr/score-type trace)) "free child: analytical stays on")
+        (is (< (Math/abs (- (mx/item weight) closed)) 1e-3)
+            (str "free-child marginal exact: got " (mx/item weight) " want " closed))))
+
+    (testing "update that constrains the non-conjugate child declines too"
+      (let [{tr0 :trace} (p/generate m [] (cm/choicemap :y1 (mx/scalar 1.2)))
+            {:keys [trace weight]} (p/update m tr0 (cm/choicemap :y0 (mx/scalar 1.0)))]
+        (is (= :joint (tr/score-type trace))
+            "post-update trace must be joint-scored, not plug-in :marginal")
+        (is (js/isFinite (mx/item weight)) "update weight finite")))
+
+    (testing "KALMAN sibling: constrained t on a chain state declines too"
+      (let [km (dyn/with-key
+                 (gen []
+                   (let [x0 (trace :x0 (dist/gaussian 0 1))
+                         x1 (trace :x1 (dist/gaussian x0 0.5))]
+                     (trace :obs0 (dist/gaussian x0 0.1))
+                     (trace :obs1 (dist/gaussian x1 0.1))
+                     (trace :t1 (dist/student-t 3 x1 0.5))
+                     x1))
+                 (rng/fresh-key 21))]
+        (let [{:keys [trace]} (p/generate km [] (cm/choicemap :obs0 (mx/scalar 0.4)
+                                                              :obs1 (mx/scalar 0.6)
+                                                              :t1 (mx/scalar 0.7)))]
+          (is (= :joint (tr/score-type trace))
+              "chain elimination with a constrained foreign dependent must decline"))
+        (let [{:keys [trace]} (p/generate km [] (cm/choicemap :obs0 (mx/scalar 0.4)
+                                                              :obs1 (mx/scalar 0.6)))]
+          (is (= :marginal (tr/score-type trace))
+              "free foreign dependent: chain elimination stays on (exact)"))))
+
+    (testing "LG sibling: mixed block stays declined (regression pin)"
+      (let [lgm (dyn/with-key
+                  (gen []
+                    (let [a (trace :a (dist/gaussian 0 5))
+                          b (trace :b (dist/gaussian 0 5))]
+                      (trace :y0 (dist/gaussian (mx/add (mx/multiply a 1.0) b) 0.5))
+                      (trace :y1 (dist/gaussian (mx/add (mx/multiply a 2.0) b) 0.5))
+                      (trace :ta (dist/student-t 3 a 0.5))
+                      [a b]))
+                  (rng/fresh-key 22))
+            {:keys [trace]} (p/generate lgm [] (cm/choicemap :y0 (mx/scalar 1.0)
+                                                             :y1 (mx/scalar 1.6)
+                                                             :ta (mx/scalar 0.3)))]
+        (is (= :joint (tr/score-type trace))
+            "LG block with constrained foreign dependent must not claim :marginal")))
+
+    (testing "declined path estimates the TRUE evidence (IS vs quadrature)"
+      (let [obs (cm/choicemap :y0 (mx/scalar 1.0) :y1 (mx/scalar 1.2))
+            stripped (dyn/with-key (dyn/strip-analytical-path mixed-model)
+                                   (rng/fresh-key 12))
+            est (mx/item (:log-ml-estimate
+                          (imp/vectorized-importance-sampling
+                           {:samples 16384 :key (rng/fresh-key 12)} stripped [] obs)))
+            truth (quad-log-ml 1.0 1.2)]
+        (is (< (Math/abs (- est truth)) 0.15)
+            (str "strip-IS@16384 " est " within band of quadrature " truth))))))
 
 (cljs.test/run-tests)

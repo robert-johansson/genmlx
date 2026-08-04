@@ -384,7 +384,10 @@
   {'dist {'gaussian dist/gaussian 'exponential dist/exponential
           'uniform dist/uniform 'bernoulli dist/bernoulli
           'categorical dist/categorical 'laplace dist/laplace
-          'log-normal dist/log-normal}
+          'log-normal dist/log-normal
+          ;; corpus vocabulary beyond the generator grammar: the jmk4 corpus
+          ;; model needs a heavy-tail non-conjugate dependent (genmlx-jmk4)
+          'student-t dist/student-t}
    'mx   {'add mx/add 'multiply mx/multiply 'exp mx/exp
           'item mx/item 'array mx/array}})
 

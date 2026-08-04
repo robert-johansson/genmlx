@@ -137,16 +137,24 @@
 ;; Rule generation from schema
 ;; ---------------------------------------------------------------------------
 
+(defn- find-foreign-dependents
+  "Addresses of sites that depend on latent-addr but are outside covered-set
+   (the eliminating structure's own latents+obs): trace sites of any
+   staticness, plus SPLICE sites — a spliced sub-model's factors are opaque
+   at this level, so a splice depending on the latent can never be part of
+   the closed form (genmlx-jmk4)."
+  [schema latent-addr covered-set]
+  (let [hit (fn [site]
+              (when (and (contains? (:deps site) latent-addr)
+                         (not (contains? covered-set (:addr site))))
+                (:addr site)))]
+    (concat (keep hit (:trace-sites schema))
+            (keep hit (:splice-sites schema)))))
+
 (defn- find-non-conjugate-children
   "Find children of prior-addr that are NOT in the conjugate obs set."
   [schema prior-addr conjugate-obs-addrs]
-  (let [conj-set (set conjugate-obs-addrs)
-        all-sites (:trace-sites schema)]
-    (into [] (keep (fn [site]
-                     (when (and (contains? (:deps site) prior-addr)
-                                (not (contains? conj-set (:addr site))))
-                       (:addr site))))
-          all-sites)))
+  (vec (find-foreign-dependents schema prior-addr (set conjugate-obs-addrs))))
 
 (defn generate-rewrite-rules
   "Generate rewrite rules from schema conjugacy metadata.
@@ -266,6 +274,25 @@
          lg-blocks (:blocks lg-result)
          declined (:declined-addrs lg-result)
          rules (generate-rewrite-rules schema pairs chains lg-blocks declined)
+         ;; The mixed-emission guard set (genmlx-jmk4): every foreign
+         ;; dependent of ANY analytically eliminated structure — non-conjugate
+         ;; children of RB priors, plus dependents of Kalman-chain and
+         ;; linear-Gaussian-block latents outside their own structure. The
+         ;; analytical dispatcher declines when any of these is CONSTRAINED:
+         ;; eliminating the latent while a constrained foreign factor depends
+         ;; on it makes the :marginal claim false (RB scores such children at
+         ;; the deterministic posterior mean with no correction; the chain and
+         ;; block closed forms ignore the factor entirely).
+         nonconj-deps
+         (into (into #{}
+                     (comp (filter #(instance? RaoBlackwellRule %))
+                           (mapcat :non-conjugate-children))
+                     rules)
+               (mapcat (fn [{:keys [latent-addrs obs-addrs]}]
+                         (let [covered (into (set latent-addrs) obs-addrs)]
+                           (mapcat #(find-foreign-dependents schema % covered)
+                                   latent-addrs)))
+                       (concat chains lg-blocks)))
          result (apply-rewrites graph schema nil rules)
          auto-transition (when (seq (:handlers result))
                            (auto/make-address-dispatch
@@ -276,6 +303,7 @@
       :kalman-chains chains
       :lg-blocks lg-blocks
       :declined-addrs declined
+      :analytical-nonconj-deps nonconj-deps
       :stats {:total-sites (count (:nodes graph))
               :eliminated (count (:eliminated result))
               :residual (count (:nodes (:residual-graph result)))

@@ -839,7 +839,13 @@
           (when (and (not (mx/in-grad?))
                      (seq (:auto-handlers schema))
                      (auto/some-conjugate-obs-constrained?
-                       (:conjugate-pairs schema) (:constraints opts)))
+                       (:conjugate-pairs schema) (:constraints opts))
+                     ;; Mixed-emission guard (genmlx-jmk4): a constrained
+                     ;; foreign dependent of any eliminated structure (RB
+                     ;; prior, Kalman chain, LG block) makes the analytical
+                     ;; marginal wrong — decline to the handler path.
+                     (not (auto/any-addr-constrained?
+                            (:analytical-nonconj-deps schema) (:constraints opts))))
             {:run run-fn :score-type :marginal :label :analytical})
 
           :regenerate
@@ -875,7 +881,13 @@
           (when (and (:auto-update-transition schema)
                      (not (contains? opts :argdiffs))
                      (= :marginal (tr/score-type (:trace opts)))
-                     (not (update-reopens-analytical? schema (:constraints opts))))
+                     (not (update-reopens-analytical? schema (:constraints opts)))
+                     ;; Mixed-emission guard (genmlx-jmk4): an update that
+                     ;; constrains a foreign dependent of an eliminated
+                     ;; structure would inherit the analytical error —
+                     ;; decline to the joint path.
+                     (not (auto/any-addr-constrained?
+                            (:analytical-nonconj-deps schema) (:constraints opts))))
             {:run run-fn :score-type :marginal :label :analytical})
 
           nil)))))
@@ -1086,7 +1098,7 @@
    (genmlx-540f)."
   [:auto-handlers :conjugate-pairs :has-conjugate? :analytical-plan
    :auto-regenerate-transition :auto-regenerate-handlers
-   :auto-update-transition :auto-update-handlers])
+   :auto-update-transition :auto-update-handlers :analytical-nonconj-deps])
 
 (def alternate-path-schema-keys
   "Every schema key the dispatcher stack consults for a non-handler execution
@@ -1395,6 +1407,7 @@
                                                 h/update-transition update-handlers))]
                        (-> augmented
                            (assoc :auto-handlers (get-in plan [:rewrite-result :handlers]))
+                           (assoc :analytical-nonconj-deps (:analytical-nonconj-deps plan))
                            (assoc :auto-regenerate-handlers regen-handlers)
                            (assoc :auto-regenerate-transition regen-transition)
                            (assoc :auto-update-handlers (when update-transition update-handlers))

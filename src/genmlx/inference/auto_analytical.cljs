@@ -831,6 +831,15 @@
 ;; Utility: check if any conjugate obs is constrained
 ;; ---------------------------------------------------------------------------
 
+(defn any-addr-constrained?
+  "True when any address in addrs carries a leaf constraint. The analytical
+   dispatcher's mixed-emission guard (genmlx-jmk4): a Rao-Blackwellized
+   prior's non-conjugate child that is CONSTRAINED makes the plug-in marginal
+   wrong (children are scored at the deterministic posterior mean with no
+   correction), so the caller must decline the analytical path."
+  [addrs constraints]
+  (boolean (some #(cm/has-value? (cm/get-submap constraints %)) addrs)))
+
 (defn some-conjugate-obs-constrained?
   "Check if any observation site in a conjugate pair is actually constrained
    AND its prior is NOT constrained. If both prior and obs are constrained,

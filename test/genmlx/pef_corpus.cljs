@@ -19,7 +19,8 @@
             [genmlx.selection :as sel]
             [genmlx.combinators :as comb]
             [genmlx.mlx :as mx]
-            [genmlx.mlx.random :as rng]))
+            [genmlx.mlx.random :as rng]
+            [genmlx.trace :as tr]))
 
 (def ^:private pass (atom 0))
 (def ^:private fail (atom 0))
@@ -225,6 +226,35 @@
   (check! "pef#1: model agrees across regen/round-trip/score-type pairs"
           {:model model :args [] :source src}
           [:p2-regen-fast-vs-general :i4-discard-roundtrip :i5-score-type]))
+
+;; ===========================================================================
+(println "\n-- corpus: genmlx-jmk4 — constrained non-conjugate dependent of an RB prior --")
+;; Found in the wild by the paper harness's held-out referee (not by the
+;; fuzzer: the grammar has no heavy-tail family, so this class was never
+;; generated). Mixed emissions on one latent — y1 a conjugate gaussian child,
+;; y0 a student-t child. With both constrained, the analytical path claimed
+;; :marginal while scoring y0 at the deterministic posterior mean with no
+;; correction (plug-in): −0.19 nats on this shape, −397 on larger ones. The
+;; fix declines to the handler path (dispatcher guard on
+;; :analytical-nonconj-deps). p5-analytical + i5-score-type pin it.
+(let [src '([] (let [v0 (trace :mu (dist/gaussian 0 10))]
+                 (trace :y0 (dist/student-t 3 v0 1))
+                 (trace :y1 (dist/gaussian v0 1))
+                 v0))
+      model (pef/source->model src)
+      m (dyn/with-key model (rng/fresh-key 27))
+      ;; Direct pin (the check! below is supplementary: p5's constraint picker
+      ;; does not produce the both-children-constrained shape, so the pair
+      ;; alone is vacuous for this class — recorded on the bean):
+      both (cm/choicemap :y0 (mx/scalar 1.0) :y1 (mx/scalar 1.2))
+      conj-only (cm/choicemap :y1 (mx/scalar 1.2))]
+  (assert-true "jmk4: both children constrained => analytical DECLINES (:joint)"
+               (= :joint (tr/score-type (:trace (p/generate m [] both)))))
+  (assert-true "jmk4: conjugate-only constrained => analytical stays (:marginal)"
+               (= :marginal (tr/score-type (:trace (p/generate m [] conj-only)))))
+  (check! "jmk4: mixed-emission model agrees across core pairs"
+          {:model model :args [] :source src}
+          core-pairs))
 
 ;; ===========================================================================
 (println (str "\n== pef corpus: " @pass " passed, " @fail " failed =="))
