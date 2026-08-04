@@ -48,6 +48,7 @@
            'beta dist/beta-dist
            'gamma dist/gamma-dist
            'exponential dist/exponential
+           'student-t dist/student-t
            'poisson dist/poisson
            'categorical dist/categorical
            'dirichlet dist/dirichlet

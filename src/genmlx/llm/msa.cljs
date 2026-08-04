@@ -123,7 +123,7 @@
      <sep> = '~' | '='
      <ws> = #'\\s*'
      dist-expr = dist-name <'('> args <')'>
-     dist-name = 'gaussian' | 'uniform' | 'bernoulli' | 'exponential'
+     dist-name = 'gaussian' | 'uniform' | 'bernoulli' | 'exponential' | 'student-t'
      args = arg (<','> <ws> arg)*
      <arg> = term
      term = factor (<ws> add-op <ws> factor)*
@@ -170,6 +170,9 @@
    trailing periods."
   [text]
   (-> (str/trim text)
+      ;; student-t spelling variants (Student_t, student t, StudentT, ...) fold
+      ;; to the grammar's literal BEFORE the generic lowercasing (genmlx-wk8d).
+      (str/replace #"(?i)student[-_ ]?t\b" "student-t")
       (str/replace #"(?i)(Gaussian|Uniform|Bernoulli|Exponential)"
                    #(str/lower-case (first %)))
       (str/replace #"(?:mean|std|loc|scale|p|prob|low|high)\s*=\s*" "")
@@ -241,12 +244,13 @@
    Returns a promise of {:code :dist-map :variables}."
   ([model-map task] (generate-candidate model-map task {}))
   ([model-map task opts]
-   (let [{:keys [max-tokens temperature]
+   (let [{:keys [max-tokens temperature seed]
           :or {max-tokens 150 temperature 0.5}} opts
          {:keys [variables]} task
          prompt (build-prompt task)]
      (pr/let [raw (llm/generate-text-raw model-map prompt
                                          {:max-tokens max-tokens :temperature temperature
+                                          :seed seed
                                           :system-prompt msa-system-prompt})
               text (normalize-defn->fn raw)
               dist-map (parse-dist-lines text variables)
@@ -293,11 +297,12 @@ Output ONLY the lines. No explanation.")
    genmlx-wumc)."
   ([model-map task] (generate-knowledge-candidate model-map task {}))
   ([model-map task opts]
-   (let [{:keys [max-tokens temperature]
+   (let [{:keys [max-tokens temperature seed]
           :or {max-tokens 120 temperature 0.5}} opts
          {:keys [variables]} task]
      (pr/let [text (llm/generate-text-raw model-map (build-knowledge-prompt task)
                                           {:max-tokens max-tokens :temperature temperature
+                                           :seed seed
                                            :system-prompt knowledge-system-prompt})
               dist-map (or (parse-math text) {})]
        {:code (assemble-gen-fn variables dist-map)
@@ -344,7 +349,13 @@ Output ONLY the lines. No explanation.")
          (->> results
               (sort-by :weight >)
               vec)
-         (pr/let [{:keys [code dist-map]} (gen-fn model-map task opts)
+         (pr/let [{:keys [code dist-map]} (gen-fn model-map task
+                                                  ;; per-candidate derived seed:
+                                                  ;; deterministic stream under a
+                                                  ;; caller :seed (genmlx-wk8d)
+                                                  (cond-> opts
+                                                    (:seed opts)
+                                                    (assoc :seed (+ (:seed opts) i))))
                   gf (eval-model code)
                   {:keys [log-ml method]} (if gf
                                             (score-model* gf observations)

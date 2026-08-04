@@ -206,6 +206,21 @@
     (swap! fail-count inc)
     (println "  FAIL: parse-math associativity threw:" (.-message e))))
 
+(println "\n-- 1.3b parse-math: student-t vocabulary (genmlx-wk8d) --")
+(try
+  (let [st   (msa/parse-math "y ~ student-t(3, mu, 1)")
+        norm (msa/parse-math (msa/normalize-llm "y ~ Student_t(3, mu, 1)"))
+        spc  (msa/parse-math (msa/normalize-llm "y ~ Student t(3, mu, 1)"))]
+    (assert-equal "student-t parses to dist/student-t"
+                  "(dist/student-t 3 mu 1)" (:y st))
+    (assert-equal "Student_t spelling normalizes and parses"
+                  "(dist/student-t 3 mu 1)" (:y norm))
+    (assert-equal "'Student t' spelling normalizes and parses"
+                  "(dist/student-t 3 mu 1)" (:y spc)))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: parse-math student-t threw:" (.-message e))))
+
 (println "\n-- 1.2 assemble-gen-fn: produces valid code --")
 (try
   (let [dist-map {:x "(dist/gaussian 0 10)" :y "(dist/gaussian x 1)"}
@@ -240,6 +255,22 @@
   (catch :default e
     (swap! fail-count inc)
     (println "  FAIL: assemble round-trip threw:" (.-message e))))
+
+(println "\n-- 1.2b student-t: parse->assemble->eval->score round-trip (genmlx-wk8d) --")
+;; The eval leg is the oracle that catches a missing msa-sci-opts binding:
+;; grammar + assemble alone pass with the binding absent, eval returns nil.
+(try
+  (let [dist-map (msa/parse-math "mu ~ gaussian(0, 10)\ny ~ student-t(3, mu, 1)")
+        code (msa/assemble-gen-fn [:mu :y] dist-map)
+        gf (msa/eval-model code)
+        w (when gf (msa/score-model gf {:y 1.5}))]
+    (assert-true "student-t model parses" (some? dist-map))
+    (assert-true "student-t model evals (SCI binding present)" (some? gf))
+    (assert-true "student-t model scores to a finite log-ML"
+                 (and (number? w) (js/isFinite w))))
+  (catch :default e
+    (swap! fail-count inc)
+    (println "  FAIL: student-t round-trip threw:" (.-message e))))
 
 ;; -- 1.3 Score model --
 
