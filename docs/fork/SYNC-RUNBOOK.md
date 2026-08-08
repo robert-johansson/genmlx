@@ -35,12 +35,19 @@ git -C $MN diff --shortstat HEAD..up/main
 git -C $MN log --oneline HEAD..up/main
 
 # THE cost metric: files BOTH sides touch. Everything else is free.
+# NOTE the LC_ALL=C on `comm` ITSELF — without it comm uses the ambient locale
+# while its inputs are C-sorted, exits 1 with "input is not in sorted order",
+# and prints NOTHING. Measured 2026-08-08 (genmlx-bcyp).
 MB=$(git -C $MN merge-base HEAD up/main)
-comm -12 <(LC_ALL=C git -C $MN diff --name-only $MB..HEAD    | LC_ALL=C sort) \
-         <(LC_ALL=C git -C $MN diff --name-only $MB..up/main | LC_ALL=C sort)
+LC_ALL=C comm -12 <(LC_ALL=C git -C $MN diff --name-only $MB..HEAD    | LC_ALL=C sort -u) \
+                  <(LC_ALL=C git -C $MN diff --name-only $MB..up/main | LC_ALL=C sort -u)
 
-# Predicted conflicts, without touching a working tree:
-git -C $MN merge-tree --write-tree HEAD up/main | grep '^CONFLICT'
+# Predicted conflicts, without touching a working tree. Read the STAGE-NUMBERED
+# section (everything before the first blank line) — do NOT grep the message
+# section for '^CONFLICT': its lines are interleaved with 'Auto-merging' and a
+# grep miss is indistinguishable from a clean merge.
+git -C $MN merge-tree --write-tree HEAD up/main \
+  | awk 'NF==0{exit} NR>1{print $4}' | LC_ALL=C sort -u
 
 # The .gitmodules assertion — must be exactly our one-line URL rewrite, nothing else:
 git -C $MN diff up/main...HEAD -- .gitmodules
@@ -49,6 +56,16 @@ git -C $MN diff up/main...HEAD -- .gitmodules
 git -C $MLX cherry -v mirror/ml-explore main | grep '^-' || echo "none taken yet"
 git -C $MN  cherry -v mirror/upstream   main | grep '^-' || echo "none taken yet"
 ```
+
+> **Run each check as its OWN command, and never end one with `|| echo "<clean>"`.**
+> Measured 2026-08-08 (`genmlx-bcyp`): these checks were chained with `&&` and terminated
+> in `|| echo "(no CONFLICT lines)"`. The `comm` above exited 1 on the collation bug, which
+> short-circuited the rest of the chain into the `||` branch — so **`merge-tree` never ran**,
+> and its silence printed as a clean bill of health. The sync was reported as zero-conflict;
+> the real merge found two. A `||`-fallback on a verification command converts *every*
+> upstream failure into a pass, which is audit rule 2 ("an assertion that would still pass if
+> the function returned a plausible constant is not coverage") in shell form. This applies to
+> the two `git cherry ... || echo "none taken yet"` lines above as much as to merge-tree.
 
 **Gate:** if the both-touched list is empty, the sync is mechanical — skip straight to §3.
 If it contains `packages/agent/**` or `qwen3_5*/model.rs`, budget the full battery in §4.
@@ -66,6 +83,24 @@ git -C $MN config rerere.autoupdate false   # keep FALSE on pass 1 — see "rere
 
 Measured 2026-07-25: our 15 patches replay **clean on every candidate base**; upstream touched
 **0 of our 11 files** across 37 new ml-explore commits. Expect this step to be uneventful.
+
+> **Skip §1 entirely** when upstream's mlx gitlink has not moved and the superset invariant still
+> holds — then there is no new mlx content to replay and the numerics floor should stay put.
+> Two commands, both must pass (first exercised 2026-08-08, `genmlx-bcyp`):
+>
+> ```bash
+> # 1. their pin is byte-identical to what we already replayed
+> test "$(git -C $MN rev-parse mirror/upstream:crates/mlx-sys/mlx)" \
+>    = "$(git -C $MN rev-parse up/main:crates/mlx-sys/mlx)" && echo "their mlx pin unchanged"
+> # 2. every commit on their nax line is already ours by patch-id
+> git -C $MLX cherry -v origin/main "$(git -C $MN rev-parse up/main:crates/mlx-sys/mlx)" up/main \
+>   | grep '^+' && echo "NOT a superset — do §1" || echo "superset OK — skip §1"
+> ```
+>
+> Advancing `mirror/ml-explore` is then a **separate, deliberate decision**, never a side effect of
+> an mlx-node sync: it moves the numerics floor under the per-arch tolerance table, and
+> `docs/REPRODUCIBILITY.md` pins results to the pair. On 2026-08-08 our `mirror/ml-explore` sat 88
+> commits behind ml-explore/main and was deliberately left there.
 
 ```bash
 # Refresh the mirrors. mirror/nax is force-updated, NOT fast-forward — mlx-node rebases it.
@@ -186,7 +221,7 @@ node -e "const m=require('$MN/packages/genmlx-core');
          const k=Object.keys(m);
          console.log('functions:', k.filter(x=>typeof m[x]==='function').length,
                      'objects:',   k.filter(x=>typeof m[x]!=='function').length)"
-# expect: functions: 227  objects: 6
+# expect: functions: 245  objects: 8   (2026-08-08; re-read the pin from membrane_coverage_test.cljs rather than trusting this line)
 ```
 
 > The membrane matrix pins **function** exports. `Object.keys(...).length` is **233**, not 227 —
@@ -219,7 +254,7 @@ In gating order — each gate unlocks the next:
 
 ```bash
 cd $GENMLX
-bun run --bun nbb test/genmlx/membrane_coverage_test.cljs      # 227 exports / 49 omissions
+bun run --bun nbb test/genmlx/membrane_coverage_test.cljs      # 245 exports / 60 omissions
 
 # the CLAUDE.md native/membrane contract guard
 for f in exact_test gradient_fd_test score_gradient_test clip_contract_test; do

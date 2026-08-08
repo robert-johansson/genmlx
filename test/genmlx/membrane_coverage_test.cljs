@@ -134,6 +134,21 @@
      "QianfanOCRModel" "TextDetModel" "TextRecModel"
      "VLModel" "VlmChatResult"}
 
+   ;; Qwen3-ASR speech recognition (upstream PR #112, merged 2026-08-08 in the
+   ;; 2d1fe60e sync). A separate MODALITY, not a graph op: audio in, transcript
+   ;; out, with its own conversion path (`mlx convert` gained an ASR branch) and
+   ;; its own capture stack. GenMLX has no audio input surface at all — Layer 9
+   ;; is text (llm/core.cljs) plus images (llm/vision.cljs); nothing in src/
+   ;; reaches an audio encoder, and a per-token GFI trace over transcript tokens
+   ;; would need an audio-conditioned logits path that does not exist here.
+   ;; `Qwen3AsrCapture` / `qwen3Asr*Devices` are live-microphone enumeration and
+   ;; capture, CoreAudio-backed upstream, i.e. host-app I/O rather than compute.
+   ;; (#112 also exports the non-function enum `Qwen3AsrCaptureSource`, which the
+   ;; function partition below does not cover by construction.)
+   :asr-speech
+   #{"Qwen3AsrModel" "Qwen3AsrStream" "Qwen3AsrCapture"
+     "qwen3AsrAudioDevices" "qwen3AsrInputDevices"}
+
    ;; loaded-model / tokenizer / generation classes — bound directly via @genmlx/core
    ;; native classes in llm/backend.cljs (load-upstream-model + Qwen3Tokenizer +
    ;; chatSessionStart) and llm/vision.cljs (bean genmlx-qt34), the LLM orchestration
@@ -281,9 +296,13 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 240 (count exported-fns))
+      (is (= 245 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 240; 2026-08-07 genmlx-vqn0 added "
+               " fns (pinned at 245; 2026-08-08 genmlx-bcyp merged upstream "
+               "2d1fe60e, whose PR #112 added the ASR five — Qwen3AsrModel/"
+               "Qwen3AsrStream/Qwen3AsrCapture/qwen3AsrAudioDevices/"
+               "qwen3AsrInputDevices, all omitted, see :asr-speech; "
+               "2026-08-07 genmlx-vqn0 added "
                "nativeInstanceInfo — omitted, see :instance-diagnostics; "
                "2026-08-02 genmlx-sko3 added the device "
                "pair defaultDevice/setDefaultDevice — both WRAPPED, see "
@@ -294,8 +313,8 @@
                "five — coldCacheDrain/coldCacheStats/coldSidecarStats/"
                "coldRestoreFamilies/gdnPrefixCheckpointLimit, all omitted) "
                "— the partition test above pinpoints what moved."))
-      (is (= 55 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 55)."))
+      (is (= 60 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 60)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))
