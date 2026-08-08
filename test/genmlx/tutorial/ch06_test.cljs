@@ -216,4 +216,4 @@
 ;; Summary
 ;; ============================================================
 (println (str "\n== Chapter 6 tests: " @pass " PASS, " @fail " FAIL =="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

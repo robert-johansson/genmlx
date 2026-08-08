@@ -74,4 +74,4 @@
                (= 0.0 second-half)))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

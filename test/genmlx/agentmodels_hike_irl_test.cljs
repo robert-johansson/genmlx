@@ -65,4 +65,4 @@
                     (not= (first (last e-obs)) (first (last w-obs))))))
 
 (println (str "\n== Results: " @passed " passed, " @failed " failed =="))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

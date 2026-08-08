@@ -146,4 +146,4 @@
 (println "  PASSED:" @passed "   FAILED:" @failed)
 (println "========================================")
 (when (pos? @failed)
-  (js/process.exit 1))
+  (set! (.-exitCode js/process) 1))

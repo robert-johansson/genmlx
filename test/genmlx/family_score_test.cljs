@@ -480,4 +480,4 @@
     (assert-true "raw-number obs: compiled-mh runs to completion" (= 5 (count r)))))
 
 (println (str "\nfamily_score_test: " @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

@@ -768,4 +768,4 @@
 (println "\n==========================================")
 (println (str "  l3-false-positive: " @*pass* " passed, " @*fail* " failed"))
 (println "==========================================")
-(when (pos? @*fail*) (js/process.exit 1))
+(when (pos? @*fail*) (set! (.-exitCode js/process) 1))

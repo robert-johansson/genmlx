@@ -158,4 +158,4 @@
     (assert-true "conjugate update: other arms unchanged"     (= [1 1] (get-in b' [:arms 1])))))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

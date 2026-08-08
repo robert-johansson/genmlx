@@ -159,4 +159,4 @@
   (println "  SKIP: Ornith-1.0-35B-4bit not cached"))
 
 (println (str "\n=== llm-quantization-gate: " @pass " PASS, " @fail " FAIL ==="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

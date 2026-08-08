@@ -68,4 +68,4 @@
   (assert-true "discount marginal sums to 1" (< (Math/abs (- 1.0 (reduce + (vals (:discount m))))) 1e-6)))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

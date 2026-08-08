@@ -125,4 +125,4 @@
                 (:highlight (first (filter #(= "A" (:label %)) (:bars bars))))))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

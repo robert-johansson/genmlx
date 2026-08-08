@@ -210,4 +210,4 @@
 
 ;; ===========================================================================
 (println (str "\n=== curriculum_test: " @*passes* " passed, " @*fails* " failed ==="))
-(when (pos? @*fails*) (js/process.exit 1))
+(when (pos? @*fails*) (set! (.-exitCode js/process) 1))

@@ -94,4 +94,4 @@
              (every? #(= :set-noise (:edit %)) cands))
 
 (println (str "\n==== harvest_test: " @pass " passed, " @fail " failed ===="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

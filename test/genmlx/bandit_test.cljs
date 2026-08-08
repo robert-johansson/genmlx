@@ -123,4 +123,4 @@
                (< (apply max (map (fn [n o] (Math/abs (- n o))) new-freq old-freq)) 0.05)))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

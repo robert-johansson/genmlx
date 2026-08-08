@@ -701,4 +701,4 @@
 ;; ---------------------------------------------------------------------------
 
 (println (str "\n== Results: " @pass-count " passed, " @fail-count " failed =="))
-(when (pos? @fail-count) (js/process.exit 1))
+(when (pos? @fail-count) (set! (.-exitCode js/process) 1))

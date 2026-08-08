@@ -436,6 +436,24 @@ do_one() {
             /Ran 0 tests/ {if (s && NR-s <= 3) f=1}
             END {exit !f}' "$log"; then status="SKIP"
     else status="FAIL(0 tests)"; fi
+  # The same distinction for HAND-ROLLED harnesses, which never print `Ran 0
+  # tests` and so used to fall through to PASS below. A whole-file skip then
+  # reported green while asserting nothing — latent on this host (fixtures are
+  # present, so the skip paths are not taken) but live on any host missing them,
+  # e.g. the M4 mini, which has no LLM fixtures (genmlx-95v4).
+  #
+  # Identifiable WITHOUT the cljs.test anchor, and requiring BOTH halves is the
+  # whole point: an anchored SKIP print AND a summary reporting zero passes and
+  # zero failures. A PARTIAL skip — a skipped section in a file that otherwise
+  # asserts — keeps its PASS, because its counts are non-zero. Measured against
+  # real logs: llm/moe_guard (skips the Metal case, prints "9 passed, 0 failed")
+  # and llm/grammar_test (skips a section, 91/91) both correctly stay PASS.
+  #
+  # This cannot mask a failure: a non-zero exit and the failures-summary are both
+  # matched earlier, so only an already-green file can reach here.
+  elif grep -qE '^[[:space:]]*SKIP' "$log" \
+    && grep -qE '(^|[^0-9])0 (passed|pass),[[:space:]]+0 (failed|fail)' "$log"; then
+    status="SKIP"
   else status="PASS"; fi
   # bench files have no assertions: a clean exit is success regardless of FAIL-word noise
   if [ "$tier" = bench ] && [ "$code" -eq 0 ]; then status="PASS"; fi

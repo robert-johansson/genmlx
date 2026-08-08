@@ -124,4 +124,4 @@
       (finally
         (.rmSync fs tmp #js {:recursive true :force true})))
     (println (str "\n=== llm-sharded-load: " @pass " PASS, " @fail " FAIL ==="))
-    (when (pos? @fail) (js/process.exit 1))))
+    (when (pos? @fail) (set! (.-exitCode js/process) 1))))

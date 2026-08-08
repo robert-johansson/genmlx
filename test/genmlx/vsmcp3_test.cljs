@@ -111,4 +111,4 @@
     (assert-close (str "seed " seed " log-ML ~ analytic") analytic-log-ml ml 0.6)))
 
 (println (str "\n== vsmcp3_test: " @pass " passed, " @fail " failed =="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

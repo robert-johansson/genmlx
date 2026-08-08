@@ -75,4 +75,4 @@
           (assert-true "synth-compute folds host+particles" (> (cost/synth-compute c3) 400)))))))
 
 (println (str "\n== synth_steppable_test: " (if (zero? @fails) "ALL PASS" (str @fails " FAIL")) " =="))
-(when (pos? @fails) (js/process.exit 1))
+(when (pos? @fails) (set! (.-exitCode js/process) 1))

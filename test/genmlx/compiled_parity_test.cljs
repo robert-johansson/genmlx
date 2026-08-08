@@ -562,4 +562,4 @@
 (println "\n==========================================")
 (println (str "  compiled-parity: " @*pass* " passed, " @*fail* " failed"))
 (println "==========================================")
-(when (pos? @*fail*) (js/process.exit 1))
+(when (pos? @*fail*) (set! (.-exitCode js/process) 1))

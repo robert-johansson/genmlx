@@ -147,4 +147,4 @@
   (assert-true  "batched == host action-loglik to 1e-4 (4-goal)" (< (max-posterior-err bat hos) 1e-4)))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

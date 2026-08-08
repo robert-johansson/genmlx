@@ -99,6 +99,9 @@
                     (catch :default _ false)))
   (println (str "\n== resource-recovery (off-Metal negative contract): "
                 @pass " pass, " @fail " fail =="))
+  ;; LOAD-BEARING, do NOT convert (genmlx-95v4 audit): this is the off-Metal
+  ;; early return, and it must stop before the Metal-only sections below. The
+  ;; file's FINAL gate (further down) was converted to set! exitCode.
   (js/process.exit (if (pos? @fail) 1 0)))
 
 ;; 2. Buffer-count query bindings (Layer 2 plumbing: MLX -> FFI -> Rust -> CLJS).
@@ -194,4 +197,4 @@
                   (catch :default _ false)))
 
 (println (str "\n== resource-recovery: " @pass " pass, " @fail " fail =="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

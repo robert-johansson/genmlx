@@ -70,6 +70,10 @@
           (do (println "WORKER-RESULT"
                        (js/JSON.stringify #js {:mode (env "STRESS_MODE" "churn")
                                                :id id :outcome "barrier-timeout"}))
+              ;; PROTOCOL, do NOT convert to set! exitCode (genmlx-95v4 audit):
+              ;; parallel_stress_test reads (.-exited proc) and branches on
+              ;; (not= 0 code); set! would not TERMINATE this worker. Distinct
+              ;; codes 2/3 mark distinct outcomes for the parent.
               (js/process.exit 3))
           :else (do (js/Bun.sleepSync 100) (recur)))))))
 

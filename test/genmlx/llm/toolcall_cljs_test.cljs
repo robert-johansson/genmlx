@@ -187,7 +187,10 @@
 
 (defn- summary! []
   (println (str "\n== llm-toolcall-cljs: " @pass " pass, " @fail " fail =="))
-  (when (pos? @fail) (js/process.exit 1)))
+  ;; set! exitCode, not process.exit: this helper is called ONLY at the promise
+  ;; chain's terminus (3 call sites, all terminal), so nothing needs terminating
+  ;; — and process.exit would truncate the summary line printed just above.
+  (when (pos? @fail) (set! (.-exitCode js/process) 1)))
 
 (defn- eos-replay! [qtok]
   (let [bad-text (str "<tool_call>\n<function=set_filter>\n<parameter=code>\n"

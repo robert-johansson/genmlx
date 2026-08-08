@@ -21,7 +21,11 @@
 ;; Skip cleanly when the checkpoint is not provisioned on this host (the
 ;; llm_cljs_forward_test contract) — an ENOENT here is a host gap, not a bug.
 (when-not (.existsSync (js/require "fs") (str model-path "/config.json"))
+  ;; SKIP + `Ran 0 tests` anchor, kept ADJACENT to the exit: run.sh scores SKIP
+  ;; off the anchor, and `check` allows a zero exit only within three lines of a
+  ;; SKIP print (genmlx-95v4).
   (println "SKIP qwen2-coder-test: Qwen2.5-Coder checkpoint absent at" model-path)
+  (println "Ran 0 tests containing 0 assertions.")
   (js/process.exit 0))
 
 ;; Capability skip: @genmlx/core has no qwen2 model class, and the owned CLJS
@@ -30,10 +34,15 @@
 ;; skipped on ENOENT above (a vacuous green); a host WITH the checkpoint (the
 ;; Mac) surfaced the real state (genmlx-lr9c). qwen2.5-coder is not in the
 ;; model roster; scrap-or-support decision tracked in bean genmlx-r70f.
-(println "SKIP qwen2-coder-test: model_type \"qwen2\" has no native class in"
-         "@genmlx/core and no owned-forward support — family not planned"
-         "(see bean genmlx-r70f)")
+(println "SKIP qwen2-coder-test: model_type \"qwen2\" has no native class in @genmlx/core and no owned-forward support — family not planned (see bean genmlx-r70f)")
+(println "Ran 0 tests containing 0 assertions.")
 (js/process.exit 0)
+;; ^ UNCONDITIONAL skip: the family has no native class and no owned forward, so
+;; every line below is unreachable on EVERY host. TESTING.md:86 permits an
+;; unconditional exit 0 only as a DOCUMENTED skip, which the SKIP print above
+;; satisfies; the `Ran 0 tests` anchor makes run.sh score it SKIP so the tally
+;; shows it skipped rather than passing (genmlx-95v4). Kept adjacent for
+;; `check`'s three-line proximity rule. Re-tier/scrap tracked in genmlx-r70f.
 
 (println "\n== Qwen2.5-Coder-0.5B via qwen2→qwen3 path ==\n")
 
@@ -102,4 +111,4 @@
 
   (println (str "\n== Results: " @pass-count " passed, " @fail-count " failed =="))
   (when (pos? @fail-count)
-    (js/process.exit 1)))
+    (set! (.-exitCode js/process) 1)))

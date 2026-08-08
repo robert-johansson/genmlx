@@ -636,4 +636,4 @@
 (println (str "\n=========================================="))
 (println (str "  linear-gaussian-elim: " @*pass* " passed, " @*fail* " failed"))
 (println (str "=========================================="))
-(when (pos? @*fail*) (js/process.exit 1))
+(when (pos? @*fail*) (set! (.-exitCode js/process) 1))

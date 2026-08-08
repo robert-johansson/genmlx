@@ -63,4 +63,4 @@
              (= 1 (count (:dropped-eval res))))
 
 (println (str "\n==== repl_corpus_test: " @pass " passed, " @fail " failed ===="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

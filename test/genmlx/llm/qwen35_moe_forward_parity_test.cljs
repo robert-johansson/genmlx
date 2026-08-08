@@ -193,4 +193,4 @@
           (assert-true "owned vs native top-5 logprob band (<0.25)" (< d 0.25))
           (println (str "\n=== qwen35-moe-forward-parity (" quant "): "
                         @pass " PASS, " @fail " FAIL ==="))
-          (when (pos? @fail) (js/process.exit 1)))))))
+          (when (pos? @fail) (set! (.-exitCode js/process) 1)))))))

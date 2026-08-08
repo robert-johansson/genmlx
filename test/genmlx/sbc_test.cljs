@@ -663,7 +663,10 @@
                           all-combos)]
       (when (empty? combos)
         (println (str "ERROR: unknown combo " sbc-only))
-        (js/process.exit 2))
+        ;; PROTOCOL, do NOT convert (genmlx-95v4 audit): distinct non-zero codes
+  ;; (2 = unknown combo, 3 = L3 detection regressed) are read by the per-combo
+  ;; runner, and these must TERMINATE mid-file, which set! exitCode would not.
+  (js/process.exit 2))
       combos)
     all-combos))
 

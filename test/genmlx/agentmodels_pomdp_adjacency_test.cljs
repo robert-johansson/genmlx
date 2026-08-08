@@ -102,4 +102,4 @@
   (assert-true "the open/closed latent changes the outcome (A vs B)" (and (= A-CELL a-open) (= B-CELL a-closed))))
 
 (println (str "\n== Results: " @passed " passed, " @failed " failed =="))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

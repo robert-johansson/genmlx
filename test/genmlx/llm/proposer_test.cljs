@@ -261,4 +261,4 @@
 
 ;; ===========================================================================
 (println (str "\n==== llm_proposer_test: " @pass " passed, " @fail " failed ===="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

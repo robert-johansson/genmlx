@@ -47,6 +47,11 @@
 
 (defn- finish! []
   (println (str "\n== parallel-stress: " @pass " pass, " @fail " fail =="))
+  ;; LOAD-BEARING, do NOT convert to set! exitCode (genmlx-95v4 audit):
+  ;; finish! is called at line ~64 as an EARLY exit for the off-Metal negative
+  ;; contract, so it must stop the file before the Metal-only sections. The
+  ;; truncation risk on the summary line above is accepted as the lesser evil;
+  ;; removing it needs a control-flow restructure, not a mechanical swap.
   (js/process.exit (if (pos? @fail) 1 0)))
 
 ;; ---------------------------------------------------------------------------

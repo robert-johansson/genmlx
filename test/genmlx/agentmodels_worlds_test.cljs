@@ -95,4 +95,4 @@
   (assert-equal "noisy route still reaches East" 14 (last pn)))
 
 (println (str "\n== Results: " @passed " passed, " @failed " failed =="))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

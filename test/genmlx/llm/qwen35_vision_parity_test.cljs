@@ -82,4 +82,4 @@
           (assert-true "mean deviation tight (rel-mean < 2e-3)"
                        (< dmean 2e-3))
           (println (str "\n=== qwen35-vision-parity: " @pass " PASS, " @fail " FAIL ==="))
-          (when (pos? @fail) (js/process.exit 1)))))))
+          (when (pos? @fail) (set! (.-exitCode js/process) 1)))))))

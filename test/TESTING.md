@@ -78,6 +78,22 @@ Prefer `(set! (.-exitCode js/process) 1)` over `(js/process.exit 1)`: `process.e
 truncates pending stdout (losing the very summary line the failure report needs) and
 kills in-flight async work.
 
+**Measured 2026-08-08 (`genmlx-95v4`), because the sweep should not rest on folklore.**
+The truncation is real but **backpressure-dependent**, and it does *not* fire under
+`run.sh`:
+
+| stdout is | 40 000-line probe then a summary, `process.exit 1` |
+|---|---|
+| a regular file (`> log`) | all 40 001 lines, summary intact |
+| a pipe, fast consumer | all 40 001 lines, summary intact |
+| a pipe, **slow consumer** | **867 lines, summary LOST** — on Bun *and* Node |
+
+`run.sh:387` redirects each child to a regular file, so the battery never loses a
+summary this way. The rule earns its keep on the **manual** path instead: running a
+test by hand into `| less`, `| grep` or `| head` is exactly when a human is reading a
+failure, and exactly where the summary disappears. So convert gates, but do not claim
+the battery was at risk.
+
 **Placement matters in async files.** Most `test/genmlx/llm/*` tests are promesa-based.
 Their top level returns a promise immediately, so a gate appended at end-of-file runs
 *before any assertion has executed* and always reads 0. In those files the gate belongs

@@ -203,4 +203,4 @@
   (assert-true "finite-α (α=2) POMDP policy is soft: a non-best action has finite log-prob" (js/isFinite lp0)))
 
 (println (str "\n" @passed " passed, " @failed " failed"))
-(when (pos? @failed) (js/process.exit 1))
+(when (pos? @failed) (set! (.-exitCode js/process) 1))

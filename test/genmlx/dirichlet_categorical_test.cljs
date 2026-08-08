@@ -257,4 +257,4 @@
 (println (str "\n==========================================\n"
               "  dirichlet-categorical: " @pass " passed, " @fail " failed\n"
               "=========================================="))
-(when (pos? @fail) (js/process.exit 1))
+(when (pos? @fail) (set! (.-exitCode js/process) 1))

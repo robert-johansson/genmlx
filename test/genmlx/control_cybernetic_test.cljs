@@ -353,4 +353,4 @@
 ;; ---------------------------------------------------------------------------
 (println (str "\n== control_cybernetic_test: "
               (if (zero? @fails) "ALL PASS" (str @fails " FAIL")) " =="))
-(when (pos? @fails) (js/process.exit 1))
+(when (pos? @fails) (set! (.-exitCode js/process) 1))
