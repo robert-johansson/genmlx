@@ -107,6 +107,14 @@
    #{"coldCacheDrain" "coldCacheStats" "coldSidecarStats" "coldRestoreFamilies"
      "gdnPrefixCheckpointLimit"}
 
+   ;; Addon-identity diagnostics (genmlx-vqn0, 2026-08-07): pid + addon
+   ;; path + load ordinal for diagnosing duplicate/cross-process native
+   ;; instances (the SCI "memoryStats read 0 on a second require" class).
+   ;; Host-app telemetry surface, not a graph op; GenMLX runs a single
+   ;; @genmlx/core instance per process by construction.
+   :instance-diagnostics
+   #{"nativeInstanceInfo"}
+
    ;; offline weight/format conversion tooling — not graph ops
    :model-conversion
    #{"convertForeignWeights" "convertGgufToSafetensors" "convertModel" "convertParquetToJsonl"
@@ -273,9 +281,11 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 239 (count exported-fns))
+      (is (= 240 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 239; 2026-08-02 genmlx-sko3 added the device "
+               " fns (pinned at 240; 2026-08-07 genmlx-vqn0 added "
+               "nativeInstanceInfo — omitted, see :instance-diagnostics; "
+               "2026-08-02 genmlx-sko3 added the device "
                "pair defaultDevice/setDefaultDevice — both WRAPPED, see "
                "mlx.cljs CONFIGURATION; 2026-07-28 genmlx-cqgx added the persistent-"
                "compile trio compileCreate/compiledCall/compiledFree, then "
@@ -284,8 +294,8 @@
                "five — coldCacheDrain/coldCacheStats/coldSidecarStats/"
                "coldRestoreFamilies/gdnPrefixCheckpointLimit, all omitted) "
                "— the partition test above pinpoints what moved."))
-      (is (= 54 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 54)."))
+      (is (= 55 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 55)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))
