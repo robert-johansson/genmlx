@@ -33,8 +33,17 @@
 (def ^:private metal? (mx/metal-is-available?))
 (def ^:private home (.-HOME js/process.env))
 (def ^:private repo-root
+  ;; Default is the HF hub REPO dir; `resolve-snapshot` below already understands
+  ;; the `<repo>/snapshots/<hash>/config.json` layout, so no revision is pinned
+  ;; here — this test asserts native-forward WIRING, not oracle-exact tokens
+  ;; (contrast qwen3_moe_layout_coherence_test, which must stay revision-locked).
+  ;;
+  ;; The old default `$HOME/code/mlx/models/...` never existed on this host —
+  ;; there is no `~/code` here — so the file skipped, and since a skip exits 0
+  ;; with no `Ran 0 tests` anchor run.sh scored it PASS. An 80B native-forward
+  ;; smoke test was green without ever loading a model (genmlx-pc9o).
   (or (.-QWEN3_NEXT_DIR js/process.env)
-      (str home "/code/mlx/models/Qwen3-Coder-Next-4bit")))
+      (str home "/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit")))
 
 (defn- resolve-snapshot
   "Resolve the directory that actually holds config.json — either `dir` itself or,
@@ -57,6 +66,18 @@
   (println (str "\n== " @pass " passed, " @fail " failed =="))
   (when (pos? @fail) (set! (.-exitCode js/process) 1)))
 
+(defn- skip-finish!
+  "Call INSTEAD of `finish` on a skip branch, immediately after its `SKIP` print.
+   run.sh scores SKIP only on a `SKIP` line within three lines above a
+   `Ran 0 tests` summary (test/TESTING.md), and that classifier branch is
+   reachable only for files that print such a summary — which a hand-rolled
+   harness never does. Without this the skip fell through to `else status=PASS`,
+   so a guard that loaded nothing was tallied green (genmlx-pc9o). Both lines
+   are true: zero tests ran."
+  []
+  (println "Ran 0 tests containing 0 assertions.")
+  (println (str "\n== " @pass " passed, " @fail " failed (skipped) ==")))
+
 (println (str "\n== qwen3_next native forward smoke =="))
 (println (str "  platform: " (if metal? "Metal" "CUDA/non-Metal")))
 (println (str "  model-dir: " (or model-dir "<not found>")))
@@ -64,12 +85,12 @@
 (cond
   metal?
   (do (println "  SKIP: Metal backend — native MoE refused here (see llm_moe_guard_test)")
-      (finish))
+      (skip-finish!))
 
   (nil? model-dir)
   (do (println (str "  SKIP: no qwen3_next checkpoint at " repo-root
                     " (set QWEN3_NEXT_DIR to override)"))
-      (finish))
+      (skip-finish!))
 
   :else
   (-> (pr/let [model-map (llm/load-model model-dir)]
