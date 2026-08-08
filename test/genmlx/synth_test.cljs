@@ -19,8 +19,42 @@
          candidates (backtrack), self-terminates on plateau, and lands at the
          grid-optimal model the closed form predicts."
   (:require [genmlx.world.synth :as s]
+            [genmlx.llm.msa-score :as score]
             [genmlx.codegen.eval :as ce]
             [clojure.string :as str]))
+
+;; ---------------------------------------------------------------------------
+;; Level-4 fixture: a dist name that genuinely does not resolve (genmlx-ljl0)
+;;
+;; The gate on whether `dist/foo` resolves inside `s/check` is NOT genmlx.dist —
+;; it is the msa-score SCI ALLOWLIST (`msa_score.cljs` `msa-sci-opts`), which
+;; `world/synth.cljs`'s eval-gf reaches via `score/eval-model-fn`. Existence in
+;; dist.cljs is neither necessary nor sufficient.
+;;
+;; This fixture used to hardcode `dist/student-t`, chosen when that name was
+;; absent from the allowlist. `a158c6c` (2026-08-04) added `'student-t
+;; dist/student-t` to it for the msa vocabulary and thereby SILENTLY DISARMED
+;; this level: the model started evaluating, `:evals?` went true, and the only
+;; test of the eval-error rung became a permanent red. Found by the 2026-08-08
+;; pin battery, four days later.
+;;
+;; So the name is DERIVED from the live allowlist instead of hardcoded, and its
+;; absence is asserted as an explicit premise. A future vocabulary addition can
+;; no longer disarm this level — the derivation moves to the next free name, and
+;; if the premise itself is ever violated it fails AT THE CAUSE, naming the
+;; allowlist, rather than as a mystery assertion failure downstream.
+;; ---------------------------------------------------------------------------
+
+(def ^:private dist-vocab
+  "Symbol keys of the msa-score SCI `dist` namespace — the real resolvability gate."
+  (set (keys (get-in score/msa-sci-opts [:namespaces 'dist]))))
+
+(def ^:private unknown-dist
+  "First `no-such-dist-N` name absent from `dist-vocab`. Derived, not hardcoded."
+  (->> (range)
+       (map #(symbol (str "no-such-dist-" %)))
+       (remove dist-vocab)
+       first))
 
 (def ^:private pass (atom 0))
 (def ^:private fail (atom 0))
@@ -158,11 +192,36 @@
                  (and (:schema-ok? fb) (false? (:covered? fb))))
     (assert-true "uncovered -> not scored (no evidence)" (nil? (:evidence fb))))
 
-  ;; level 4: behavior — covered, well-formed, but errors at eval (unknown dist)
-  (let [fb (s/check (str "(fn [trace] {:y0 (trace :y0 (dist/student-t 0 1))})") {:y0 2.0})]
+  ;; level 4: behavior — covered, well-formed, but errors at eval (unresolvable dist)
+  (assert-true (str "PREMISE: " unknown-dist " is absent from the msa-score dist vocabulary "
+                    "(msa_score.cljs msa-sci-opts — the actual resolvability gate)")
+               (not (contains? dist-vocab unknown-dist)))
+  (let [fb (s/check (str "(fn [trace] {:y0 (trace :y0 (dist/" unknown-dist " 0 1))})") {:y0 2.0})]
     (assert-true "eval error -> :covered? true but :evals? false"
                  (and (:covered? fb) (false? (:evals? fb))))
-    (assert-true "eval error -> captures an :error message" (string? (:error fb))))
+    ;; NOT merely (string? (:error fb)): that also holds when the model EVALUATES
+    ;; and only scores non-finite, which is why it kept passing right through the
+    ;; a158c6c disarming (audit rule 2 — an assertion that survives a plausible
+    ;; wrong value). Pin the CAUSE: the error must name the unresolved symbol.
+    (assert-true "eval error -> :error names the unresolved symbol"
+                 (and (string? (:error fb))
+                      (str/includes? (:error fb) "resolve")
+                      (str/includes? (:error fb) (str unknown-dist)))))
+
+  ;; level 4b: the THIRD outcome — resolves and evaluates, but scores non-finite.
+  ;; Distinct from both :evals? false and a clean score, and load-bearing: it is
+  ;; what makes the synthesis driver reject malformed machine-generated
+  ;; candidates. Unasserted anywhere until genmlx-ljl0. `(dist/student-t 0 1)`
+  ;; supplies 2 of the 3 args (df loc scale), so df=0 with scale=nil yields a
+  ;; non-finite log-prob. Note defdist's `check-positive` guard does NOT fire
+  ;; here — validation is dev-mode-gated — so this backstop is the only thing
+  ;; standing between a malformed candidate and a bogus score.
+  (let [fb (s/check "(fn [trace] {:y0 (trace :y0 (dist/student-t 0 1))})" {:y0 2.0})]
+    (assert-true "non-finite evidence -> evaluates but is NOT scored"
+                 (and (:covered? fb) (:evals? fb)
+                      (nil? (:evidence fb)) (nil? (:method fb))))
+    (assert-true "non-finite evidence -> carries an explanatory :error"
+                 (and (string? (:error fb)) (str/includes? (:error fb) "non-finite"))))
 
   ;; level 5: fit — a valid model scores the EXACT marginal (matches the closed form)
   (let [m0 2 s0 1 sn 0.5
