@@ -1,4 +1,4 @@
-;; @tier slow
+;; @tier heavy
 (ns genmlx.llm.branched-test
   "Branch-using GFI (genmlx.llm.branched) on the REAL resident 80B Qwen3-Coder-Next
    (the second path). Thor/CUDA-only + heavy (loads the 42GB MoE) -> gated on the
@@ -123,4 +123,7 @@
             (check (boolean (re-matches #"[a-z ]*" txt)) (str "grammar-masked simulate conforms: " (pr-str txt)))))))
 
     (println (str "\n== llm_branched_test: " @pass " passed, " @fail " failed =="))
-    (js/process.exit (if (zero? @fail) 0 1))))
+    ;; set! exitCode, not (js/process.exit ...): process.exit truncates buffered
+    ;; stdout and can cut the summary line above — in the failing run where it
+    ;; matters most (CLAUDE.md / test/TESTING.md honesty contract).
+    (when (pos? @fail) (set! (.-exitCode js/process) 1))))

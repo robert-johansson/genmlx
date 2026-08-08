@@ -1,4 +1,4 @@
-;; @tier slow
+;; @tier heavy
 ;; genmlx-2sh6: end-to-end smoke for the native MoE forward wiring. The 80B
 ;; Qwen3-Coder-Next (config.json model_type "qwen3_next") has NO GenMLX-owned
 ;; CLJS forward — it routes to the native @genmlx/core Qwen35MoeModel

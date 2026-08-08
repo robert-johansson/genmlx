@@ -1,4 +1,4 @@
-;; @tier slow
+;; @tier heavy
 (ns genmlx.token-smc-real-test
   "genmlx-5qk7: token-SMC real-model smokes.
 

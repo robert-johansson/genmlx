@@ -1,4 +1,4 @@
-;; @tier slow
+;; @tier heavy
 (ns genmlx.qwen3-moe-layout-coherence-test
   "Dual-checkpoint CUDA coherence guard (genmlx-6ijc / mlx-cft4).
 
@@ -34,8 +34,10 @@
    By DEFAULT only case 0 (35B, ~20GB) runs; case 1 (80B, ~42GB) prints a skip.
    The backend has no model unload and GC does not promptly free native weights,
    so both-in-one-process peaks at ~62GB resident — enough to destabilize a
-   122GB box under other load (2026-07-07 reboot), and run.sh drives the slow
-   tier 4-way. To cover the 80B:
+   122GB box under other load (2026-07-07 reboot). This file is `@tier heavy`,
+   which run.sh always runs 1-way, so the tier protects against CROSS-file
+   overlap; this flag protects against loading both models WITHIN one process.
+   To cover the 80B:
      GENMLX_COHERENCE_CASE=1 ...   # PREFERRED: one model per process
      GENMLX_COHERENCE_BOTH=1 ...   # both in one process, at your own risk
 
@@ -122,9 +124,10 @@
 (def ^:private allow-both?
   "Opt-in for loading BOTH models in one process (~62GB resident, 20 + 42).
    Off by default: the backend has no unload and GC does not promptly free
-   native weights (see the ns docstring's 2026-07-07 reboot), and run.sh drives
-   the slow tier 4-way, so the battery would stack 62GB against concurrent GPU
-   load. The 80B's omission is PRINTED as a skip, never hidden."
+   native weights (see the ns docstring's 2026-07-07 reboot). `@tier heavy`
+   already guarantees no OTHER test file is resident alongside this one; this
+   flag is the remaining within-process guard. The 80B's omission is PRINTED as
+   a skip, never hidden — cover it with GENMLX_COHERENCE_CASE=1."
   (some? (some-> js/process .-env .-GENMLX_COHERENCE_BOTH)))
 
 (defn- emit-nothing-checked!

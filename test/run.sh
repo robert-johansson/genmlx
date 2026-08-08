@@ -4,14 +4,32 @@
 #   test/run.sh core            # per-change smoke loop (~30 high-signal fast files, < ~90s)
 #   test/run.sh fast            # the full fast tier (pure/cheap tests, parallel)
 #   test/run.sh medium          # GPU inference tests (parallel)
-#   test/run.sh slow            # SBC / convergence / stress / agentmodels / LLM (serial)
+#   test/run.sh slow            # SBC / convergence / stress / agentmodels / LLM (parallel)
+#   test/run.sh heavy           # 35B/80B checkpoint guards — ALWAYS serial (see below)
 #   test/run.sh bench           # benchmarks (opt-in, serial; no assertions)
-#   test/run.sh all             # fast + medium + slow  (the pre-merge gate)
+#   test/run.sh all             # fast + medium + slow + heavy  (the pre-merge gate)
 #   test/run.sh fast medium     # any explicit combination
 #   test/run.sh check           # classification gate: every test file is classified exactly once
 #   test/run.sh tags [--write]  # regenerate test/tiers.txt from the in-file @tier tags
 #
-# CLASSIFICATION SOURCE OF TRUTH: a ';; @tier <fast|medium|slow|bench|exclude> [core]'
+# WHY a `heavy` tier (genmlx-pc9o, 2026-08-08): four guards load a 35B (~20GB) or
+# 80B (~42GB) checkpoint. Three of them want the 80B, so an unlucky overlap at
+# TEST_JOBS_SLOW=4 asks for ~146GB on a 96GB card. They are CHEAP in time
+# (measured 6/11/14/15/17s — MLX mmaps lazily, so cost tracks the WORK, not the
+# model size), so isolating them costs ~1 minute of wall-clock and removes the
+# OOM entirely. The alternative — dropping TEST_JOBS_SLOW to 1 for all 82 slow
+# files — would cost hours to protect five files. `heavy` is therefore always
+# 1-way regardless of TEST_JOBS/TEST_JOBS_SLOW, and runs LAST in `all` so no
+# other tier's residency overlaps it.
+#
+# These four were, until 2026-08-08, invisible: their model-dir defaults pointed
+# at another machine's home, so each skipped, and a hand-rolled harness whose
+# skip exits 0 without a `Ran 0 tests` anchor is scored PASS. The 80B — the
+# headline model — had ZERO battery coverage while reporting green. Keeping them
+# in `all` rather than tagging them `exclude` is deliberate: `exclude` is how
+# they were forgotten.
+#
+# CLASSIFICATION SOURCE OF TRUTH: a ';; @tier <fast|medium|slow|heavy|bench|exclude> [core]'
 # line near the top of each test file. test/tiers.txt is a GENERATED cache the runner
 # reads (fast awk lookup); `check` FAILS if it drifts from the tags. To change a file's
 # tier, edit its @tier line and run `test/run.sh tags --write`.
@@ -105,15 +123,22 @@ tier_timeout() {            # per-tier per-file wall-clock cap (seconds), x host
     core|fast) base=45  ;;
     medium)    base=150 ;;
     slow)      base=600 ;;
+    # heavy runs 1-way so there is no J-way contention to absorb, but a COLD page
+    # cache must read up to 42GB off disk before the first forward — hence a
+    # bench-sized cap rather than a slow-sized one.
+    heavy)     base=900 ;;
     bench)     base=900 ;;
     *)         base=120 ;;
   esac
   echo $(( base * ${TEST_TIME_SCALE:-1} ))
 }
-tier_jobs() {               # fast/medium parallel; slow via TEST_JOBS_SLOW (default 4); bench always serial
+tier_jobs() {               # fast/medium parallel; slow via TEST_JOBS_SLOW (default 4); heavy/bench always serial
   case "$1" in
     core|fast|medium) echo "$JOBS" ;;
     slow)             echo "$JOBS_SLOW" ;;
+    # heavy is 1-way BY CONTRACT, not by default: TEST_JOBS_SLOW must not be able
+    # to reintroduce the ~146GB-on-a-96GB-card overlap this tier exists to prevent.
+    heavy)            echo 1 ;;
     *)                echo 1 ;;
   esac
 }
@@ -144,7 +169,7 @@ file_tag() {                # echo "<tier>" or "<tier> core"; empty if missing/i
     /^[[:space:]]*;;[[:space:]]*@tier[[:space:]]/ {
       for (i=1;i<=NF;i++) if ($i=="@tier") {
         t=$(i+1); c=$(i+2)
-        if (t ~ /^(fast|medium|slow|bench|exclude)$/)
+        if (t ~ /^(fast|medium|slow|heavy|bench|exclude)$/)
           print (c=="core" ? t" core" : t)
         exit
       }
@@ -224,7 +249,7 @@ do_check() {
   done < <(manifest_files_for_tier exclude)
   # 5. unknown tier names
   local badt
-  badt="$(awk '!/^#/ && NF>=2 && $1!~/^(fast|medium|slow|bench|exclude)$/ {print $1" "$2}' "$MANIFEST")"
+  badt="$(awk '!/^#/ && NF>=2 && $1!~/^(fast|medium|slow|heavy|bench|exclude)$/ {print $1" "$2}' "$MANIFEST")"
   if [ -n "$badt" ]; then echo "UNKNOWN tier name(s):"; echo "$badt" | sed 's/^/  /'; fail=1; fi
   # 6. the `core` marker (3rd column) is only valid on `fast` lines, and must be
   #    the literal word `core` — anything else is a typo that would silently
@@ -529,8 +554,8 @@ for arg in "$@"; do
              echo "wrote $MANIFEST from in-file @tier tags ($(disk_all_files | wc -l | tr -d ' ') files)."
            else gen_tiers; fi
            exit $? ;;
-    all)   TIERS+=(fast medium slow) ;;
-    core|fast|medium|slow|bench) TIERS+=("$arg") ;;
+    all)   TIERS+=(fast medium slow heavy) ;;
+    core|fast|medium|slow|heavy|bench) TIERS+=("$arg") ;;
     *) echo "unknown tier: $arg"; exit 2 ;;
   esac
 done
