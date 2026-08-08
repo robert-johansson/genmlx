@@ -158,11 +158,19 @@
                                   acc (map vector r0 ri))))
                       0.0 (range 99))]
   (println (str "  max deviation from run 0 across 99 re-runs: " max-dev))
-  (println (str "  => gather_qmm on CUDA is "
+  ;; Name the backend we ACTUALLY ran on. This said "CUDA" unconditionally,
+  ;; which reported a Metal run as a CUDA result (spotted on the M2 Max during
+  ;; the genmlx-bcyp sibling rebuild) — a false provenance claim in a suite
+  ;; whose whole point is per-arch numerics.
+  (println (str "  => gather_qmm on " (if (mx/metal-is-available?) "Metal" "CUDA") " is "
                 (if (zero? max-dev)
                   "bit-deterministic at this size (jitter must enter elsewhere)"
                   "NONDETERMINISTIC — the ba06 log-weight jitter can originate here")))
   (assert-true "nondeterminism probe ran (deviation finite)" (js/isFinite max-dev)))
 
 (println (str "\n=== gather-qmm-oracle: " @pass " PASS, " @fail " FAIL ==="))
-(when (pos? @fail) (js/process.exit 1))
+;; set! exitCode, NEVER (js/process.exit 1) — the latter truncates stdout, so the
+;; "=== gather-qmm-oracle: N PASS, M FAIL ===" line above can be cut off in the
+;; very failure case the report is needed for (CLAUDE.md test-suite honesty
+;; contract).
+(when (pos? @fail) (set! (.-exitCode js/process) 1))
