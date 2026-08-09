@@ -50,6 +50,7 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.llm.backend :as llm]
             [promesa.core :as pr]
+            [clojure.string :as str]
             ["fs" :as fs]
             ["os" :as os]))
 
@@ -109,13 +110,22 @@
    llm_moe_guard_test, which asserts the refusal (genmlx-7fjh session)."
   (mx/metal-is-available?))
 
+;; A skip carries its OWN reason: `[:skip "<why>"]`, never a bare :skip. The
+;; reason has to travel with the result because run-case skips for genuinely
+;; different causes (Metal gate vs absent checkpoint) and the caller cannot tell
+;; them apart. It used to guess, and guessed wrong: every skip was reported as
+;; "model dir absent on this host", so a Metal-gated skip on a box that HAS the
+;; 42GB checkpoint told the reader to go re-download it (genmlx-rqv2).
+(defn- skip? [r] (and (vector? r) (= :skip (first r))))
+(defn- skip-reason [r] (second r))
+
 (defn run-case [{:keys [name dir input-ids oracle]}]
   (if metal?
     (do (println "SKIP" name "— Metal: native MoE is refused here (see llm_moe_guard_test)")
-        (pr/resolved :skip))
+        (pr/resolved [:skip "Metal: native MoE is refused here (see llm_moe_guard_test)"]))
   (if-not (.existsSync fs (str dir "/config.json"))
     (do (println "SKIP" name "— model dir not found:" dir)
-        (pr/resolved :skip))
+        (pr/resolved [:skip (str "model dir not found: " dir)]))
     (pr/let [{:keys [model]} (llm/load-model dir)
              _ (llm/init-cache! model)
              l0 (mat (llm/forward-prefill model (vec input-ids)))
@@ -161,10 +171,10 @@
 (if (and (some? case-select) (not (js/isNaN case-select)))
   (pr/let [r (run-case (nth cases case-select))]
     (println (str "\n== qwen3_moe_layout_coherence case " case-select ": "
-                  (if (= :skip r) "skipped" (if r "passed" "FAILED")) " =="))
+                  (if (skip? r) "skipped" (if r "passed" "FAILED")) " =="))
     (cond
-      (= :skip r)        (emit-nothing-checked!
-                          (str "case " case-select " model dir absent on this host"))
+      (skip? r)          (emit-nothing-checked!
+                          (str "case " case-select " — " (skip-reason r)))
       (not (true? r))    (set! (.-exitCode js/process) 1)))
   (pr/let [;; sequential, and case 1 gated — see allow-both?
            r0 (run-case (nth cases 0))
@@ -174,15 +184,24 @@
                              "— not run by default (both models resident is ~62GB and the"
                              "backend has no unload). Set GENMLX_COHERENCE_BOTH=1, or better,"
                              "run it alone with GENMLX_COHERENCE_CASE=1.")
-                    :skip))
+                    [:skip (str "not run by default (both models resident is ~62GB, no unload); "
+                                "set GENMLX_COHERENCE_BOTH=1 or run alone with "
+                                "GENMLX_COHERENCE_CASE=1")]))
            results [r0 r1]
-           checked (vec (remove #(= :skip %) results))
+           checked (vec (remove skip? results))
            passed (count (filter true? checked))]
     (println (str "\n== qwen3_moe_layout_coherence: " passed "/" (count checked) " checked passed, "
-                  (count (filter #(= :skip %) results)) " skipped =="))
+                  (count (filter skip? results)) " skipped =="))
     (cond
       ;; MUST precede the every? branch: (every? true? []) is vacuously TRUE,
       ;; which is exactly how zero-cases-checked used to exit 0.
+      ;; Report EVERY case's own reason — the causes differ per case (Metal gate,
+      ;; absent dir, default-off), so one blanket sentence would misreport at
+      ;; least one of them (genmlx-rqv2).
       (empty? checked)              (emit-nothing-checked!
-                                     "no case had its model dir present on this host")
+                                     (str "no case ran — "
+                                          (str/join "; "
+                                                    (map-indexed
+                                                     (fn [i r] (str "case " i ": " (skip-reason r)))
+                                                     results))))
       (not (every? true? checked))  (set! (.-exitCode js/process) 1))))
