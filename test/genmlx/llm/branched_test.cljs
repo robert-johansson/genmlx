@@ -54,7 +54,15 @@
 (defn- t-addr [i] (keyword (str "t" i)))
 (defn- site-lp [logits tok] (dc/dist-log-prob (dist/categorical logits) tok))
 
-(if-not (.existsSync fs model-dir)
+(if (mx/metal-is-available?)
+  ;; The 80B is qwen3_next — a native-MoE family that load-model REFUSES on Metal
+  ;; (unsupported-native-moe?, genmlx-5luk). Before genmlx-pc9o fixed the path
+  ;; this file skipped on a Mac only because /home/robert/... did not exist there;
+  ;; without this gate the fix would turn that into a thrown FAIL. The Metal
+  ;; refusal itself is asserted by llm_moe_guard_test.
+  (do (println "SKIP llm_branched_test — Metal: native MoE refused (see llm_moe_guard_test)")
+      (println "Ran 0 tests containing 0 assertions."))
+  (if-not (.existsSync fs model-dir)
   ;; Emit the anchor pair run.sh needs to score SKIP instead of PASS: a `SKIP`
   ;; line within three lines above a `Ran 0 tests` summary (test/TESTING.md).
   ;; Without it a hand-rolled harness falls through to `else status=PASS`, so an
@@ -126,4 +134,4 @@
     ;; set! exitCode, not (js/process.exit ...): process.exit truncates buffered
     ;; stdout and can cut the summary line above — in the failing run where it
     ;; matters most (CLAUDE.md / test/TESTING.md honesty contract).
-    (when (pos? @fail) (set! (.-exitCode js/process) 1))))
+    (when (pos? @fail) (set! (.-exitCode js/process) 1)))))

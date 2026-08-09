@@ -98,7 +98,21 @@
                 151645 198 151644 77091 198]
     :oracle    [73594 12669 198 718 284 12459 264 11 293 25 264 488 293 198]}])
 
+(def ^:private metal?
+  "Both cases load a native-MoE family (qwen3_5_moe / qwen3_next) and
+   `llm/load-model` REFUSES those on Metal (unsupported-native-moe?, genmlx-5luk),
+   throwing rather than SIGTRAPping. The ns docstring always said CUDA-only but
+   there was no gate: the old /home/robert/... defaults meant the files skipped on
+   a Mac by accident, and fixing those paths to os.homedir() (genmlx-pc9o) would
+   have turned that silent skip into a thrown FAIL on any Mac that HAS the
+   checkpoints. Gate explicitly and defer the Metal contract to
+   llm_moe_guard_test, which asserts the refusal (genmlx-7fjh session)."
+  (mx/metal-is-available?))
+
 (defn run-case [{:keys [name dir input-ids oracle]}]
+  (if metal?
+    (do (println "SKIP" name "— Metal: native MoE is refused here (see llm_moe_guard_test)")
+        (pr/resolved :skip))
   (if-not (.existsSync fs (str dir "/config.json"))
     (do (println "SKIP" name "— model dir not found:" dir)
         (pr/resolved :skip))
@@ -115,7 +129,7 @@
       (println (if ok "✓ PASS" "✗ FAIL") name)
       (println "   got   " (vec ids))
       (println "   oracle" (vec oracle))
-      (pr/resolved ok))))
+      (pr/resolved ok)))))
 
 (def ^:private case-select
   ;; One process per case bounds peak memory to one model (no unload API).

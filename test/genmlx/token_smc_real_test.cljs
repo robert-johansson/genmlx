@@ -94,8 +94,14 @@
         (assert-true "V5: R2 no leak after return" (zero? (tsmc/live-handles decoder)))))))
 
 (defn- v6-moe []
-  (if-not (and moe-dir (.existsSync fs moe-dir))
-    (do (println "  SKIP V6 — GENMLX_MOE_MODEL not set / missing") (pr/resolved nil))
+  (if (mx/metal-is-available?)
+    ;; V6's 80B is qwen3_next, refused by load-model on Metal
+    ;; (unsupported-native-moe?, genmlx-5luk). V5 above is the dense 0.6B and runs
+    ;; fine, so the FILE still asserts on Metal — only V6 stands down.
+    (do (println "  SKIP V6 — Metal: native MoE refused (see llm_moe_guard_test)")
+        (pr/resolved nil))
+    (if-not (and moe-dir (.existsSync fs moe-dir))
+      (do (println "  SKIP V6 — GENMLX_MOE_MODEL not set / missing") (pr/resolved nil))
     (pr/let [mm (llm/load-model moe-dir)
              {:keys [model tokenizer]} mm
              enc (llm/encode tokenizer "# Returns the ")]
@@ -115,7 +121,7 @@
                        (= 4 (count (:particles r))))
           (assert-true (str "V6: R1 bounded on the native surface (" @max-live " <= 5)")
                        (<= @max-live 5))
-          (assert-true "V6: R2 no leak" (zero? (tsmc/live-handles decoder))))))))
+          (assert-true "V6: R2 no leak" (zero? (tsmc/live-handles decoder)))))))))
 
 (-> (pr/do (v5-dense) (v6-moe))
     (pr/then (fn [_] (summary)))
