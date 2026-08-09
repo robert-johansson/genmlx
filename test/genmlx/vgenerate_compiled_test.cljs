@@ -36,9 +36,20 @@
          (mapcat (fn [[j y]] [(keyword (str "y" j)) (mx/scalar y)])
                  (map-indexed vector ys))))
 
-(if (mx/metal-is-available?)
-  (println "SKIP: vgenerate-compiled is CUDA-only until measured on Metal (genmlx-vjnn)")
-  (do
+;; Whole-file skip in the run.sh-accepted shape (genmlx-xk0l, re-applied by
+;; genmlx-9xu4). The previous `(if metal (println SKIP) (do ...deftests...))`
+;; defined ZERO deftests on Metal, so cljs.test printed `Ran 0 tests` four
+;; lines below the SKIP print — one past the three-line proximity window
+;; run.sh (genmlx-wg95) and `check` (genmlx-95v4) use to tell a deliberate
+;; skip from a file that silently stopped registering tests. It therefore
+;; scored FAIL(0 tests) on every Metal battery. Printing the `Ran 0 tests`
+;; anchor ADJACENT to the SKIP and exiting 0 is the documented convention
+;; (test/TESTING.md; mirrors qwen2_coder_test) and keeps the guard tight for
+;; everyone else rather than widening the window.
+(when (mx/metal-is-available?)
+  (println "SKIP vgenerate-compiled-test: vgenerate-compiled is CUDA-only until measured on Metal (genmlx-vjnn)")
+  (println "Ran 0 tests containing 0 assertions.")
+  (js/process.exit 0))
 
 (deftest equivalence-same-key-test
   (testing "compiled :call matches handler vgenerate for the SAME key"
@@ -116,7 +127,5 @@
       ((:free! cf))
       (is (thrown? js/Error ((:call cf) (rng/fresh-key 6)))
           "call after free throws, no crash"))))
-
-))
 
 (cljs.test/run-tests)

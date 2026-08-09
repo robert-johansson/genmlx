@@ -28,7 +28,26 @@
    'stack requires at least one array'.
 
    Both rows below FAIL loudly with the respective fix reverted; see the bean
-   Summary of Changes for the observed before/after."
+   Summary of Changes for the observed before/after.
+
+   METAL NOTE (genmlx-b4qy, re-applied by genmlx-9xu4). Four assertions here
+   are CUDA-ONLY and are guarded behind (when-not (mx/metal-is-available?)):
+   the three degrade-notice checks and the chunk-routing check. They are not
+   flaky and not per-arch numerics — they are STRUCTURALLY unreachable on
+   Metal. persist-chain1/persist-chain (mcmc.cljs:373, 300) branch on
+   (mx/metal-is-available?) and take (mx/compile-fn f), a documented identity
+   pass-through, so the try/catch that prints
+   'Note: persist-chain{,1} — fn is not traceable' never runs; likewise
+   prefer-chunked-vmala? (mcmc.cljs:295) requires (not metal-is-available?).
+   Unguarded, they fail on Metal with out=\"\" — 9 failures on both Macs.
+   Everything that is backend-independent — no-throw, sample COUNT,
+   finiteness, chain movement, [S,N,D] shapes — stays live on BOTH backends,
+   so the CUDA contract is unchanged and the Metal run still has real oracles.
+
+   One consequence to keep in mind when reading a Metal run: the two NEGATIVE
+   notice assertions (traceable-model-still-takes-the-captured-path-test and
+   the zero-samples chunk-routing row) pass VACUOUSLY on Metal, since nothing
+   can print there. They are meaningful only on CUDA."
   (:require [cljs.test :refer [deftest is testing]]
             [genmlx.test-helpers :as h]
             [genmlx.mlx :as mx]
@@ -134,8 +153,10 @@
               (str nm ": chain must move (distinct sample values), got " (pr-str res))))
         ;; 5. POSITIVE: the degrade path is what carried it — the chain
         ;;    wrapper, not only the point wrapper, announced itself.
-        (is (re-find #"Note: persist-chain1? — fn is not traceable" out)
-            (str nm ": expected a persist-chain/persist-chain1 degrade notice; out=" (pr-str out)))))))
+        ;;    CUDA-ONLY (see the metal note at the top of this file).
+        (when-not (mx/metal-is-available?)
+          (is (re-find #"Note: persist-chain1? — fn is not traceable" out)
+              (str nm ": expected a persist-chain/persist-chain1 degrade notice; out=" (pr-str out))))))))
 
 (deftest degrade-notice-is-printed-once-per-wrapper-test
   (testing "a degraded wrapper announces itself exactly once and then stays on the raw fn"
@@ -156,8 +177,10 @@
           (is (= 3 (count res)) (str nm ": all three calls must return"))
           (is (every? #(h/close? expect % 1e-5) res)
               (str nm ": degraded calls must equal the raw fn (2+1), got " (pr-str res)))
-          (is (= 1 (count (re-seq #"is not traceable" out)))
-              (str nm ": notice must print exactly ONCE across 3 calls, out=" (pr-str out))))))))
+          ;; CUDA-ONLY (see the metal note at the top of this file).
+          (when-not (mx/metal-is-available?)
+            (is (= 1 (count (re-seq #"is not traceable" out)))
+                (str nm ": notice must print exactly ONCE across 3 calls, out=" (pr-str out)))))))))
 
 ;; The bean's second named member of the class: the Mix combinator's own
 ;; (int (mx/item ...)) at combinators.cljs:171/2313/2503. It only bites when
@@ -189,8 +212,10 @@
             (str "Mix/" nm ": expected " n-req " samples, got " (count res)))
         (is (every? (fn [s] (and (= 2 (count s)) (every? h/finite? s))) res)
             (str "Mix/" nm ": each sample is [v component-idx], both finite; got " (pr-str res)))
-        (is (re-find #"Note: persist-chain1? — fn is not traceable" out)
-            (str "Mix/" nm ": expected a chain-wrapper degrade notice; out=" (pr-str out)))))))
+        ;; CUDA-ONLY (see the metal note at the top of this file).
+        (when-not (mx/metal-is-available?)
+          (is (re-find #"Note: persist-chain1? — fn is not traceable" out)
+              (str "Mix/" nm ": expected a chain-wrapper degrade notice; out=" (pr-str out))))))))
 
 (deftest traceable-model-still-takes-the-captured-path-test
   (testing "the degrade catch does not disarm capture for well-behaved models"
@@ -218,9 +243,14 @@
     (let [{:keys [out res err]} (run-capturing #(vmala {:samples 2 :burn 6}))]
       (is (nil? err)
           (str "chunked MALA with burn>0 must not throw — got " (err-msg err)))
-      ;; The routing we intended is the routing that ran.
-      (is (re-find #"GENMLX_VMALA_CHUNK_OPS routing" out)
-          (str "expected the chunked runner to be selected; out=" (pr-str out)))
+      ;; The routing we intended is the routing that ran. CUDA-ONLY:
+      ;; prefer-chunked-vmala? (mcmc.cljs:295) requires (not metal-is-available?),
+      ;; so on Metal this row rides the non-chunked whole-sweep builder. The
+      ;; SHAPE and finiteness assertions below stay live on both backends —
+      ;; they are what pin genmlx-n896's empty-chunk stack fix.
+      (when-not (mx/metal-is-available?)
+        (is (re-find #"GENMLX_VMALA_CHUNK_OPS routing" out)
+            (str "expected the chunked runner to be selected; out=" (pr-str out))))
       (is (= [2 3 1] (h/realize-shape (:samples res)))
           "chunked MALA returns [S,N,D] samples across the burn-only chunk seams")
       (is (every? h/finite? (flatten (h/realize-vec (:samples res))))
