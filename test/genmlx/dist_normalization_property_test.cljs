@@ -154,9 +154,22 @@
                  key (gen/elements key-pool)]
     (let [support (dc/dist-support d)
           n-support (count support)
-          ;; Need enough samples so even the rarest support value is likely covered.
-          ;; For binomial(4,0.3): P(4)=0.0081, need ~600 samples for P(miss)<1%.
-          n-samples (max 500 (* 100 n-support))
+          ;; Sample budget DERIVED from the distribution, not a magic constant
+          ;; (genmlx-n83q). The old `(max 500 (* 100 n-support))` contradicted the
+          ;; comment beside it: binomial(4,0.3) has P(4)=0.0081 and support 5, so
+          ;; the formula returned 500 where the comment itself said ~600 were
+          ;; needed. Measured P(miss a support value): 1.71% at n=500, and with
+          ;; ~2.5 draws of that dist per 20-iteration run that is ~4% chance of a
+          ;; red per battery — which is what it was doing on Thor.
+          ;;
+          ;; Solve it instead of guessing: with p-min the rarest support
+          ;; probability, P(miss) = (1-p-min)^n, so n = log(target)/log(1-p-min).
+          ;; target 1e-4 per draw keeps a whole battery under ~0.1%. Deriving it
+          ;; also keeps the property correct for any pool member added LATER,
+          ;; which a frozen seed would not.
+          p-min (apply min (map #(js/Math.exp (mx/item (dc/dist-log-prob d %))) support))
+          n-samples (max 500 (js/Math.ceil (/ (js/Math.log 1e-4)
+                                              (js/Math.log (- 1.0 p-min)))))
           keys (rng/split-n key n-samples)
           samples (mapv (fn [k]
                           (let [v (dc/dist-sample d k)]

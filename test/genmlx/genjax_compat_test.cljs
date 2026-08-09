@@ -574,9 +574,14 @@
 
 (deftest s7-diagnostics
   (testing "7.1 ESS"
-    (let [samples (mapv (fn [_] (let [v (rng/normal (rng/fresh-key) [])]
+    ;; SEEDED (genmlx-n83q): 50 draws from the no-arg `(rng/fresh-key)` — the
+    ;; ENTROPY injection point — made "IID ESS > 25" a fresh coin-flip each run.
+    ;; One seeded key split 50 ways keeps the draws independent of each other
+    ;; while pinning the statistic.
+    (let [ess-keys (rng/split-n (rng/fresh-key 20260811) 50)
+          samples (mapv (fn [k] (let [v (rng/normal k [])]
                                   (mx/eval! v) v))
-                        (range 50))
+                        ess-keys)
           effective (diag/ess samples)]
       (is (> effective 25)
           (str "IID ESS ≈ 50 (got " (.toFixed effective 0) ")")))
