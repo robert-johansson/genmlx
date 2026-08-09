@@ -72,13 +72,30 @@
 ;; others). That is a datum for the numeric-bounds table, not a bug.
 ;;
 ;; Captures — each from the box named, same load options
-;; (:cljs-forward? false :paged? false):
-;;   :metal       2026-07-27, M4 at mlx fd21ea68c (genmlx-lr9c), verified
-;;                against the parity suites + the mlx-lm oracle argmax pin.
-;;   :cuda-sm110  2026-07-27, Thor sm_110 at mlx 135c5945e.
-;;   :cuda-sm120  2026-07-28, RTX PRO 6000 at mlx a27ddcaef, cross-validated
-;;                against Python mlx-lm on the same box (worst |d| 0.047,
-;;                cross-implementation band 0.25).
+;; (:cljs-forward? false :paged? false).
+;;
+;; RECORD THE IMMORTAL TAG, NOT JUST THE SHA (genmlx-7fjh, 2026-08-09). Our mlx
+;; fork is a REBASED patch stack (docs/fork/README.md), so a raw capture SHA is
+;; rewritten by the next rebase and becomes unreachable from `main`. Measured:
+;; of the three SHAs below, `fd21ea68c` and `135c5945e` are ORPHANED — neither is
+;; an ancestor of the pin they were supposed to be comparable against. Only the
+;; `pin/mlx/*` tags survive a rewrite, which is exactly why the runbook cuts them
+;; before any rebase. Consequence for anyone diagnosing a drift: a commit COUNT
+;; measured from an orphaned SHA is meaningless — `135c5945e..<pin>` reports 41
+;; commits because it counts the whole rewritten stack, where the true distance
+;; along our line is 10.
+;;
+;;   :metal       2026-07-27, M4 at mlx fd21ea68c  = tag pin/mlx/2026-07-26
+;;                (genmlx-lr9c), verified against the parity suites + the mlx-lm
+;;                oracle argmax pin. SHA orphaned by rebase; use the tag.
+;;   :cuda-sm110  2026-07-27, Thor sm_110 at mlx 135c5945e = tag
+;;                pin/mlx/2026-07-27. SHA orphaned by rebase; its rebased twin on
+;;                `main` is 70f1c1b6c (= tag pin/mlx/2026-07-27-kquants, IDENTICAL
+;;                patch-id b773bc554c4c), which is the point to diff/bisect FROM.
+;;   :cuda-sm120  2026-07-28, RTX PRO 6000 at mlx a27ddcaef = tag
+;;                pin/mlx/2026-07-27-ny70, cross-validated against Python mlx-lm
+;;                on the same box (worst |d| 0.047, cross-implementation band
+;;                0.25). Still on `main`.
 ;;
 ;; Tight tol (0.01) is kept deliberately: WITHIN one arch the build is
 ;; bit-reproducible, so a forward rewrite must still reproduce its own arch's
