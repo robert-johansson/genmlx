@@ -315,13 +315,43 @@
       ;; -- 2.4 revise --
       (println "\n== revise ==")
 
+      ;; :temperature 0 -> greedy argmax, i.e. DETERMINISTIC (genmlx-n83q).
+      ;; This call used to inherit generate-cljs's default temperature 0.3, so
+      ;; "code differs from input" was really asking "did the 0.6B happen not to
+      ;; echo its input this time". It drew the losing sample in the 2026-08-08
+      ;; battery (439/1) and re-passed 3/3 solo — a textbook unseeded band.
+      ;; Measured at temperature 0: three consecutive calls return the SAME
+      ;; revision, and it differs from the input, so the assertion below is now
+      ;; stable AND still meaningful. (generate-text has no :seed, so greedy is
+      ;; the determinism lever available here — see backend.cljs generate-text
+      ;; vs generate-text-raw+.)
+      ;;
+      ;; NOTE the opts merge: `opts` carries :prepared/:max-bytes, which are
+      ;; BYTE-level options and inert on this path — generate-cljs defaults
+      ;; :token-level? true and then reads only :max-tokens/:temperature.
       (pr/let [bad-code "(fn [s a] s)"
                failures [{:state {:x 5 :y 5} :action :up
                           :expected {:x 5 :y 4} :actual {:x 5 :y 5}}]
-               result (cg/revise model-map bad-code failures opts)]
+               result (cg/revise model-map bad-code failures
+                                 (merge opts {:temperature 0 :max-tokens 200}))]
         (assert-true "revise: produces output" (pos? (count (:text result))))
+        ;; Teeth demonstrated the hard way: this exact assertion FAILED in the
+        ;; 2026-08-08 battery when the model echoed its input, so it detects the
+        ;; thing it claims to. Greedy decoding removes the sampling, not the check.
         (assert-true "revise: code differs from input"
                      (not= bad-code (:code result)))
+        ;; The contract generate-cljs actually guarantees was previously
+        ;; unasserted here. `transition-fn-form?`, not `valid-cljs?`:
+        ;; valid-cljs? only checks READABILITY, so it returns true for "42" —
+        ;; an assertion a plausible constant would satisfy is not coverage
+        ;; (CLAUDE.md audit rule 2). Measured discrimination:
+        ;;   the actual revision -> true
+        ;;   "42"                -> false
+        ;;   "(fn [s] s)"        -> false   (1-arg)
+        ;;   "(defn move ...)"   -> false   (defn, not fn)
+        (assert-true "revise: revision is a valid 2-arg transition fn"
+                     (and (:valid? result)
+                          (cg/transition-fn-form? (eda/parse-string (:code result)))))
         (println "  Revised code:" (pr-str (:code result))))
 
       ;; -- 2.5 generate-and-score --
