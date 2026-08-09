@@ -491,9 +491,16 @@
       best-idx (fn [scores] (first (apply max-key second (map-indexed vector scores))))
       correct-count
       (reduce
-        (fn [n _]
+        ;; SEEDED PER ITERATION (genmlx-n83q): the 10 datasets stay independent of
+        ;; each other but are now bit-reproducible, so `correct-count` is a fixed
+        ;; number rather than a draw. Unseeded, this demanded 10/10 correct
+        ;; recoveries over 10 random datasets and failed the 2026-08-09 battery at
+        ;; 9/10 while passing 4/4 solo — the tail of a high-but-not-certain
+        ;; per-dataset recovery rate, not a broken scorer.
+        (fn [n i]
           (let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0
-                                                     :n-individuals 50 :n-steps 10})
+                                                     :n-individuals 50 :n-steps 10
+                                                     :seed (+ 4200 i)})
                 trans (prog/extract-transitions data)
                 scores (mapv #(prog/score-model-analytical trans var-names % {}) all-edges)]
             (if (= 0 (best-idx scores)) (inc n) n)))
@@ -548,13 +555,17 @@
 ;;     :importance log-ML matches the :analytical log-ML within MC error — they now
 ;;     integrate against the same model. (On large data prior-IS is biased low by
 ;;     design — that is why the analytical path exists, not a model mismatch.)
+;; BOTH sources of randomness seeded (genmlx-n83q): the tiny dataset AND the
+;; 8000-particle IS estimate. Seeding only the data leaves the Monte Carlo error
+;; a fresh draw each run, which is what made this a ~1-in-10 flake.
 (let [data (prog/generate-synthetic-data {:beta-xy -0.3 :beta-yx 0
-                                          :n-individuals 2 :n-steps 2})
+                                          :n-individuals 2 :n-steps 2
+                                          :seed 4306})
       trans (prog/extract-transitions data)
       edges {["x" "y"] true ["y" "x"] false}
       an (prog/score-model-analytical trans [:x :y] edges {})
       gf (prog/compile-model (prog/build-transition-source [:x :y] edges {}))
-      is (prog/score-model gf trans [:x :y] {:n-particles 8000})]
+      is (prog/score-model gf trans [:x :y] {:n-particles 8000 :seed 4307})]
   (println (str "    analytical=" (.toFixed an 3) " IS=" (.toFixed is 3)
                 " gap=" (.toFixed (- an is) 3)))
   (assert-true "IS and analytical log-ML agree within MC error on small data"
@@ -637,7 +648,10 @@
              {:ar {:sleep 0.7 :exercise 0.3 :mood 0.5}
               :cross {[:exercise :mood] 0.5 [:sleep :mood] -0.4}
               :sigma {:sleep 1.0 :exercise 0.5 :mood 1.0}
-              :n-individuals 60 :n-steps 10})
+              :n-individuals 60 :n-steps 10
+              ;; seeded: the marginal thresholds below are statistical claims
+              ;; ("P(mood->exercise) < 0.1" flaked ~1 run in 5) — genmlx-n83q
+              :seed 4301})
       trans (prog/extract-kvar-transitions data)
       result (prog/discover-structure var-names trans)
       best (:best result)
@@ -665,7 +679,8 @@
 
 (let [var-names [:a :b :c]
       data (prog/generate-kvar-data var-names
-             {:cross {[:a :b] 0.5} :n-individuals 30 :n-steps 10})
+             {:cross {[:a :b] 0.5} :n-individuals 30 :n-steps 10
+              :seed 4303})   ;; "P(a->b) is highest" is statistical — genmlx-n83q
       trans (prog/extract-kvar-transitions data)
       scored (prog/score-all-structures trans var-names)
       marginals (prog/edge-marginals var-names scored)]
@@ -687,7 +702,10 @@
              {:ar {:sleep 0.7 :exercise 0.3 :mood 0.5}
               :cross {[:exercise :mood] 0.5 [:sleep :mood] -0.4}
               :sigma {:sleep 1.0 :exercise 0.5 :mood 1.0}
-              :n-individuals 60 :n-steps 10})
+              :n-individuals 60 :n-steps 10
+              ;; seeded: the marginal thresholds below are statistical claims
+              ;; ("P(mood->exercise) < 0.1" flaked ~1 run in 5) — genmlx-n83q
+              :seed 4302})
       trans (prog/extract-kvar-transitions data)
       result (prog/discover-structure-decomposed trans var-names)
       m (:marginals result)]
@@ -708,7 +726,8 @@
 (let [var-names [:a :b :c]
       data (prog/generate-kvar-data var-names
              {:cross {[:a :b] 0.5 [:c :a] -0.3}
-              :n-individuals 50 :n-steps 10})
+              :n-individuals 50 :n-steps 10
+              :seed 4304})   ;; enum-vs-decomposed agreement is statistical — genmlx-n83q
       trans (prog/extract-kvar-transitions data)
       enum-result (prog/discover-structure var-names trans)
       decomp-result (prog/discover-structure-decomposed trans var-names)
@@ -739,7 +758,10 @@
                       [:rumination :avoidance] 0.2}
               :sigma {:depression 1.5 :sleep 1.0 :exercise 0.8
                       :rumination 1.2 :avoidance 1.0 :social 0.8}
-              :n-individuals 350 :n-steps 15})
+              :n-individuals 350 :n-steps 15
+              ;; seeded: "finds rumination->depression" etc. are recovery claims
+              ;; on noisy data — genmlx-n83q
+              :seed 4305})
       trans (prog/extract-kvar-transitions data)
       result (prog/discover-structure-decomposed trans var-names)
       m (:marginals result)]

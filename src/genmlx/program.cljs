@@ -11,6 +11,7 @@
   (:require [sci.core :as sci]
             [clojure.string :as str]
             [genmlx.mlx :as mx]
+            [genmlx.mlx.random :as rng]
             [genmlx.dist :as dist]
             [genmlx.dynamic :as dyn]
             [genmlx.protocols :as p]
@@ -47,12 +48,32 @@
 ;; ============================================================
 
 (defn- randn
-  "Sample from N(0,1) via Box-Muller transform."
+  "Sample from N(0,1) via Box-Muller transform. UNSEEDED — see noise-block for
+   the reproducible path, and prefer it in tests."
   []
   (let [u1 (js/Math.random)
         u2 (js/Math.random)]
     (* (js/Math.sqrt (* -2 (js/Math.log u1)))
        (js/Math.cos (* 2 js/Math.PI u2)))))
+
+(defn- noise-block
+  "Every N(0,1) draw one `generate-synthetic-data` call needs, as a nested vector
+   indexed [individual][step][0=x 1=y] — exactly 2*n-steps per individual, which
+   is what the DGP below consumes (x0,y0 at step 0; x-next,y-next per later step).
+
+   Drawn through the project's OWN keyed PRNG (`rng/fresh-key` + `rng/normal`)
+   rather than a private LCG. `js/Math.random` in `randn` was the only genuine
+   self-seeding site left in src/ — every other mention of it is either
+   `rng/fresh-key`'s single sanctioned entropy injection or a comment warning
+   against exactly this (handler.cljs, combinators.cljs, gfi.cljs). world/search.cljs
+   does carry a private LCG, but only because it needs cheap scalar uniforms in a
+   hot loop; here the noise is i.i.d. and can be drawn as ONE array, so there is
+   no reason to add a second random source to the codebase.
+
+   Pre-generating is valid because the DGP's recursion is in the STATE, not the
+   noise: x_{t+1} depends on x_t, but the shocks are independent."
+  [seed n-individuals n-steps]
+  (mx/->clj (rng/normal (rng/fresh-key seed) [n-individuals n-steps 2])))
 
 (defn generate-synthetic-data
   "Generate synthetic 2-variable time series with known causal structure.
@@ -70,27 +91,40 @@
      :x0-std         initial X std (default 2)
      :y0-mean        initial Y mean (default 20)
      :y0-std         initial Y std (default 5)
+     :seed           OPTIONAL integer. When given, every shock is drawn from the
+                     keyed PRNG under `(rng/fresh-key seed)`, so the returned
+                     data is bit-reproducible. When omitted the behaviour is
+                     unchanged (unseeded `js/Math.random`), so existing callers
+                     are unaffected. TESTS THAT ASSERT ON THE OUTPUT SHOULD PASS
+                     IT: program_test's structure-recovery check demanded 10/10
+                     correct recoveries over 10 unseeded datasets and failed the
+                     2026-08-09 battery at 9/10 (genmlx-n83q). Vary the seed per
+                     dataset to keep them independent yet reproducible.
 
    Returns a vector of individuals, each a vector of {:x :y} maps."
   [dgp]
   (let [{:keys [n-individuals n-steps ar-x ar-y beta-xy beta-yx
-                sigma-x sigma-y x0-mean x0-std y0-mean y0-std]
+                sigma-x sigma-y x0-mean x0-std y0-mean y0-std seed]
          :or {n-individuals 50 n-steps 10
               ar-x 0.8 ar-y 0.5 beta-xy 0 beta-yx 0
               sigma-x 1.0 sigma-y 2.0
               x0-mean 5 x0-std 2 y0-mean 20 y0-std 5}} dgp]
-    (vec
-     (for [_ (range n-individuals)]
-       (let [x0 (+ x0-mean (* x0-std (randn)))
-             y0 (+ y0-mean (* y0-std (randn)))]
-         (:series
-          (reduce (fn [{:keys [x y series]} _t]
-                    (let [x-next (+ (* ar-x x) (* beta-yx y) (* sigma-x (randn)))
-                          y-next (+ (* ar-y y) (* beta-xy x) (* sigma-y (randn)))]
-                      {:x x-next :y y-next
-                       :series (conj series {:x x-next :y y-next})}))
-                  {:x x0 :y y0 :series [{:x x0 :y y0}]}
-                  (range (dec n-steps)))))))))
+    (let [noise (when (some? seed) (noise-block seed n-individuals n-steps))
+          ;; one shock; reads the pre-drawn block when seeded, else falls back to
+          ;; the unseeded randn so unseeded callers behave exactly as before.
+          nz    (fn [i t j] (if noise (get-in noise [i t j]) (randn)))]
+      (vec
+       (for [i (range n-individuals)]
+         (let [x0 (+ x0-mean (* x0-std (nz i 0 0)))
+               y0 (+ y0-mean (* y0-std (nz i 0 1)))]
+           (:series
+            (reduce (fn [{:keys [x y series]} t]
+                      (let [x-next (+ (* ar-x x) (* beta-yx y) (* sigma-x (nz i (inc t) 0)))
+                            y-next (+ (* ar-y y) (* beta-xy x) (* sigma-y (nz i (inc t) 1)))]
+                        {:x x-next :y y-next
+                         :series (conj series {:x x-next :y y-next})}))
+                    {:x x0 :y y0 :series [{:x x0 :y y0}]}
+                    (range (dec n-steps))))))))))
 
 (defn extract-transitions
   "Extract transition pairs from time series data.
@@ -256,15 +290,25 @@
    transitions:  vector of transition maps from extract-transitions
    var-names:    [:x :y]
    opts:
-     :n-particles  number of importance samples (default 50)"
+     :n-particles  number of importance samples (default 50)
+     :seed         OPTIONAL integer. Without it every particle auto-mints a fresh
+                   key, so the estimate is a fresh draw each run — fine in
+                   production, but it made program_test's IS-vs-analytical
+                   agreement check a ~1-in-10 flake (genmlx-n83q). With it the key
+                   is split n-particles ways, so particles stay INDEPENDENT of
+                   each other while the whole estimate is reproducible."
   ([gf transitions var-names] (score-model gf transitions var-names {}))
   ([gf transitions var-names opts]
-   (let [{:keys [n-particles] :or {n-particles 50}} opts
+   (let [{:keys [n-particles seed] :or {n-particles 50}} opts
          constraints (build-constraints transitions var-names)
+         ;; One sub-key per particle when seeded: independent particles, one
+         ;; reproducible estimate. nil => auto-key per op, i.e. previous behaviour.
+         pkeys (when (some? seed) (rng/split-n (rng/fresh-key seed) n-particles))
          [weights first-err]
          (reduce (fn [[ws err] i]
-                   (let [[w err] (try
-                                   [(mx/item (:weight (p/generate gf [transitions] constraints)))
+                   (let [gf-i (if pkeys (dyn/with-key gf (nth pkeys i)) gf)
+                         [w err] (try
+                                   [(mx/item (:weight (p/generate gf-i [transitions] constraints)))
                                     err]
                                    (catch :default e [##-Inf (or err e)]))]
                      (when (zero? (mod (inc i) 10))
@@ -688,29 +732,43 @@
      :sigma          {var -> noise-std}  (default 1.0 for all)
      :init-mean      {var -> mean}  (default 0 for all)
      :init-std       {var -> std}   (default 2 for all)
+     :seed           OPTIONAL integer — same contract as generate-synthetic-data:
+                     seeded => bit-reproducible, omitted => unchanged unseeded
+                     behaviour. program_test's 3-variable marginals
+                     P(mood->exercise) < 0.1 flaked ~1 run in 5 without it
+                     (genmlx-n83q).
 
    Returns a vector of individuals, each a vector of {var -> value} maps."
   [var-names dgp]
-  (let [{:keys [n-individuals n-steps ar cross sigma init-mean init-std]
+  (let [{:keys [n-individuals n-steps ar cross sigma init-mean init-std seed]
          :or {n-individuals 50 n-steps 10}} dgp
         ar (merge (zipmap var-names (repeat 0.5)) ar)
         cross (or cross {})
         sigma (merge (zipmap var-names (repeat 1.0)) sigma)
         init-mean (merge (zipmap var-names (repeat 0.0)) init-mean)
-        init-std (merge (zipmap var-names (repeat 2.0)) init-std)]
+        init-std (merge (zipmap var-names (repeat 2.0)) init-std)
+        ;; [individual][step][var-index] — one shock per variable per step, plus
+        ;; the step-0 initialisation. Same reasoning as generate-synthetic-data:
+        ;; the recursion is in the STATE, the shocks are i.i.d., so they can be
+        ;; drawn as one keyed block.
+        nvars (count var-names)
+        noise (when (some? seed)
+                (mx/->clj (rng/normal (rng/fresh-key seed) [n-individuals n-steps nvars])))
+        vidx  (zipmap var-names (range))
+        nz    (fn [i t v] (if noise (get-in noise [i t (get vidx v)]) (randn)))]
     (vec
-     (for [_ (range n-individuals)]
+     (for [i (range n-individuals)]
        (let [init (zipmap var-names
-                          (map #(+ (get init-mean %) (* (get init-std %) (randn))) var-names))]
+                          (map #(+ (get init-mean %) (* (get init-std %) (nz i 0 %))) var-names))]
          (:series
-          (reduce (fn [{:keys [prev series]} _t]
+          (reduce (fn [{:keys [prev series]} t]
                     (let [nxt (zipmap var-names
                                       (map (fn [v]
                                              (+ (* (get ar v) (get prev v))
                                                 (reduce + (map (fn [[[src tgt] coeff]]
                                                                  (if (= tgt v) (* coeff (get prev src)) 0))
                                                                cross))
-                                                (* (get sigma v) (randn))))
+                                                (* (get sigma v) (nz i (inc t) v))))
                                            var-names))]
                       {:prev nxt :series (conj series nxt)}))
                   {:prev init :series [init]}
