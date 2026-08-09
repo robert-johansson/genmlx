@@ -35,10 +35,18 @@
 
 (defn linear
   "Create a Linear layer: y = x @ W^T + b.
-   Kaiming uniform initialization: uniform(-k, k) where k = 1/sqrt(in-dims)."
-  [in-dims out-dims & {:keys [bias] :or {bias true}}]
+   Kaiming uniform initialization: uniform(-k, k) where k = 1/sqrt(in-dims).
+
+   :key  OPTIONAL PRNG key for REPRODUCIBLE init. Omitted => `(rng/fresh-key)`,
+         i.e. the no-arg ENTROPY injection point, so every construction differs.
+         That is right for training but makes any convergence assertion a fresh
+         draw: nn_test's `training-convergence` inits w ~ uniform(-1,1) and must
+         reach 2.0 in 500 Adam steps at lr 0.01, so the init distance dominated
+         the outcome and the test failed ~2 runs in 8 (genmlx-n83q). Pass
+         `(rng/fresh-key <int>)` to pin it."
+  [in-dims out-dims & {:keys [bias key] :or {bias true}}]
   (let [k       (/ 1.0 (js/Math.sqrt in-dims))
-        key     (rng/fresh-key)
+        key     (or key (rng/fresh-key))
         [k1 k2] (rng/split key)
         s       (mx/scalar (* 2.0 k))
         weight  (mx/subtract (mx/multiply (rng/uniform k1 [out-dims in-dims]) s)
@@ -100,9 +108,11 @@
     (rebuild-fn {:gamma gamma :beta beta})))
 
 (defn embedding
-  "Lookup embedding: indices -> weight[indices]."
-  [num-embeddings dims]
-  (let [weight (mx/multiply (rng/normal (rng/fresh-key) [num-embeddings dims])
+  "Lookup embedding: indices -> weight[indices].
+
+   :key  OPTIONAL PRNG key for reproducible init — same contract as `linear`."
+  [num-embeddings dims & {:keys [key]}]
+  (let [weight (mx/multiply (rng/normal (or key (rng/fresh-key)) [num-embeddings dims])
                             (mx/scalar 0.01))]
     (mx/eval! weight)
     ((make-embedding-rebuild) {:weight weight})))

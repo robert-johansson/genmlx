@@ -180,7 +180,17 @@
 
 (deftest training-convergence
   (testing "fit y = 2x + 1"
-    (let [lin-ref (atom (nn/linear 1 1))
+    ;; FULLY SEEDED (genmlx-n83q). Both randomness sources had to go, and the init
+    ;; was the dominant one: w starts uniform(-1,1) and must reach 2.0 in 500 Adam
+    ;; steps at lr 0.01, so a bad draw simply runs out of steps. Unseeded this
+    ;; failed ~2 runs in 8 SOLO on sm_120 — a real band, not contention (the Mac
+    ;; had recorded it as "re-passes solo"; that no longer holds).
+    ;;   1. layer init  -> :key
+    ;;   2. the 500 minibatches -> one key split 500 ways, so the batches stay
+    ;;      independent of each other while the trajectory is reproducible.
+    ;; NOT widening the 0.2 tolerance: converging to 2.0 IS the contract here.
+    (let [lin-ref (atom (nn/linear 1 1 :key (rng/fresh-key 20260809)))
+          batch-keys (rng/split-n (rng/fresh-key 20260810) 500)
           opt (nn/optimizer :adam 0.01)
           vg (nn/value-and-grad lin-ref
                 (fn [fwd x]
@@ -189,8 +199,8 @@
                                        (mx/scalar 1.0))]
                     (mx/mean (mx/square (mx/subtract y-pred y-true))))))]
 
-      (dotimes [_ 500]
-        (let [x (mx/subtract (mx/multiply (rng/uniform (rng/fresh-key) [10 1])
+      (dotimes [i 500]
+        (let [x (mx/subtract (mx/multiply (rng/uniform (nth batch-keys i) [10 1])
                                           (mx/scalar 2.0))
                              (mx/scalar 1.0))]
           (nn/training-step! lin-ref opt vg x)))
