@@ -26,6 +26,12 @@
         (when (re-find #"bun" ep) ep))
       "bun"))
 
+(def suite-timeout-ms
+  ;; Per-suite budget. 300s was too tight for the heavier law files on the
+  ;; CUDA host when run in sequence (p10 passes standalone but timed out
+  ;; here); default raised, overridable via GENMLX_SUITE_TIMEOUT_MS.
+  (js/parseInt (or (aget (.-env js/process) "GENMLX_SUITE_TIMEOUT_MS") "900000")))
+
 (def out-dir
   (or (aget (.-env js/process) "GENMLX_RESULTS_DIR")
       (.resolve path-mod (js/process.cwd) "results/gfi-law-verification")))
@@ -143,7 +149,7 @@
       (let [cmd (str bun-path " run --bun nbb " file)
             stdout (.toString
                      (.execSync child-process cmd
-                                #js {:timeout 300000
+                                #js {:timeout suite-timeout-ms
                                      :maxBuffer (* 10 1024 1024)
                                      :encoding "utf8"
                                      :stdio #js ["pipe" "pipe" "pipe"]}))

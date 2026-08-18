@@ -1,0 +1,4 @@
+Error running gfi-law-verification
+spawnSync /bin/sh ETIMEDOUT
+$ bunx nbb@1.4.208 /home/robertj/mlx/genmlx/bench/gfi_law_verification.cljs
+Saved lockfile
