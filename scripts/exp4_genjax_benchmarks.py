@@ -2,11 +2,38 @@
 """
 Experiment 4: GenJAX benchmarks for system comparison.
 
-Models: LinReg, HMM, GMM — same data as GenMLX exp3.
+Models: LinReg, HMM, GMM — same data as GenMLX exp3 (byte-identical inputs).
 Protocol: 5 warmup, 20 timed runs, time.perf_counter.
 Output: results/exp4_system_comparison/genjax.json
 
-Run: PYENV_VERSION=genjax-05 pyenv exec python scripts/exp4_genjax_benchmarks.py
+Rewritten 2026-08-18 for the GenJAX 1.0.x API (source build from
+github.com/femtomc/genjax; PyPI is stuck at 0.10.3). Two changes matter:
+
+  1. API. 1.0 drops ChoiceMap in favour of plain dicts for constraints,
+     and models no longer take a PRNG key: randomness is introduced by
+     the `seed` transformation. Importance sampling comes from
+     `genjax.inference.init`, which returns a ParticleCollection carrying
+     both the log marginal likelihood estimate and the effective sample
+     size — so this script now records estimates, not just timings, which
+     lets the comparison check cross-system AGREEMENT rather than speed
+     alone.
+
+  2. A real bug in the previous version. The HMM model took its sequence
+     length T as a model argument, so under jit `for t in range(1, T)`
+     hit a traced value and raised TracerIntegerConversionError. The old
+     script caught that and printed "HMM IS SKIPPED", which read as a
+     GenJAX limitation; it was ours. T is a structural constant and is
+     now closed over. (The same bug would fire on any GenJAX version.)
+
+Environment (see exp/EXPERIMENTS.md in the paper repo):
+    uv venv venv-git
+    uv pip install --python venv-git/bin/python \
+        git+https://github.com/femtomc/genjax numpyro==0.21.0 \
+        matplotlib "jax==0.7.2" "jaxlib==0.7.2"
+  matplotlib and jax are undeclared dependencies of genjax 1.0.13; pin
+  jax yourself, nothing enforces it at install time.
+
+Run: <venv>/bin/python scripts/exp4_genjax_benchmarks.py
 """
 
 import os
@@ -15,7 +42,8 @@ import json
 import numpy as np
 import jax
 import jax.numpy as jnp
-from genjax import gen, normal, categorical, ChoiceMap
+from genjax import gen, normal, categorical, seed, const
+from genjax.inference import init
 
 # ---------------------------------------------------------------------------
 # Data (hardcoded from exp3 JSONs — byte-identical inputs)
@@ -70,7 +98,7 @@ GMM_K = 3
 GMM_N = 8
 GMM_MEANS_V = jnp.array([-4.0, 0.0, 4.0])
 GMM_SIGMA = 1.0
-GMM_WEIGHTS = jnp.array([1.0/3.0, 1.0/3.0, 1.0/3.0])
+GMM_WEIGHTS = jnp.array([1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0])
 GMM_LOG_WEIGHTS = jnp.log(GMM_WEIGHTS)
 
 GMM_YS = jnp.array([
@@ -79,168 +107,125 @@ GMM_YS = jnp.array([
     -2.8335559368133545, -4.310329109430313
 ])
 
+N_PARTICLES = 1000
 
 # ---------------------------------------------------------------------------
 # Timing helper
 # ---------------------------------------------------------------------------
 
+
 def bench(f, warmup=5, runs=20):
-    """Run f with warmup, return list of times in ms."""
+    """Run f with warmup, return list of times in ms. f returns a blockable array."""
     for _ in range(warmup):
-        result = f()
-        if hasattr(result, 'block_until_ready'):
-            result.block_until_ready()
-        elif isinstance(result, tuple) and hasattr(result[0], 'block_until_ready'):
-            result[0].block_until_ready()
+        jax.block_until_ready(f())
     times = []
     for _ in range(runs):
         start = time.perf_counter()
-        result = f()
-        if hasattr(result, 'block_until_ready'):
-            result.block_until_ready()
-        elif isinstance(result, tuple) and hasattr(result[0], 'block_until_ready'):
-            result[0].block_until_ready()
-        elapsed = (time.perf_counter() - start) * 1000
-        times.append(elapsed)
+        jax.block_until_ready(f())
+        times.append((time.perf_counter() - start) * 1000)
     return times
 
 
 # ---------------------------------------------------------------------------
-# Model A: Linear Regression
+# Models (1.0 API: no key argument; `@ "addr"` names a choice)
 # ---------------------------------------------------------------------------
+
 
 @gen
 def linreg_model(xs):
     slope = normal(0.0, 2.0) @ "slope"
     intercept = normal(0.0, 2.0) @ "intercept"
-    for j in range(len(xs)):
+    for j in range(len(LINREG_XS)):
         normal(slope * xs[j] + intercept, 1.0) @ f"y{j}"
     return slope
 
 
-linreg_obs = ChoiceMap.d({f"y{i}": float(LINREG_YS[i]) for i in range(len(LINREG_YS))})
-
-# ---------------------------------------------------------------------------
-# Model C: Gaussian Mixture Model
-# ---------------------------------------------------------------------------
-
 @gen
-def gmm_model(ys):
-    for i in range(len(ys)):
+def gmm_model():
+    for i in range(GMM_N):
         z = categorical(GMM_LOG_WEIGHTS) @ f"z{i}"
-        mu = jnp.take(GMM_MEANS_V, z)
-        normal(mu, GMM_SIGMA) @ f"y{i}"
+        normal(jnp.take(GMM_MEANS_V, z), GMM_SIGMA) @ f"y{i}"
 
-
-gmm_obs = ChoiceMap.d({f"y{i}": float(GMM_YS[i]) for i in range(GMM_N)})
-
-# ---------------------------------------------------------------------------
-# Model B: HMM (flat loop)
-# ---------------------------------------------------------------------------
 
 @gen
-def hmm_model(T):
-    z_prev = categorical(jnp.log(HMM_INIT)) @ "z0"
-    normal(jnp.take(HMM_MEANS, z_prev), HMM_SIGMA) @ "y0"
-    for t in range(1, T):
-        trans_probs = jnp.log(HMM_TRANS[z_prev])
-        z = categorical(trans_probs) @ f"z{t}"
+def hmm_model():
+    # HMM_T is closed over, NOT a model argument: it is a structural
+    # constant (a Python loop bound), and passing it as an argument made
+    # it a traced value under jit. See the module docstring.
+    z = categorical(jnp.log(HMM_INIT)) @ "z0"
+    normal(jnp.take(HMM_MEANS, z), HMM_SIGMA) @ "y0"
+    for t in range(1, HMM_T):
+        z = categorical(jnp.log(jnp.take(HMM_TRANS, z, axis=0))) @ f"z{t}"
         normal(jnp.take(HMM_MEANS, z), HMM_SIGMA) @ f"y{t}"
-        z_prev = z
 
 
-hmm_obs = ChoiceMap.d({f"y{t}": float(HMM_YS[t]) for t in range(HMM_T)})
+# Constraints are plain dicts in the 1.0 API (ChoiceMap is gone).
+linreg_obs = {f"y{i}": float(LINREG_YS[i]) for i in range(len(LINREG_YS))}
+gmm_obs = {f"y{i}": float(GMM_YS[i]) for i in range(GMM_N)}
+hmm_obs = {f"y{t}": float(HMM_YS[t]) for t in range(HMM_T)}
 
 
 # ---------------------------------------------------------------------------
-# Vectorized IS via jax.vmap + jax.jit
+# Vectorized importance sampling via genjax.inference.init
 # ---------------------------------------------------------------------------
 
-def make_is_fn(model, args, obs, n_particles):
-    """Create a JIT-compiled vectorized IS function."""
-    def one_is(key):
-        tr, w = model.generate(key, obs, args)
-        return w
 
-    keys_fn = lambda key: jax.random.split(key, n_particles)
+def make_is_fn(model, args, obs, n_particles=N_PARTICLES):
+    """JIT-compiled IS returning (log marginal likelihood estimate, ESS)."""
 
-    @jax.jit
-    def run_is(key):
-        keys = keys_fn(key)
-        weights = jax.vmap(one_is)(keys)
-        log_ml = jax.scipy.special.logsumexp(weights) - jnp.log(n_particles)
-        return log_ml
+    def run(key):
+        pc = seed(lambda: init(model, args, const(n_particles), obs))(key)
+        return pc.log_marginal_likelihood(), pc.effective_sample_size()
 
-    return run_is
+    return jax.jit(run)
 
 
 # ---------------------------------------------------------------------------
 # Run benchmarks
 # ---------------------------------------------------------------------------
 
-print(f"\n=== GenJAX System Comparison Benchmarks ===")
+try:
+    from importlib.metadata import version as _pkg_version
+    GENJAX_VERSION = _pkg_version("genjax")
+except Exception:
+    GENJAX_VERSION = "unknown"
+
+print("\n=== GenJAX System Comparison Benchmarks ===")
+print(f"  GenJAX {GENJAX_VERSION}")
 print(f"  JAX {jax.__version__} ({jax.devices()[0].platform})")
-print(f"  Protocol: 5 warmup, 20 timed runs")
+print(f"  Protocol: 5 warmup, 20 timed runs, N={N_PARTICLES} particles")
 print()
 
+key = jax.random.key(42)
 comparisons = []
 
-# --- LinReg IS (N=1000) ---
-print("-- LinReg IS (N=1000) --")
-linreg_is = make_is_fn(linreg_model, (LINREG_XS,), linreg_obs, 1000)
-key = jax.random.key(42)
+CASES = [
+    ("linreg", linreg_model, (LINREG_XS,), linreg_obs),
+    ("gmm", gmm_model, (), gmm_obs),
+    ("hmm", hmm_model, (), hmm_obs),
+]
 
-times = bench(lambda: linreg_is(key))
-comparisons.append({
-    "model": "linreg",
-    "algorithm": "IS",
-    "n_particles": 1000,
-    "time_ms": float(np.mean(times)),
-    "time_ms_std": float(np.std(times)),
-    "time_ms_min": float(np.min(times)),
-    "times_ms": [float(t) for t in times],
-})
-print(f"  Mean: {np.mean(times):.3f} ms")
-print(f"  Std:  {np.std(times):.3f} ms")
-print(f"  Min:  {np.min(times):.3f} ms")
-
-# --- GMM IS (N=1000) ---
-print("\n-- GMM IS (N=1000) --")
-gmm_is = make_is_fn(gmm_model, (GMM_YS,), gmm_obs, 1000)
-
-times = bench(lambda: gmm_is(key))
-comparisons.append({
-    "model": "gmm",
-    "algorithm": "IS",
-    "n_particles": 1000,
-    "time_ms": float(np.mean(times)),
-    "time_ms_std": float(np.std(times)),
-    "time_ms_min": float(np.min(times)),
-    "times_ms": [float(t) for t in times],
-})
-print(f"  Mean: {np.mean(times):.3f} ms")
-print(f"  Std:  {np.std(times):.3f} ms")
-print(f"  Min:  {np.min(times):.3f} ms")
-
-# --- HMM IS (N=1000) ---
-print("\n-- HMM IS (N=1000) --")
-try:
-    hmm_is = make_is_fn(hmm_model, (HMM_T,), hmm_obs, 1000)
-    times = bench(lambda: hmm_is(key))
+for name, model, args, obs in CASES:
+    print(f"-- {name} IS (N={N_PARTICLES}) --")
+    is_fn = make_is_fn(model, args, obs)
+    log_ml, ess = is_fn(key)          # compile + one estimate
+    times = bench(lambda: is_fn(key)[0])
     comparisons.append({
-        "model": "hmm",
+        "model": name,
         "algorithm": "IS",
-        "n_particles": 1000,
+        "n_particles": N_PARTICLES,
         "time_ms": float(np.mean(times)),
         "time_ms_std": float(np.std(times)),
         "time_ms_min": float(np.min(times)),
         "times_ms": [float(t) for t in times],
+        # Estimates: these make the comparison an agreement check, not
+        # only a speed measurement.
+        "log_marginal_likelihood": float(log_ml),
+        "effective_sample_size": float(ess),
     })
-    print(f"  Mean: {np.mean(times):.3f} ms")
-    print(f"  Std:  {np.std(times):.3f} ms")
-    print(f"  Min:  {np.min(times):.3f} ms")
-except Exception as e:
-    print(f"  HMM IS SKIPPED: {e}")
+    print(f"  Mean: {np.mean(times):.3f} ms   Std: {np.std(times):.3f}   Min: {np.min(times):.3f}")
+    print(f"  log-ML estimate: {float(log_ml):.4f}   ESS: {float(ess):.1f} / {N_PARTICLES}")
+    print()
 
 # ---------------------------------------------------------------------------
 # Write JSON output
@@ -248,10 +233,10 @@ except Exception as e:
 
 output = {
     "system": "genjax",
-    "version": "0.10.3",
+    "version": GENJAX_VERSION,
+    "source": "github.com/femtomc/genjax",
     "jax_version": jax.__version__,
-    "hardware": "Apple M2",
-    "backend": f"JAX CPU ({jax.devices()[0].platform})",
+    "backend": f"JAX {jax.devices()[0].platform}",
     "timing_protocol": "5 warmup, 20 runs, time.perf_counter",
     "comparisons": comparisons,
 }
@@ -261,4 +246,4 @@ outpath = os.path.join(os.path.dirname(__file__), "..", "results",
 os.makedirs(os.path.dirname(outpath), exist_ok=True)
 with open(outpath, "w") as f:
     json.dump(output, f, indent=2)
-print(f"\nWrote: {outpath}")
+print(f"Wrote: {outpath}")
