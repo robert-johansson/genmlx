@@ -12,13 +12,13 @@
   "closed-form-log-ml": -9.122093866748413,
   "conditions": {
     "L2-no-analytical": {
-      "log-ml-mean": -9.760964741124676,
-      "log-ml-std": 2.167964229451776,
-      "log-ml-var": 4.700068900182432,
-      "log-ml-abs-error-nats": 0.6388708743762628,
-      "ess-mean": 1.4472544663638118,
-      "timing-ms": 1.3551526666666405,
-      "timing-std-ms": 0.033649779870524525
+      "log-ml-mean": -9.7609645331681,
+      "log-ml-std": 2.1679643068463808,
+      "log-ml-var": 4.700069235759908,
+      "log-ml-abs-error-nats": 0.6388706664196864,
+      "ess-mean": 1.4472545763586198,
+      "timing-ms": 10.014282666666759,
+      "timing-std-ms": 1.2823770978929572
     },
     "L3-with-analytical": {
       "log-ml-mean": -9.12209415435791,
@@ -26,12 +26,12 @@
       "log-ml-var": 0,
       "log-ml-abs-error-nats": 2.876094971071552e-7,
       "ess-mean": 50,
-      "timing-ms": 1.4097223333333393,
-      "timing-std-ms": 0.09728492969794388
+      "timing-ms": 2.2026533333333873,
+      "timing-std-ms": 0.9787534438505109
     }
   },
-  "ess-improvement": 34.54817460375414,
-  "timestamp": "2026-06-13T08:57:22.658Z",
+  "ess-improvement": 34.548171978010274,
+  "timestamp": "2026-08-18T16:20:36.582Z",
   "non-conjugate-sites": [
     "sigma"
   ],

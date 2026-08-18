@@ -23,22 +23,22 @@
     "log_ml_abs_error_nats": [
       {
         "K": 3,
-        "l35": 1.1506034454547756,
-        "l2": 3.3220080036574124
+        "l35": 1.7029397496154512,
+        "l2": 2.9144929466486396
       },
       {
         "K": 5,
-        "l35": 24.51079817559553,
-        "l2": 14.709979969383813
+        "l35": 22.905197717575557,
+        "l2": 19.953216767615917
       },
       {
         "K": 10,
-        "l35": 208.321355336362,
-        "l2": 212.70535639507207
+        "l35": 236.08345363976508,
+        "l2": 214.85132835523447
       }
     ],
-    "max_l35_abs_error_nats": 208.321355336362,
-    "mean_ess_improvement": 0.8937297629681705,
+    "max_l35_abs_error_nats": 236.08345363976508,
+    "mean_ess_improvement": 0.999006602181224,
     "all_exact?": false
   },
   "experiment": "l3.5-combinator-conjugacy",
@@ -53,78 +53,78 @@
       "K": 3,
       "closed-form-log-ml": -9.782219147153135,
       "L2-standard": {
-        "log-ml-mean": -13.104227150810548,
-        "log-ml-std": 3.2915019692768315,
-        "log-ml-var": 10.833985213753259,
-        "log-ml-abs-error-nats": 3.3220080036574124,
-        "ess-mean": 1.6605655546814564,
-        "timing-ms": 0.8608473333333677,
-        "timing-std-ms": 0.04948352943473904
+        "log-ml-mean": -12.696712093801775,
+        "log-ml-std": 3.0463723943111085,
+        "log-ml-var": 9.280384764820795,
+        "log-ml-abs-error-nats": 2.9144929466486396,
+        "ess-mean": 1.609390176160013,
+        "timing-ms": 7.496858666666715,
+        "timing-std-ms": 0.5543136478990369
       },
       "L3.5-analytical": {
-        "log-ml-mean": -10.932822592607911,
-        "log-ml-std": 1.4921584046006529,
-        "log-ml-var": 2.226536704420366,
-        "log-ml-abs-error-nats": 1.1506034454547756,
-        "ess-mean": 1.2620542384135838,
-        "timing-ms": 0.8252086666666401,
-        "timing-std-ms": 0.039433570372691025
+        "log-ml-mean": -11.485158896768587,
+        "log-ml-std": 3.9699196300890955,
+        "log-ml-var": 15.76026186936674,
+        "log-ml-abs-error-nats": 1.7029397496154512,
+        "ess-mean": 1.3319228936250227,
+        "timing-ms": 1.7065399999999045,
+        "timing-std-ms": 1.0862554710098655
       },
       "n-particles": 100,
-      "ess-improvement": 0.7600147039396355,
-      "variance-reduction": 4.865846223080194
+      "ess-improvement": 0.8275947705875625,
+      "variance-reduction": 0.5888471169923326
     },
     {
       "K": 5,
       "closed-form-log-ml": -16.48521673040374,
       "L2-standard": {
-        "log-ml-mean": -31.19519669978755,
-        "log-ml-std": 9.994839394468164,
-        "log-ml-var": 99.89681452121273,
-        "log-ml-abs-error-nats": 14.709979969383813,
-        "ess-mean": 1.126920837701889,
-        "timing-ms": 1.4932779999999184,
-        "timing-std-ms": 0.05601956346679089
+        "log-ml-mean": -36.438433498019656,
+        "log-ml-std": 11.897692915956716,
+        "log-ml-var": 141.5550967224066,
+        "log-ml-abs-error-nats": 19.953216767615917,
+        "ess-mean": 1.0003686230051794,
+        "timing-ms": 8.460854666666515,
+        "timing-std-ms": 0.6923134924920005
       },
       "L3.5-analytical": {
-        "log-ml-mean": -40.99601490599927,
-        "log-ml-std": 11.64844732280609,
-        "log-ml-var": 135.68632503218836,
-        "log-ml-abs-error-nats": 24.51079817559553,
-        "ess-mean": 1.1085378554252427,
-        "timing-ms": 1.4838056666665882,
-        "timing-std-ms": 0.03952698539402188
+        "log-ml-mean": -39.390414447979296,
+        "log-ml-std": 13.098034053989007,
+        "log-ml-var": 171.5584960794557,
+        "log-ml-abs-error-nats": 22.905197717575557,
+        "ess-mean": 1.0811351376172755,
+        "timing-ms": 8.153242333333765,
+        "timing-std-ms": 0.20660694679291688
       },
       "n-particles": 100,
-      "ess-improvement": 0.9836874235867938,
-      "variance-reduction": 0.7362334745046311
+      "ess-improvement": 1.0807367531875078,
+      "variance-reduction": 0.8251127164045942
     },
     {
       "K": 10,
       "closed-form-log-ml": -34.45558197565896,
       "L2-standard": {
-        "log-ml-mean": -247.16093837073103,
-        "log-ml-std": 70.26233197881062,
-        "log-ml-var": 4936.795295100593,
-        "log-ml-abs-error-nats": 212.70535639507207,
-        "ess-mean": 1.097524773788503,
-        "timing-ms": 3.950346999999965,
-        "timing-std-ms": 0.1468571048366072
+        "log-ml-mean": -249.30691033089343,
+        "log-ml-std": 42.04987858312146,
+        "log-ml-var": 1768.1922888552567,
+        "log-ml-abs-error-nats": 214.85132835523447,
+        "ess-mean": 1.001832867213456,
+        "timing-ms": 16.600998666663752,
+        "timing-std-ms": 1.5114087541681733
       },
       "L3.5-analytical": {
-        "log-ml-mean": -242.77693731202095,
-        "log-ml-std": 57.247640928267856,
-        "log-ml-var": 3277.292391851889,
-        "log-ml-abs-error-nats": 208.321355336362,
-        "ess-mean": 1.0289153847211057,
-        "timing-ms": 3.55247233333345,
-        "timing-std-ms": 0.02105748195651841
+        "log-ml-mean": -270.53903561542404,
+        "log-ml-std": 48.83879740826998,
+        "log-ml-var": 2385.228132286039,
+        "log-ml-abs-error-nats": 236.08345363976508,
+        "ess-mean": 1.0906837038277617,
+        "timing-ms": 15.580971999998534,
+        "timing-std-ms": 0.5792613914142404
       },
       "n-particles": 30,
-      "ess-improvement": 0.9374871613780824,
-      "variance-reduction": 1.5063640056574181
+      "ess-improvement": 1.0886882827686015,
+      "variance-reduction": 0.7413095061731451
     }
   ],
   "kernel": "normal-normal conjugate",
-  "timestamp": "2026-06-13T08:59:06.786Z"
+  "timestamp": "2026-08-18T16:23:12.729Z"
 }

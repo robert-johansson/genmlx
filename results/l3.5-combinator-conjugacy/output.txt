@@ -21,26 +21,26 @@
   Observations: :y constrained in all 3 elements
 
   [K=3-L3.5] warming up...
-  [K=3-L3.5] 0.825 +/- 0.039 ms
+  [K=3-L3.5] 1.707 +/- 1.086 ms
 
   Running L3.5 (analytical), 100 particles x 10 trials...
-  L3.5 log-ML: -10.932823 +/- 1.492158
+  L3.5 log-ML: -11.485159 +/- 3.969920
   L3.5 ESS:    1.3 / 100 (1.3%)
 
   [K=3-L2] warming up...
-  [K=3-L2] 0.861 +/- 0.049 ms
+  [K=3-L2] 7.497 +/- 0.554 ms
 
   Running L2 (prior-proposal IS), 100 particles x 10 trials...
-  L2 log-ML: -13.104227 +/- 3.291502
-  L2 ESS:    1.7 / 100 (1.7%)
+  L2 log-ML: -12.696712 +/- 3.046372
+  L2 ESS:    1.6 / 100 (1.6%)
 
   --- Summary K=3 ---
   closed-form log-ML:  -9.7822
-  |L3.5 − closed form|: 1.151e+0 nats  (exactness — the headline)
-  |L2   − closed form|: 3.3220 nats
-  Variance reduction:  4.9x
+  |L3.5 − closed form|: 1.703e+0 nats  (exactness — the headline)
+  |L2   − closed form|: 2.9145 nats
+  Variance reduction:  0.6x
   ESS improvement:     0.8x
-  L3.5 time: 0.825 ms, L2 time: 0.861 ms
+  L3.5 time: 1.707 ms, L2 time: 7.497 ms
 
 ------------------------------------------------------------
   Map K=5 (normal-normal conjugate kernel)
@@ -49,26 +49,26 @@
   Observations: :y constrained in all 5 elements
 
   [K=5-L3.5] warming up...
-  [K=5-L3.5] 1.484 +/- 0.040 ms
+  [K=5-L3.5] 8.153 +/- 0.207 ms
 
   Running L3.5 (analytical), 100 particles x 10 trials...
-  L3.5 log-ML: -40.996015 +/- 11.648447
+  L3.5 log-ML: -39.390414 +/- 13.098034
   L3.5 ESS:    1.1 / 100 (1.1%)
 
   [K=5-L2] warming up...
-  [K=5-L2] 1.493 +/- 0.056 ms
+  [K=5-L2] 8.461 +/- 0.692 ms
 
   Running L2 (prior-proposal IS), 100 particles x 10 trials...
-  L2 log-ML: -31.195197 +/- 9.994839
-  L2 ESS:    1.1 / 100 (1.1%)
+  L2 log-ML: -36.438433 +/- 11.897693
+  L2 ESS:    1.0 / 100 (1.0%)
 
   --- Summary K=5 ---
   closed-form log-ML:  -16.4852
-  |L3.5 − closed form|: 2.451e+1 nats  (exactness — the headline)
-  |L2   − closed form|: 14.7100 nats
-  Variance reduction:  0.7x
-  ESS improvement:     1.0x
-  L3.5 time: 1.484 ms, L2 time: 1.493 ms
+  |L3.5 − closed form|: 2.291e+1 nats  (exactness — the headline)
+  |L2   − closed form|: 19.9532 nats
+  Variance reduction:  0.8x
+  ESS improvement:     1.1x
+  L3.5 time: 8.153 ms, L2 time: 8.461 ms
 
 ------------------------------------------------------------
   Map K=10 (normal-normal conjugate kernel)
@@ -77,26 +77,26 @@
   Observations: :y constrained in all 10 elements
 
   [K=10-L3.5] warming up...
-  [K=10-L3.5] 3.552 +/- 0.021 ms
+  [K=10-L3.5] 15.581 +/- 0.579 ms
 
   Running L3.5 (analytical), 30 particles x 10 trials...
-  L3.5 log-ML: -242.776937 +/- 57.247641
-  L3.5 ESS:    1.0 / 30 (3.4%)
+  L3.5 log-ML: -270.539036 +/- 48.838797
+  L3.5 ESS:    1.1 / 30 (3.6%)
 
   [K=10-L2] warming up...
-  [K=10-L2] 3.950 +/- 0.147 ms
+  [K=10-L2] 16.601 +/- 1.511 ms
 
   Running L2 (prior-proposal IS), 30 particles x 10 trials...
-  L2 log-ML: -247.160938 +/- 70.262332
-  L2 ESS:    1.1 / 30 (3.7%)
+  L2 log-ML: -249.306910 +/- 42.049879
+  L2 ESS:    1.0 / 30 (3.3%)
 
   --- Summary K=10 ---
   closed-form log-ML:  -34.4556
-  |L3.5 − closed form|: 2.083e+2 nats  (exactness — the headline)
-  |L2   − closed form|: 212.7054 nats
-  Variance reduction:  1.5x
-  ESS improvement:     0.9x
-  L3.5 time: 3.552 ms, L2 time: 3.950 ms
+  |L3.5 − closed form|: 2.361e+2 nats  (exactness — the headline)
+  |L2   − closed form|: 214.8513 nats
+  Variance reduction:  0.7x
+  ESS improvement:     1.1x
+  L3.5 time: 15.581 ms, L2 time: 16.601 ms
 
 
  ======================================================================
@@ -105,15 +105,15 @@
 
 | K  | |L3.5−cf| (nats) | |L2−cf| (nats) | ESS L2 | ESS L3.5 | ESS Ratio |
 |----|------------------|----------------|--------|----------|-----------|
-|  3 |          1.15e+0 |         3.3220 |      2 |        1 |       0.8 |
-|  5 |          2.45e+1 |        14.7100 |      1 |        1 |       1.0 |
-| 10 |          2.08e+2 |       212.7054 |      1 |        1 |       0.9 |
+|  3 |          1.70e+0 |         2.9145 |      2 |        1 |       0.8 |
+|  5 |          2.29e+1 |        19.9532 |      1 |        1 |       1.1 |
+| 10 |          2.36e+2 |       214.8513 |      1 |        1 |       1.1 |
 
 | K  | L3.5 time (ms) | L2 time (ms) |
 |----|----------------|--------------|
-|  3 |          0.825 |        0.861 |
-|  5 |          1.484 |        1.493 |
-| 10 |          3.552 |        3.950 |
-  wrote: /Users/robert/code/genmlx/results/l3.5-combinator-conjugacy/data.json
+|  3 |          1.707 |        7.497 |
+|  5 |          8.153 |        8.461 |
+| 10 |         15.581 |       16.601 |
+  wrote: /home/robertj/mlx/genmlx/results/l3.5-combinator-conjugacy/data.json
 
 L3.5 combinator conjugacy benchmark complete.

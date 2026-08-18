@@ -1,18 +1,18 @@
 {
   "experiment": "conjugacy",
-  "git_sha": "c9253bc",
-  "timestamp": "2026-06-13T08:57:21.485Z",
+  "git_sha": "d8149c7",
+  "timestamp": "2026-08-18T16:20:32.707Z",
   "hardware": {
-    "platform": "darwin",
-    "arch": "arm64",
-    "cpus": 10,
-    "memory": "32GB"
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 24,
+    "memory": "125GB"
   },
   "runtime": {
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "42070b5a1deacaa476acdb310d62f2e16bd33a944bc2d29922680983c0ebbb68",
-  "duration_ms": 4018,
+  "source_hash": "b3e6bc0e276135afa6ea895ab7025922e30c831fc9a1150b9181c1404d265bad",
+  "duration_ms": 13443,
   "script": "bench/conjugacy.cljs"
 }

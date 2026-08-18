@@ -19,35 +19,35 @@
 ------------------------------------------------------------
 
   [full-mh-5d] Running Gibbs MH: 500 samples, 100 burn-in...
-  [full-mh-5d] Time:       14445.1 ms
-  [full-mh-5d] Acceptance: 51.5%
-  [full-mh-5d] ESS scale:  169.1, offset: 172.1
-  [full-mh-5d] ESS mu1:    181.8, mu2: 191.2, mu3: 186.5
-  [full-mh-5d] Mean scale: 2.155 (true: 2)
-  [full-mh-5d] Mean offset:0.530 (true: 1)
+  [full-mh-5d] Time:       29397.9 ms
+  [full-mh-5d] Acceptance: 47.2%
+  [full-mh-5d] ESS scale:  168.9, offset: 170.5
+  [full-mh-5d] ESS mu1:    179.4, mu2: 181.4, mu3: 198.8
+  [full-mh-5d] Mean scale: 1.758 (true: 2)
+  [full-mh-5d] Mean offset:1.741 (true: 1)
 
  ------------------------------------------------------------
   Condition 2: Analytical Gibbs MH (2D effective, 3 params eliminated)
 ------------------------------------------------------------
 
   [analytical-mh-2d] Running Gibbs MH: 500 samples, 100 burn-in...
-  [analytical-mh-2d] Time:       14071.3 ms
-  [analytical-mh-2d] Acceptance: 44.5%
-  [analytical-mh-2d] ESS scale:  170.1, offset: 170.7
-  [analytical-mh-2d] ESS mu1:    189.4, mu2: 184.0, mu3: 185.8
-  [analytical-mh-2d] Mean scale: 1.964 (true: 2)
-  [analytical-mh-2d] Mean offset:1.221 (true: 1)
+  [analytical-mh-2d] Time:       29516.8 ms
+  [analytical-mh-2d] Acceptance: 46.0%
+  [analytical-mh-2d] ESS scale:  169.5, offset: 170.4
+  [analytical-mh-2d] ESS mu1:    197.3, mu2: 185.0, mu3: 191.1
+  [analytical-mh-2d] Mean scale: 2.114 (true: 2)
+  [analytical-mh-2d] Mean offset:0.721 (true: 1)
 
  ======================================================================
   COMPARISON
 ======================================================================
 
-  Timing:      full=14445.1 ms, analytical=14071.3 ms (speedup: 1.03x)
-  Acceptance:  full=51.5%, analytical=44.5%
-  ESS scale:   full=169.1, analytical=170.1 (1.0x)
-  ESS offset:  full=172.1, analytical=170.7 (1.0x)
-  ESS mu1:     full=181.8, analytical=189.4 (1.0x)
+  Timing:      full=29397.9 ms, analytical=29516.8 ms (speedup: 1.00x)
+  Acceptance:  full=47.2%, analytical=46.0%
+  ESS scale:   full=168.9, analytical=169.5 (1.0x)
+  ESS offset:  full=170.5, analytical=170.4 (1.0x)
+  ESS mu1:     full=179.4, analytical=197.3 (1.1x)
   Dimension:   5D -> 2D (3 conjugate params eliminated)
-  Wrote: /Users/robert/code/genmlx/results/l3.5-regenerate-analytical/data.json
+  Wrote: /home/robertj/mlx/genmlx/results/l3.5-regenerate-analytical/data.json
 
 Benchmark complete.

@@ -16,7 +16,15 @@
 (def path-mod (js/require "path"))
 (def child-process (js/require "child_process"))
 
-(def bun-path "/Users/robert/.bun/bin/bun")
+(def bun-path
+  ;; Portable bun resolution (was a hardcoded macOS path, which made every
+  ;; wrapped suite error on Linux while the wrapper still reported success):
+  ;; BUN_PATH env override, else the executable running this script (which
+  ;; IS bun under the repo-standard `bun run --bun nbb`), else PATH lookup.
+  (or (aget (.-env js/process) "BUN_PATH")
+      (let [ep (.-execPath js/process)]
+        (when (re-find #"bun" ep) ep))
+      "bun"))
 
 (def out-dir
   (or (aget (.-env js/process) "GENMLX_RESULTS_DIR")
@@ -229,4 +237,13 @@
 
   (write-json "data.json" data)
 
-  (println "\n=== Done ==="))
+  (println "\n=== Done ===")
+
+  ;; Fail loudly when any suite failed or errored. Without this, a run in
+  ;; which every wrapped suite errored (e.g. the former hardcoded bun path
+  ;; on Linux) still exited 0 and the experiment orchestrator counted it
+  ;; as succeeded -- the exact silent-success failure mode this repo's
+  ;; test-honesty contract exists to prevent.
+  (when (or (pos? (:fail totals)) (pos? (:error totals))
+            (< (:suites-passed totals) (:suites-total totals)))
+    (js/process.exit 1)))

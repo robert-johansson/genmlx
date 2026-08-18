@@ -1,7 +1,7 @@
 {
   "experiment": "conjugacy",
   "description": "L3 Auto-Conjugacy Showcase: variance reduction from analytical elimination",
-  "timestamp": "2026-06-13T08:57:21.373Z",
+  "timestamp": "2026-08-18T16:20:32.422Z",
   "hardware": {
     "platform": "macOS",
     "chip": "Apple Silicon",
@@ -24,7 +24,7 @@
         "n_residual": 0
       },
       "n_particles": 50,
-      "ess_improvement": 13.94474779209511,
+      "ess_improvement": 13.944746764519081,
       "ground_truth": {
         "distribution": "Normal",
         "mean": 1.1177644710578842,
@@ -36,13 +36,13 @@
       "n_trials": 3,
       "label": "5A-Normal-Normal",
       "l2": {
-        "log_ml_mean": -8.107790467211588,
-        "log_ml_std": 0.36682666789896273,
-        "log_ml_var": 0.1345618042818559,
-        "log_ml_abs_error_nats": 0.2645352696078689,
-        "ess_mean": 3.585579369771292,
-        "time_ms": 0.6146666666666837,
-        "time_std_ms": 0.04618623983754537
+        "log_ml_mean": -8.107790408027286,
+        "log_ml_std": 0.3668267322606435,
+        "log_ml_var": 0.13456185150102182,
+        "log_ml_abs_error_nats": 0.264535210423567,
+        "ess_mean": 3.5855796339894574,
+        "time_ms": 1.3392936666665871,
+        "time_std_ms": 0.3123332478001524
       },
       "l3": {
         "log_ml_mean": -7.843255043029785,
@@ -50,8 +50,8 @@
         "log_ml_var": 0,
         "log_ml_abs_error_nats": 1.5457393409690212e-7,
         "ess_mean": 50,
-        "time_ms": 0.8288613333332933,
-        "time_std_ms": 0.06584983520358019
+        "time_ms": 0.7594410000000001,
+        "time_std_ms": 0.07079989640532466
       },
       "conjugate_pairs": [
         {
@@ -93,7 +93,7 @@
         "n_residual": 0
       },
       "n_particles": 50,
-      "ess_improvement": 1.2659801653297316,
+      "ess_improvement": 1.2659801773179904,
       "ground_truth": {
         "distribution": "Beta",
         "alpha": 5,
@@ -105,22 +105,22 @@
       "n_trials": 3,
       "label": "5B-Beta-Bernoulli",
       "l2": {
-        "log_ml_mean": -3.82409925253949,
-        "log_ml_std": 0.031444115928883194,
-        "log_ml_var": 0.0009887324265490458,
-        "log_ml_abs_error_nats": 0.01893088140170862,
-        "ess_mean": 39.495089551404796,
-        "time_ms": 1.925903000000062,
-        "time_std_ms": 0.02389828949943741
+        "log_ml_mean": -3.824099388285653,
+        "log_ml_std": 0.0314440910970545,
+        "log_ml_var": 0.0009887308649198618,
+        "log_ml_abs_error_nats": 0.018930745655545866,
+        "ess_mean": 39.49508917740419,
+        "time_ms": 12.046388333333349,
+        "time_std_ms": 0.5949567201185691
       },
       "l3": {
-        "log_ml_mean": -3.8430299758911133,
+        "log_ml_mean": -3.8430302143096924,
         "log_ml_std": 0,
         "log_ml_var": 0,
-        "log_ml_abs_error_nats": 1.5805008546365684e-7,
+        "log_ml_abs_error_nats": 8.036849363790566e-8,
         "ess_mean": 50,
-        "time_ms": 0.8566663333333508,
-        "time_std_ms": 0.031218695878146543
+        "time_ms": 0.6932063333332886,
+        "time_std_ms": 0.005598219032233176
       },
       "conjugate_pairs": [
         {
@@ -162,7 +162,7 @@
         "n_residual": 0
       },
       "n_particles": 50,
-      "ess_improvement": 3.4149461711186744,
+      "ess_improvement": 3.4149465738707923,
       "ground_truth": {
         "distribution": "Gamma",
         "shape": 16,
@@ -174,13 +174,13 @@
       "n_trials": 3,
       "label": "5C-Gamma-Poisson",
       "l2": {
-        "log_ml_mean": -8.457855178025214,
-        "log_ml_std": 0.0548569091806804,
-        "log_ml_var": 0.0030092804848574173,
-        "log_ml_abs_error_nats": 0.15566774000250483,
-        "ess_mean": 14.641519220088002,
-        "time_ms": 1.1517920000000383,
-        "time_std_ms": 0.004900447836807922
+        "log_ml_mean": -8.457858024275362,
+        "log_ml_std": 0.054856736314054515,
+        "log_ml_var": 0.0030092615190297073,
+        "log_ml_abs_error_nats": 0.1556705862526524,
+        "ess_mean": 14.64151749329587,
+        "time_ms": 7.648252333333403,
+        "time_std_ms": 0.03816055514969287
       },
       "l3": {
         "log_ml_mean": -8.302188873291016,
@@ -188,8 +188,8 @@
         "log_ml_var": 0,
         "log_ml_abs_error_nats": 0.0000014352683059826177,
         "ess_mean": 50,
-        "time_ms": 0.8931943333332887,
-        "time_std_ms": 0.0077238621384160015
+        "time_ms": 2.712035999999898,
+        "time_std_ms": 0.2930746754787693
       },
       "conjugate_pairs": [
         {
@@ -229,7 +229,7 @@
         "n_residual": 1
       },
       "n_particles": 50,
-      "ess_improvement": 7.863134426876884,
+      "ess_improvement": 7.86313416849181,
       "ground_truth": {
         "conjugate-latents": [
           "mu-a",
@@ -244,24 +244,24 @@
       "n_trials": 3,
       "label": "5D-Mixed",
       "l2": {
-        "log_ml_mean": -9.977574637710852,
-        "log_ml_std": 1.490876247029235,
-        "log_ml_var": 2.222711983955976,
+        "log_ml_mean": -9.977574632620282,
+        "log_ml_std": 1.4908762532394495,
+        "log_ml_var": 2.222712002473299,
         "log_ml_abs_error_nats": null,
-        "ess_mean": 2.63806111692225,
-        "time_ms": 1.3137363333333572,
-        "time_std_ms": 0.01503802880487195
+        "ess_mean": 2.6380611259300135,
+        "time_ms": 8.384418666666534,
+        "time_std_ms": 0.21310410327478108
       },
       "l3": {
-        "log_ml_mean": -9.496577739512531,
-        "log_ml_std": 0.07892421184755499,
-        "log_ml_var": 0.00622903121575774,
+        "log_ml_mean": -9.496577913510436,
+        "log_ml_std": 0.07892417652480375,
+        "log_ml_var": 0.0062290256401183845,
         "log_ml_abs_error_nats": null,
-        "ess_mean": 20.74342918867663,
-        "time_ms": 1.6391806666666373,
-        "time_std_ms": 0.07318649450089205
+        "ess_mean": 20.743428577870265,
+        "time_ms": 7.4233016666664,
+        "time_std_ms": 0.08125674336541482
       },
-      "variance_reduction": 356.83108768713896,
+      "variance_reduction": 356.83141006159923,
       "conjugate_pairs": [
         {
           "prior": "mu-a",
@@ -298,7 +298,7 @@
         "n_residual": 0
       },
       "n_particles": 50,
-      "ess_improvement": 49.998582610515705,
+      "ess_improvement": 49.99858263487227,
       "ground_truth": {
         "slope-mean": 1.9993241120076828,
         "slope-std": 0.3146611860911486,
@@ -309,22 +309,22 @@
       "n_trials": 3,
       "label": "5E-LinReg",
       "l2": {
-        "log_ml_mean": -20.715903828070065,
-        "log_ml_std": 8.341735142332718,
-        "log_ml_var": 69.58454518482866,
-        "log_ml_abs_error_nats": 9.297100438829295,
-        "ess_mean": 1.000028348593306,
-        "time_ms": 0.9885139999999714,
-        "time_std_ms": 0.033475624908414825
+        "log_ml_mean": -20.715897470484858,
+        "log_ml_std": 8.341732932645431,
+        "log_ml_var": 69.58450831958136,
+        "log_ml_abs_error_nats": 9.297094081244088,
+        "ess_mean": 1.000028348106147,
+        "time_ms": 4.6819293333337555,
+        "time_std_ms": 0.03754708921234715
       },
       "l3": {
-        "log_ml_mean": -11.418802261352539,
+        "log_ml_mean": -11.418803215026855,
         "log_ml_std": 0,
         "log_ml_var": 0,
-        "log_ml_abs_error_nats": 0.000001127888230811891,
+        "log_ml_abs_error_nats": 1.7421391440564094e-7,
         "ess_mean": 50,
-        "time_ms": 6.398249666666591,
-        "time_std_ms": 0.02161863137055706
+        "time_ms": 8.475514999999481,
+        "time_std_ms": 0.6041354125383452
       },
       "conjugate_pairs": [
         {
@@ -392,17 +392,17 @@
       {
         "label": "5A-Normal-Normal",
         "l3": 1.5457393409690212e-7,
-        "l2": 0.2645352696078689
+        "l2": 0.264535210423567
       },
       {
         "label": "5B-Beta-Bernoulli",
-        "l3": 1.5805008546365684e-7,
-        "l2": 0.01893088140170862
+        "l3": 8.036849363790566e-8,
+        "l2": 0.018930745655545866
       },
       {
         "label": "5C-Gamma-Poisson",
         "l3": 0.0000014352683059826177,
-        "l2": 0.15566774000250483
+        "l2": 0.1556705862526524
       },
       {
         "label": "5D-Mixed",
@@ -411,39 +411,39 @@
       },
       {
         "label": "5E-LinReg",
-        "l3": 0.000001127888230811891,
-        "l2": 9.297100438829295
+        "l3": 1.7421391440564094e-7,
+        "l2": 9.297094081244088
       }
     ],
     "max_l3_abs_error_nats": 0.0000014352683059826177,
     "variance_reductions": [
       {
         "label": "5D-Mixed",
-        "ratio": 356.83108768713896
+        "ratio": 356.83141006159923
       }
     ],
     "ess_improvements": [
       {
         "label": "5A-Normal-Normal",
-        "ratio": 13.94474779209511
+        "ratio": 13.944746764519081
       },
       {
         "label": "5B-Beta-Bernoulli",
-        "ratio": 1.2659801653297316
+        "ratio": 1.2659801773179904
       },
       {
         "label": "5C-Gamma-Poisson",
-        "ratio": 3.4149461711186744
+        "ratio": 3.4149465738707923
       },
       {
         "label": "5D-Mixed",
-        "ratio": 7.863134426876884
+        "ratio": 7.86313416849181
       },
       {
         "label": "5E-LinReg",
-        "ratio": 49.998582610515705
+        "ratio": 49.99858263487227
       }
     ],
-    "mean_ess_improvement": 15.29747823318722
+    "mean_ess_improvement": 15.29747806381439
   }
 }
