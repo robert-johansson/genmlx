@@ -26,6 +26,13 @@
         (when (re-find #"bun" ep) ep))
       "bun"))
 
+(def suite-timeout-ms
+  ;; Per-suite budget. 120 s killed the Gen.clj compatibility suite on the
+  ;; CUDA host (2026-08-19) — a green suite reported as an error, and the
+  ;; ~165 ported assertions the paper cites left unconfirmed. Same class as
+  ;; the gfi_law_verification budget. Overridable per host.
+  (js/parseInt (or (aget (.-env js/process) "GENMLX_SUITE_TIMEOUT_MS") "900000")))
+
 (def out-dir
   (or (aget (.-env js/process) "GENMLX_RESULTS_DIR")
       (.resolve path-mod (js/process.cwd) "results/verification-suite")))
@@ -52,22 +59,22 @@
     :expected 68}
    {:name "L1-M1 schema"
     :file "test/genmlx/schema_test.cljs"
-    :expected 174}
+    :expected 266}
    {:name "L1-M2 compiled simulate"
     :file "test/genmlx/compiled_simulate_test.cljs"
-    :expected 82}
+    :expected 85}
    {:name "L1-M3 partial compile"
     :file "test/genmlx/partial_compile_test.cljs"
     :expected 92}
    {:name "L1-M5 combinator compile"
     :file "test/genmlx/combinator_compile_test.cljs"
-    :expected 90}
+    :expected 92}
    {:name "L4 certification"
     :file "test/genmlx/l4_certification_test.cljs"
     :expected 41}
    {:name "Gen.clj compat"
     :file "test/genmlx/gen_clj_compat_test.cljs"
-    :expected 165}
+    :expected 356}
    {:name "GenJAX compat"
     :file "test/genmlx/genjax_compat_test.cljs"
     :expected 73}])
@@ -125,7 +132,7 @@
       (let [cmd (str bun-path " run --bun nbb " file)
             stdout (.toString
                      (.execSync child-process cmd
-                                #js {:timeout 120000
+                                #js {:timeout suite-timeout-ms
                                      :maxBuffer (* 10 1024 1024)
                                      :encoding "utf8"
                                      :stdio #js ["pipe" "pipe" "pipe"]}))
