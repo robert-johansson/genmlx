@@ -1,18 +1,18 @@
 {
   "experiment": "vectorization",
-  "git_sha": "c9253bc",
-  "timestamp": "2026-06-13T08:42:08.260Z",
+  "git_sha": "393686e",
+  "timestamp": "2026-08-18T17:32:49.219Z",
   "hardware": {
-    "platform": "darwin",
-    "arch": "arm64",
-    "cpus": 10,
-    "memory": "32GB"
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 24,
+    "memory": "125GB"
   },
   "runtime": {
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "04f35d41f4294da6569f043feeff36394160ca39560d5c355382e1f08d359946",
-  "duration_ms": 19855,
+  "source_hash": "66dcdaeda076b4b4a064f22302d489d0ccab011b201b072ce3615d1268031fae",
+  "duration_ms": 96579,
   "script": "bench/vectorization.cljs"
 }

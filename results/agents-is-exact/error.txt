@@ -1,0 +1,4 @@
+Error running agents-is-exact
+spawnSync /bin/sh ETIMEDOUT
+$ bunx nbb@1.4.208 /home/robertj/mlx/genmlx/bench/agents_is_exact.cljs
+Saved lockfile

@@ -318,7 +318,19 @@
   (doseq [{:keys [level desc timing]} all-results]
     (println (str "| " level " | " desc " | "
                   (.toFixed (:mean-ms timing) 3) " ± " (.toFixed (:std-ms timing) 3)
-                  " | " (.toFixed (/ l0-time (:mean-ms timing)) 1) "x |"))))
+                  " | " (let [r (/ l0-time (:mean-ms timing))]
+                          ;; One decimal rendered "0.0x" for every ratio below
+                          ;; 0.05 — i.e. exactly the rows where a path is much
+                          ;; SLOWER than the reference, which is the
+                          ;; interesting case. Scale the precision to the
+                          ;; magnitude so those rows stay readable
+                          ;; (2026-08-19, paper battery).
+                          (cond
+                            (>= r 10)   (.toFixed r 0)
+                            (>= r 0.1)  (.toFixed r 1)
+                            (>= r 0.01) (.toFixed r 2)
+                            :else       (.toFixed r 3)))
+                  "x |"))))
 
 ;; Write data.json
 (let [l0-time (:mean-ms l0-timing)]

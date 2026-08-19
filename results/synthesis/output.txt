@@ -1,8 +1,8 @@
 ============================================================
  synthesis-Occam: deterministic scoring
 ============================================================
-Fixture [qwen3-0.6b]: /home/robert/code/mlx/genmlx/bench/fixtures/synthesis_occam_programs.edn
-Fixture [coder-next]: /home/robert/code/mlx/genmlx/bench/fixtures/synthesis_occam_programs_coder_next.edn
+Fixture [qwen3-0.6b]: /home/robertj/mlx/genmlx/bench/fixtures/synthesis_occam_programs.edn
+Fixture [coder-next]: /home/robertj/mlx/genmlx/bench/fixtures/synthesis_occam_programs_coder_next.edn
 
 
 ===== tier qwen3-0.6b (50 frozen programs) =====
@@ -111,7 +111,7 @@ Fixture [coder-next]: /home/robert/code/mlx/genmlx/bench/fixtures/synthesis_occa
   8 |     1      | -21.039    | -21.039      | -7.352
   Bayesian evidence selects m=1 (simplest adequate); max-likelihood selects m=8 (most complex).
   GenMLX-exact vs closed-form max |diff| = 0.000001
-  Wrote: /home/robert/code/mlx/genmlx/results/synthesis/data.json
+  Wrote: /home/robertj/mlx/genmlx/results/synthesis/data.json
 
 ============================================================
  [qwen3-0.6b] fire-rate=52.1%  (25/48)    |IS-analytic| median=0.0168

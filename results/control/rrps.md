@@ -1,45 +1,45 @@
 # RRPS — resource-rational program-synthesis sweep + title resolution (genmlx-er2w)
 
-Seeds=50 (25 easy / 25 hard, paired). Bootstrap B=2000, 95% CIs. Net-utility = held-out-predictive-LL(committed) − λ·compute, compute = :llm-tokens + :sci-evals + :particles. Headline adaptive policy = the myopic VOC (meta-greedy, hysteresis 1; the short 3-candidate stream makes hysteresis>1 over-explore — reported as `controller`).
+Seeds=16 (8 easy / 8 hard, paired). Bootstrap B=2000, 95% CIs. Net-utility = held-out-predictive-LL(committed) − λ·compute, compute = :llm-tokens + :sci-evals + :particles. Headline adaptive policy = the myopic VOC (meta-greedy, hysteresis 1; the short 3-candidate stream makes hysteresis>1 over-explore — reported as `controller`).
 
 ## Headline — adaptive synthesis vs best-tuned fixed budget
 
 λ | meta-greedy | controller(+hyst) | best fixed | meta−best-fixed (95% CI) | beats all fixed? | **win?**
 ---|---|---|---|---|---|---
-0 | -11.329 | -10.577 | n3/d64=-10.599 | -0.730 [-1.481, -0.107] | no | no
-0.002 | -12.439 | -11.502 | n3/d64=-11.453 | -0.986 [-1.980, -0.203] | no | no
-0.004 | -13.101 | -12.433 | n3/d64=-12.307 | -0.794 [-1.760, -0.014] | no | no
-0.006 | -13.871 | -13.364 | n3/d64=-13.161 | -0.710 [-1.707, 0.127] | no | no
-0.008 | -14.488 | -14.295 | n3/d64=-14.015 | -0.473 [-1.489, 0.348] | no | no
-0.012 | -15.700 | -16.156 | n3/d64=-15.723 | 0.023 [-0.976, 0.919] | yes | no
-0.02 | -18.248 | -19.879 | n2/d512=-18.426 | 0.178 [-2.119, 4.044] | yes | no
+0 | -11.967 | -10.143 | n3/d64=-10.061 | -1.907 [-4.536, 0.183] | no | no
+0.002 | -13.112 | -10.963 | n3/d64=-10.915 | -2.197 [-4.709, 0.001] | no | no
+0.004 | -13.689 | -11.865 | n3/d64=-11.769 | -1.920 [-4.588, 0.288] | no | no
+0.006 | -14.265 | -12.767 | n3/d64=-12.623 | -1.642 [-4.191, 0.512] | no | no
+0.008 | -14.842 | -13.669 | n3/d64=-13.477 | -1.365 [-3.807, 0.682] | no | no
+0.012 | -15.995 | -15.473 | n3/d64=-15.185 | -0.810 [-3.264, 1.353] | no | no
+0.02 | -18.620 | -19.081 | n1/d0=-17.147 | -1.473 [-3.184, 0.362] | no | no
 
 ## Baselines + ablations (meta-greedy − baseline, 95% CI; >0 ⇒ controller better)
 
 λ | vs meta(+hyst) | vs adaptivity-ablation | vs threshold-stopper | vs LLM-only-no-scoring
 ---|---|---|---|---
-0 | 0.751 [0.151, 1.501] | 2.257 [-0.256, 6.521] | -0.042 [-0.810, 0.793] | 5.719 [2.831, 10.231]
-0.002 | 0.936 [0.190, 1.859] | 1.631 [-0.707, 5.601] | -0.534 [-1.082, -0.108] | 4.851 [2.006, 9.051]
-0.004 | 0.668 [-0.173, 1.654] | 1.453 [-0.868, 5.642] | -0.580 [-1.131, -0.129] | 4.431 [1.592, 8.587]
-0.006 | 0.507 [-0.381, 1.569] | 1.167 [-1.090, 5.222] | -0.732 [-1.351, -0.216] | 3.903 [1.164, 7.893]
-0.008 | 0.193 [-0.712, 1.176] | 1.034 [-1.239, 5.055] | -0.732 [-1.365, -0.205] | 3.528 [0.798, 7.617]
-0.012 | -0.456 [-1.431, 0.631] | 2.800 [0.144, 6.962] | -0.710 [-1.359, -0.163] | 2.800 [0.227, 7.173]
-0.02 | -1.631 [-2.702, -0.450] | 1.219 [-1.344, 5.055] | -0.789 [-1.464, -0.254] | 1.219 [-1.274, 5.431]
+0 | 1.825 [-0.265, 4.536] | 0.491 [-1.168, 2.229] | 0.141 [-1.469, 1.766] | 2.760 [0.568, 5.182]
+0.002 | 2.149 [-0.016, 4.744] | 1.857 [-0.058, 4.252] | -0.427 [-1.591, 0.225] | 1.857 [-0.058, 4.077]
+0.004 | 1.824 [-0.231, 4.288] | 1.522 [-0.347, 3.817] | -0.427 [-1.548, 0.225] | 1.522 [-0.415, 3.537]
+0.006 | 1.498 [-0.667, 4.056] | 1.188 [-0.635, 3.328] | -0.427 [-1.548, 0.206] | 1.188 [-0.635, 3.315]
+0.008 | 1.173 [-0.919, 3.716] | 0.853 [-0.923, 2.924] | -0.427 [-1.548, 0.225] | 0.853 [-0.923, 2.994]
+0.012 | 0.522 [-1.664, 3.178] | 0.184 [-1.452, 2.133] | -0.427 [-1.548, 0.225] | 0.184 [-1.476, 2.148]
+0.02 | -0.461 [-2.868, 2.223] | -1.473 [-3.167, 0.362] | -0.746 [-2.103, 0.164] | -1.473 [-3.291, 0.362]
 
 ## Recovery study (selected == true generating structure; full reveal)
 
 type | n | recovery rate (95% CI)
 ---|---|---
-EASY | 25 | 0.880 [0.760, 1.000] (rate 0.880)
-HARD | 25 | 0.760 [0.600, 0.920] (rate 0.760)
-overall | 50 | 0.820 [0.700, 0.920] (rate 0.820)
+EASY | 8 | 0.750 [0.375, 1.000] (rate 0.750)
+HARD | 8 | 1.000 [1.000, 1.000] (rate 1.000)
+overall | 16 | 0.875 [0.688, 1.000] (rate 0.875)
 
 ## Adaptive spending at λ=0 (why it wins)
 
 instance type | controller proposals | controller compute | fixed proposals | fixed compute
 ---|---|---|---|---
-EASY | 1.80 | 354 | 3 | 427
-HARD | 2.40 | 403 | 3 | 427
+EASY | 1.88 | 359 | 3 | 427
+HARD | 2.13 | 358 | 3 | 427
 The controller spends LESS than the best-tuned fixed budget on easy instances and matches it on hard ones; the fixed budget cannot adapt and pays the same on both. That per-instance reallocation is the source of the net-utility win.
 
 ## Honest caveats (load-bearing)

@@ -102,11 +102,19 @@
 ;; ---------------------------------------------------------------------------
 
 (defn strip-compiled-paths
-  "Remove compiled execution paths from schema, keeping conjugacy info.
-   Forces the Map combinator to use the handler fallback, which then
-   lets the kernel's dispatcher check analytical before compiled."
+  "Remove compiled execution paths from schema, KEEPING conjugacy info, so
+   the Map combinator falls back to the handler and the kernel's dispatcher
+   then reaches the analytical handler.
+
+   Was `gfi/strip-compiled`, which is documented and tested to remove ALL
+   alternate paths INCLUDING analytical (genmlx-pkmx). With it, this bench's
+   'L3.5' condition had no analytical path at all: it was identical to the
+   L2 condition, and the benchmark printed 'exactness — the headline' over
+   log-ML errors of up to 236 nats. Fixed 2026-08-19 by adding
+   dyn/strip-compiled-path, the compiled-only mirror of
+   dyn/strip-analytical-path."
   [gf]
-  (gfi/strip-compiled gf))
+  (dyn/strip-compiled-path gf))
 
 (defn strip-analytical
   "Remove conjugacy and auto-handler info from schema."

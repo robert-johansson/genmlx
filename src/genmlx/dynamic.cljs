@@ -1116,17 +1116,22 @@
    :auto-update-transition :auto-update-handlers :analytical-nonconj-deps
    :analytical-structures])
 
+(def compiled-path-schema-keys
+  "The L1 keys only: full-compile (M2), cone/fused regenerate, and prefix
+   (M3). Separated from the analytical keys so callers can strip compiled
+   paths while KEEPING analytical elimination — see strip-compiled-path."
+  [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
+   :compiled-project :compiled-regenerate :cone-regenerate :vcone-regenerate :fused-vmh
+   :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
+   :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project])
+
 (def alternate-path-schema-keys
   "Every schema key the dispatcher stack consults for a non-handler execution
    path: L1-M2 full-compile keys, L1-M3 prefix keys, and the L3 analytical
    keys. strip-alternate-paths must remove ALL of them — leaving any behind
    lets a 'handler ground truth' comparison silently exercise a compiled or
    analytical path (genmlx-pkmx)."
-  (into [:compiled-simulate :compiled-generate :compiled-update :compiled-assess
-         :compiled-project :compiled-regenerate :cone-regenerate :vcone-regenerate :fused-vmh
-         :compiled-prefix :compiled-prefix-generate :compiled-prefix-update
-         :compiled-prefix-regenerate :compiled-prefix-assess :compiled-prefix-project]
-        analytical-path-schema-keys))
+  (into compiled-path-schema-keys analytical-path-schema-keys))
 
 (defn strip-alternate-paths
   "Return a copy of gf with all alternate execution paths removed from its
@@ -1139,6 +1144,26 @@
     (with-meta
       (->DynamicGF (:body-fn gf) (:source gf)
                    (apply dissoc schema alternate-path-schema-keys))
+      (meta gf))
+    gf))
+
+(defn strip-compiled-path
+  "Return a copy of gf with ONLY the L1 compiled paths removed, KEEPING the
+   L3 analytical elimination. The mirror of strip-analytical-path, and the
+   strip needed to exercise analytical elimination underneath a combinator:
+   Map's generate calls p/generate on the kernel, and with the kernel's
+   compiled path gone the dispatcher reaches the analytical handler.
+
+   Added 2026-08-19. Its absence was a live trap: bench/l3_5_combinator_
+   conjugacy.cljs wanted exactly this, reached for strip-compiled (which
+   removes analytical too, as documented and tested), and so ran its
+   'analytical' condition with no analytical path at all — reporting
+   'exactness' over numbers identical to plain sampling."
+  [gf]
+  (if-let [schema (:schema gf)]
+    (with-meta
+      (->DynamicGF (:body-fn gf) (:source gf)
+                   (apply dissoc schema compiled-path-schema-keys))
       (meta gf))
     gf))
 

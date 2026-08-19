@@ -141,9 +141,20 @@
                       (when (pos? (:error parsed))
                         (str ", " (:error parsed) " errors"))
                       " (" (.toFixed duration-ms 0) "ms)"
-                      (if (= (:total-assertions parsed) expected)
-                        " [OK]"
-                        (str " [EXPECTED " expected "]"))))
+                      ;; Direction matters: MORE assertions than the recorded
+                      ;; expectation means the suite grew (a notice), FEWER
+                      ;; means assertions went missing (a failure). Treating
+                      ;; both as failure made a fully green run report "4/8
+                      ;; passed" while 717/717 assertions passed (2026-08-19).
+                      (cond
+                        (= (:total-assertions parsed) expected) " [OK]"
+                        (> (:total-assertions parsed) expected)
+                        (str " [OK: +" (- (:total-assertions parsed) expected)
+                             " new assertions since expectation " expected
+                             " — refresh it]")
+                        :else
+                        (str " [MISSING " (- expected (:total-assertions parsed))
+                             " assertions vs expected " expected "]"))))
         {:name name
          :file file
          :pass (:pass parsed)
@@ -155,7 +166,7 @@
          :pass-rate pass-rate
          :status (if (and (zero? (:fail parsed))
                           (zero? (:error parsed))
-                          (= (:total-assertions parsed) expected))
+                          (>= (:total-assertions parsed) expected))
                    "pass"
                    "degraded")})
       (catch :default e

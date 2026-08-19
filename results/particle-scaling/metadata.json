@@ -1,18 +1,18 @@
 {
   "experiment": "particle-scaling",
-  "git_sha": "c9253bc",
-  "timestamp": "2026-06-13T08:42:08.966Z",
+  "git_sha": "393686e",
+  "timestamp": "2026-08-18T17:32:50.420Z",
   "hardware": {
-    "platform": "darwin",
-    "arch": "arm64",
-    "cpus": 10,
-    "memory": "32GB"
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 24,
+    "memory": "125GB"
   },
   "runtime": {
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "efa3f20a9545f98556407fffaed50da0c70a3353ee658d16ced4ae4673480a1c",
-  "duration_ms": 695,
+  "source_hash": "1bda8f8388bbb66ac72bfe2f96120447b30963077d3ef858f5855b8c0f5ff2e1",
+  "duration_ms": 1197,
   "script": "bench/particle_scaling.cljs"
 }

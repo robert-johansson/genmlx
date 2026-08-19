@@ -1,18 +1,18 @@
 {
   "experiment": "agents-identifiability",
-  "git_sha": "c9253bc",
-  "timestamp": "2026-06-13T09:02:25.577Z",
+  "git_sha": "65412d4",
+  "timestamp": "2026-08-19T00:46:35.204Z",
   "hardware": {
-    "platform": "darwin",
-    "arch": "arm64",
-    "cpus": 10,
-    "memory": "32GB"
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 24,
+    "memory": "125GB"
   },
   "runtime": {
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "de10e96f2b5548e4b2a3c366d4c32fba8132696d840914106f0f27ce8db730ff",
-  "duration_ms": 1827,
+  "source_hash": "0a4f40db49dc0c98540ab9aba88749101946fc758db7db77dc239df383cf250c",
+  "duration_ms": 2446,
   "script": "bench/agents_identifiability.cljs"
 }

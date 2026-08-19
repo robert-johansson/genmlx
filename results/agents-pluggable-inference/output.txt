@@ -1,0 +1,26 @@
+========================================================================
+  Agents axis: pluggable inference on the identical goal-inference GF
+========================================================================
+
+  exact posterior (ground truth): {:a 0.7424431479290784, :b 0.21352488156594435, :c 0.04403197050497723}
+  N grid: [10 30 100 300 1000]   alpha = 2 (finite)
+
+  -- reference posteriors @ N=2000 --
+     EXACT      : {:a 0.7424431479290784, :b 0.21352488156594435, :c 0.04403197050497723}
+     IMPORTANCE : {:a 0.7431195227731854, :b 0.21340040825858486, :c 0.043480068968229785}  (ESS 1117.1, TV 6.76e-4)
+     MCMC (MH)  : {:a 0.741, :b 0.211, :c 0.048}  (TV 3.97e-3)
+
+  -- convergence sweep (TV vs N) --
+     N=   10   IS TV=1.787e-1 (ESS 55%)   MH TV=1.813e-1
+     N=   30   IS TV=9.935e-2 (ESS 57%)   MH TV=1.665e-1
+     N=  100   IS TV=3.677e-2 (ESS 56%)   MH TV=5.879e-2
+     N=  300   IS TV=1.437e-2 (ESS 55%)   MH TV=4.174e-2
+     N= 1000   IS TV=1.046e-2 (ESS 56%)   MH TV=1.961e-2
+
+  IS log-log slope: -0.660   MH log-log slope: -0.508   (MC rate expectation: -0.5)
+
+  -- gradient/amortized recovery (continuous utility latent) --
+     planted=[5 0 0]  recovered=[0.86 -0.641 -0.935]  loss 2.922 -> 2.872
+
+  Total: 210.3s
+  Wrote: /home/robertj/mlx/genmlx/results/agents-pluggable-inference/data.json

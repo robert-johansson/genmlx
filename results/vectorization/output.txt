@@ -4,34 +4,34 @@
 --- Benchmark 1: dist-sample vs dist-sample-n (gaussian, N=1000) ---
 
   [sequential-sample] warming up...
-  [sequential-sample] 247.906 +/- 5.396 ms
+  [sequential-sample] 1101.421 +/- 122.483 ms
 
   [batched-sample-n] warming up...
-  [batched-sample-n] 0.273 +/- 0.005 ms
+  [batched-sample-n] 0.951 +/- 0.179 ms
 
-  Speedup (dist-sample-n): 908.0x
+  Speedup (dist-sample-n): 1157.7x
 
 --- Benchmark 2: Sequential IS vs Vectorized IS (N=1000) ---
 
   [sequential-IS] warming up...
-  [sequential-IS] 1648.006 +/- 6.552 ms
+  [sequential-IS] 8155.497 +/- 323.667 ms
 
   [vectorized-IS] warming up...
-  [vectorized-IS] 0.742 +/- 0.015 ms
+  [vectorized-IS] 3.757 +/- 0.690 ms
 
-  Speedup (vectorized IS): 2222.3x
-  Sequential log-ml: -11.26
-  Vectorized log-ml: -10.69
+  Speedup (vectorized IS): 2170.9x
+  Sequential log-ml: -11.36
+  Vectorized log-ml: -13.00
 
 --- Benchmark 3: Sequential SMC init vs batched SMC init (N=100) ---
 
   [sequential-SMC-init] warming up...
-  [sequential-SMC-init] 100.145 +/- 3.805 ms
+  [sequential-SMC-init] 877.934 +/- 151.273 ms
 
   [batched-SMC-init] warming up...
-  [batched-SMC-init] 0.828 +/- 0.021 ms
+  [batched-SMC-init] 5.947 +/- 0.691 ms
 
-  Speedup (batched SMC init): 120.9x
+  Speedup (batched SMC init): 147.6x
 
 
 ========================================
@@ -40,9 +40,9 @@
 
 | Benchmark | Sequential (ms) | Batched (ms) | Speedup |
 |-----------|-----------------|--------------|---------|
-| dist-sample-n (N=1000) | 247.9 +/- 5.4 | 0.3 +/- 0.0 | 908.0x |
-| Vectorized IS (N=1000) | 1648.0 +/- 6.6 | 0.7 +/- 0.0 | 2222.3x |
-| Batched SMC init (N=1000) | 100.1 +/- 3.8 | 0.8 +/- 0.0 | 120.9x |
-  wrote: /Users/robert/code/genmlx/results/vectorization/data.json
+| dist-sample-n (N=1000) | 1101.4 +/- 122.5 | 1.0 +/- 0.2 | 1157.7x |
+| Vectorized IS (N=1000) | 8155.5 +/- 323.7 | 3.8 +/- 0.7 | 2170.9x |
+| Batched SMC init (N=1000) | 877.9 +/- 151.3 | 5.9 +/- 0.7 | 147.6x |
+  wrote: /home/robertj/mlx/genmlx/results/vectorization/data.json
 
 Vectorization benchmark complete.

@@ -1,0 +1,19 @@
+  precomputing 28x28 log-policy table ...
+  ... table ready in 1.81s
+
+=== Continuous (alpha, u) bound recovery + SBC (genmlx-6l31) ===
+
+-- 1. recovery to likelihood-equivalence --
+     plant (a*u)=12.000  recovered (a*u)=11.925  product rel-err=0.6%
+     loss/obs plant=1.1899 recovered=1.1886  gap/obs=-0.00125  PASS
+
+-- 2. (alpha, u) posterior heatmap --
+     n-obs=359  MAP alpha=12.00 u=0.49 (a*u=5.86)  ridge corr(log a, log u)=-0.980  PASS
+
+-- 3. SBC over the bounds --
+  SBC: 150 sims, L=99 posterior draws, 5 traj/sim ...
+     alpha ranks chi2=6.67 (df 9) p=0.672
+     u     ranks chi2=3.07 (df 9) p=0.962  PASS
+  Wrote: /home/robertj/mlx/genmlx/results/agents-bounds-recovery/data.json
+
+  Total: 6.6s   ALL PASS

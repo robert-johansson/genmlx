@@ -8,28 +8,28 @@ Task: optimize slope + intercept via Adam (200 iterations, lr=0.01)
 --- Handler loop baseline (manual Adam, finite-diff gradient) ---
 
   [Handler-Adam-200] warming up...
-  [Handler-Adam-200] 837.951 +/- 10.879 ms
+  [Handler-Adam-200] 964.187 +/- 24.425 ms
   Handler final params: [1.392967939376831 1.358544111251831]
   Handler final loss: 15.2525
 
 --- Compiled Adam (co/learn, tensor-native fused gradient + update) ---
 
   [Compiled-Adam-200] warming up...
-  [Compiled-Adam-200] 141.594 +/- 0.376 ms
-  Compiled final params: [1.9993242025375366 0.4411452114582062]
+  [Compiled-Adam-200] 62.497 +/- 2.027 ms
+  Compiled final params: [1.9993242025375366 0.44114553928375244]
   Compiled compilation level: :tensor-native
-  Compiled loss history (last 5): [11.29470443725586 11.29470443725586 11.294703483581543 11.294703483581543 11.294703483581543]
+  Compiled loss history (last 5): [11.294703483581543 11.294703483581543 11.294703483581543 11.294703483581543 11.29470443725586]
 
-  >>> SPEEDUP: Compiled Adam is 5.9x faster than handler loop <<<
+  >>> SPEEDUP: Compiled Adam is 15.4x faster than handler loop <<<
 
 
 ========================================
     COMPILED OPTIMIZER RESULTS
 ========================================
 
-  Handler Adam (200 iter):  837.95 +/- 10.88 ms
-  Compiled Adam (200 iter): 141.59 +/- 0.38 ms
-  Speedup: 5.9x
-  wrote: /Users/robert/code/genmlx/results/compiled-optimizer/data.json
+  Handler Adam (200 iter):  964.19 +/- 24.43 ms
+  Compiled Adam (200 iter): 62.50 +/- 2.03 ms
+  Speedup: 15.4x
+  wrote: /home/robertj/mlx/genmlx/results/compiled-optimizer/data.json
 
 Compiled optimizer benchmark complete.

@@ -55,8 +55,8 @@
   },
   "hardware": {
     "platform": "linux",
-    "arch": "arm64",
-    "cpus": 14,
+    "arch": "x64",
+    "cpus": 24,
     "gpu": "CUDA"
   },
   "experiment": "synthesis",
@@ -2126,5 +2126,5 @@
       ]
     }
   },
-  "timestamp": "2026-07-11T14:54:46.412Z"
+  "timestamp": "2026-08-19T00:54:54.111Z"
 }

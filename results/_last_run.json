@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-08-18T16:42:03.196Z",
-  "total_ms": 300024,
+  "timestamp": "2026-08-19T00:54:54.291Z",
+  "total_ms": 18020,
   "experiments": [
     {
-      "name": "gfi-law-verification",
-      "success?": false,
-      "duration-ms": 300023
+      "name": "synthesis",
+      "success?": true,
+      "duration-ms": 18012
     }
   ]
 }

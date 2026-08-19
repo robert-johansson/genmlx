@@ -5,34 +5,34 @@ True params: slope=2, intercept=0.5
 Analytic posterior: slope=1.9937 +/- 0.0388, intercept=0.5903 +/- 0.4305
 
 --- 1. Compiled MH (200 samples, burn 100) ---
-  slope mean=1.9721, error=0.0217
+  slope mean=2.0182, error=0.0244
 
   [compiled-MH-200] warming up...
-  [compiled-MH-200] 1779.406 +/- 8.274 ms
+  [compiled-MH-200] 373.388 +/- 5.189 ms
 
 --- 2. HMC (100 samples, burn 50, L=10) ---
-  slope mean=2.0021, error=0.0084
+  slope mean=1.9974, error=0.0036
 
   [HMC-100] warming up...
-  [HMC-100] 7626.916 +/- 32.540 ms
+  [HMC-100] 760.333 +/- 3.586 ms
 
 --- 3. NUTS (100 samples, burn 50) ---
-  slope mean=1.9904, error=0.0033
+  slope mean=1.9951, error=0.0013
 
   [NUTS-100] warming up...
-  [NUTS-100] 36161.420 +/- 12920.196 ms
+  [NUTS-100] 5619.497 +/- 4281.209 ms
 
 --- 4. Vectorized IS (1000 particles) ---
-  slope mean=1.9815, error=0.0122
+  slope mean=1.7814, error=0.2124
 
   [VIS-1000] warming up...
-  [VIS-1000] 1.776 +/- 0.082 ms
+  [VIS-1000] 1.724 +/- 0.145 ms
 
 --- 5. Vectorized IS (10000 particles) ---
-  slope mean=2.0016, error=0.0078
+  slope mean=1.9947, error=0.0009
 
   [VIS-10000] warming up...
-  [VIS-10000] 2.456 +/- 0.110 ms
+  [VIS-10000] 1.530 +/- 0.023 ms
 
 
 ========================================
@@ -43,11 +43,11 @@ Analytic posterior slope: 1.9937 +/- 0.0388
 
 | Algorithm | Config | Time (ms) | Slope Mean | Slope Error |
 |-----------|--------|-----------|------------|-------------|
-| Compiled MH | 200 samples, burn 100 | 1779.4 +/- 8.3 | 1.9721 | 0.0217 |
-| HMC | 100 samples, burn 50, L=10 | 7626.9 +/- 32.5 | 2.0021 | 0.0084 |
-| NUTS | 100 samples, burn 50 | 36161.4 +/- 12920.2 | 1.9904 | 0.0033 |
-| VIS-1K | 1000 particles | 1.8 +/- 0.1 | 1.9815 | 0.0122 |
-| VIS-10K | 10000 particles | 2.5 +/- 0.1 | 2.0016 | 0.0078 |
-  wrote: /Users/robert/code/genmlx/results/linreg/data.json
+| Compiled MH | 200 samples, burn 100 | 373.4 +/- 5.2 | 2.0182 | 0.0244 |
+| HMC | 100 samples, burn 50, L=10 | 760.3 +/- 3.6 | 1.9974 | 0.0036 |
+| NUTS | 100 samples, burn 50 | 5619.5 +/- 4281.2 | 1.9951 | 0.0013 |
+| VIS-1K | 1000 particles | 1.7 +/- 0.1 | 1.7814 | 0.2124 |
+| VIS-10K | 10000 particles | 1.5 +/- 0.0 | 1.9947 | 0.0009 |
+  wrote: /home/robertj/mlx/genmlx/results/linreg/data.json
 
 Linear regression inference comparison complete.

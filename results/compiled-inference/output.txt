@@ -5,32 +5,32 @@ Model: 5-obs linear regression
 --- A: MH Chain (200 steps) ---
 
   [handler-MH-200] warming up...
-  [handler-MH-200] 872.409 +/- 10.240 ms
+  [handler-MH-200] 316.114 +/- 24.672 ms
 
   [compiled-MH-200] warming up...
-  [compiled-MH-200] 104.198 +/- 0.238 ms
+  [compiled-MH-200] 69.369 +/- 0.563 ms
 
-  MH speedup (handler/compiled): 8.37x
+  MH speedup (handler/compiled): 4.56x
 
 --- B: Score Function ---
 
   [score-uncompiled] warming up...
-  [score-uncompiled] 0.617 +/- 0.139 ms
+  [score-uncompiled] 0.450 +/- 0.015 ms
 
   [score-compiled] warming up...
-  [score-compiled] 0.771 +/- 0.008 ms
+  [score-compiled] 0.784 +/- 0.048 ms
 
-  Score speedup (uncompiled/compiled): 0.80x
+  Score speedup (uncompiled/compiled): 0.57x
 
 --- C: Vectorized Multi-Chain MH (4 chains, 200 steps) ---
 
   [serial-compiled-MH-50] warming up...
-  [serial-compiled-MH-50] 106.178 +/- 1.369 ms
+  [serial-compiled-MH-50] 69.704 +/- 5.993 ms
 
   [vectorized-4chain-MH-50] warming up...
-  [vectorized-4chain-MH-50] 139.326 +/- 7.399 ms
+  [vectorized-4chain-MH-50] 207.690 +/- 4.525 ms
 
-  Vectorized speedup (serial/4-chain): 0.76x
+  Vectorized speedup (serial/4-chain): 0.34x
 
 
 ========================================
@@ -39,12 +39,12 @@ Model: 5-obs linear regression
 
 | Comparison | Variant | Time (ms) | Speedup |
 |------------|---------|-----------|---------|
-| MH chain | handler | 872.409 +/- 10.240 | - |
-| MH chain | compiled | 104.198 +/- 0.238 | 8.37x |
-| Score fn | uncompiled | 0.617 +/- 0.139 | - |
-| Score fn | compiled | 0.771 +/- 0.008 | 0.80x |
-| Vec MH | serial-compiled | 106.178 +/- 1.369 | - |
-| Vec MH | vectorized-4chain | 139.326 +/- 7.399 | 0.76x |
-  wrote: /Users/robert/code/genmlx/results/compiled-inference/data.json
+| MH chain | handler | 316.114 +/- 24.672 | - |
+| MH chain | compiled | 69.369 +/- 0.563 | 4.56x |
+| Score fn | uncompiled | 0.450 +/- 0.015 | - |
+| Score fn | compiled | 0.784 +/- 0.048 | 0.57x |
+| Vec MH | serial-compiled | 69.704 +/- 5.993 | - |
+| Vec MH | vectorized-4chain | 207.690 +/- 4.525 | 0.34x |
+  wrote: /home/robertj/mlx/genmlx/results/compiled-inference/data.json
 
 Compiled inference benchmark complete.

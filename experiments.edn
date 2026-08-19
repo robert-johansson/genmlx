@@ -190,7 +190,7 @@
   {:name        "agents-is-exact"
    :script      "bench/agents_is_exact.cljs"
    :category    :agents
-   :timeout-ms  420000
+   :timeout-ms  1200000
    :description "IS -> exact on the identical biased-agent GF: TV(exact, IS) vs N at finite alpha, ESS, MC-rate slope."
    :sources     ["examples/agentmodels/biased_inverse.cljs"
                  "src/genmlx/agents/biased_planners.cljs"
@@ -266,14 +266,14 @@
   {:name        "verification-suite"
    :script      "bench/verification_suite.cljs"
    :category    :verification
-   :timeout-ms  600000
+   :timeout-ms  1800000
    :description "All test suite pass rates: L0, L1-M1..M5, L4, compat suites."
    :sources     []}  ;; depends on all source files
 
   {:name        "gfi-law-verification"
    :script      "bench/gfi_law_verification.cljs"
    :category    :verification
-   :timeout-ms  300000
+   :timeout-ms  1800000
    :description "53 algebraic laws, 64 generated-model properties, pass/fail/time."
    :sources     ["src/genmlx/gfi.cljs"
                  "src/genmlx/protocols.cljs"]}

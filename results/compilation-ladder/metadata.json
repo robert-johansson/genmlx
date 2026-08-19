@@ -1,18 +1,18 @@
 {
   "experiment": "compilation-ladder",
-  "git_sha": "c9253bc",
-  "timestamp": "2026-06-13T08:41:48.393Z",
+  "git_sha": "393686e",
+  "timestamp": "2026-08-18T17:31:12.634Z",
   "hardware": {
-    "platform": "darwin",
-    "arch": "arm64",
-    "cpus": 10,
-    "memory": "32GB"
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 24,
+    "memory": "125GB"
   },
   "runtime": {
     "engine": "bun+nbb",
     "node": "v24.3.0"
   },
-  "source_hash": "5dc8c33c2188c48f8bc06d87d204dc01340b81e5925f0a0990382e4cd4c756d9",
-  "duration_ms": 110301,
+  "source_hash": "94b7df78df193de175b5be1af28d55f98cb173251101fab34bc0c6ca5e48c0c5",
+  "duration_ms": 57778,
   "script": "bench/compilation_ladder.cljs"
 }
