@@ -62,18 +62,71 @@
   (count (filter #(< % true-val) samples)))
 
 (def chi-sq-critical
-  "Chi-squared critical values at alpha=0.01."
+  "Chi-squared critical values at alpha=0.01. Reference anchor only: the
+   test below computes its critical value at the CALLER's alpha (see
+   chi-sq-critical-at); these entries are kept to sanity-check that
+   computation at alpha=0.01."
   {4 13.28, 9 21.67, 14 29.14, 19 36.19})
 
+(defn normal-quantile
+  "Upper-tail standard-normal quantile z with P(Z > z) = p.
+   Acklam's rational approximation; |error| < 1.2e-9."
+  [p]
+  (let [q (- 1.0 p)
+        a [-3.969683028665376e+01 2.209460984245205e+02 -2.759285104469687e+02
+           1.383577518672690e+02 -3.066479806614716e+01 2.506628277459239e+00]
+        b [-5.447609879822406e+01 1.615858368580409e+02 -1.556989798598866e+02
+           6.680131188771972e+01 -1.328068155288572e+01]
+        c [-7.784894002430293e-03 -3.223964580411365e-01 -2.400758277161838e+00
+           -2.549732539343734e+00 4.374664141464968e+00 2.938163982698783e+00]
+        d [7.784695709041462e-03 3.224671290700398e-01 2.445134137142996e+00
+           3.754408661907416e+00]
+        plow 0.02425]
+    (cond
+      (< q plow)
+      (let [t (js/Math.sqrt (* -2.0 (js/Math.log q)))]
+        (/ (+ (* (+ (* (+ (* (+ (* (+ (* (c 0) t) (c 1)) t) (c 2)) t) (c 3)) t) (c 4)) t) (c 5))
+           (+ (* (+ (* (+ (* (+ (* (d 0) t) (d 1)) t) (d 2)) t) (d 3)) t) 1.0)))
+
+      (> q (- 1.0 plow))
+      (let [t (js/Math.sqrt (* -2.0 (js/Math.log (- 1.0 q))))]
+        (- (/ (+ (* (+ (* (+ (* (+ (* (+ (* (c 0) t) (c 1)) t) (c 2)) t) (c 3)) t) (c 4)) t) (c 5))
+              (+ (* (+ (* (+ (* (+ (* (d 0) t) (d 1)) t) (d 2)) t) (d 3)) t) 1.0))))
+
+      :else
+      (let [t (- q 0.5) r (* t t)]
+        (/ (* (+ (* (+ (* (+ (* (+ (* (+ (* (a 0) r) (a 1)) r) (a 2)) r) (a 3)) r) (a 4)) r) (a 5)) t)
+           (+ (* (+ (* (+ (* (+ (* (+ (* (b 0) r) (b 1)) r) (b 2)) r) (b 3)) r) (b 4)) r) 1.0))))))
+
+(defn chi-sq-critical-at
+  "Chi-squared upper-tail critical value at significance `alpha`, `df`
+   degrees of freedom, via the Wilson-Hilferty transform (well under 1%
+   error for df >= 4, which covers every binning this suite uses).
+
+   Why this exists (paper battery, 2026-08-19): the banner announces a
+   Bonferroni-corrected alpha and the KS test honours it, but the
+   chi-squared test previously read a HARDCODED alpha=0.01 table, so it
+   flagged failures at a threshold far stricter than the one advertised.
+   Two 'FAIL' lines in a preliminary sweep (chi2 = 24.80 and 34.20 against
+   a printed crit of 21.67) were, under the advertised correction, one
+   clear pass and one marginal case. Announcing one criterion and applying
+   another is exactly the discrepancy class this project exists to catch."
+  [alpha df]
+  (let [z (normal-quantile alpha)
+        t (/ 2.0 (* 9.0 df))
+        base (+ (- 1.0 t) (* z (js/Math.sqrt t)))]
+    (* df base base base)))
+
 (defn chi-squared-uniformity
-  "Chi-squared goodness-of-fit test for uniformity of ranks.
+  "Chi-squared goodness-of-fit test for uniformity of ranks at significance
+   `alpha` (pass the Bonferroni-corrected value).
    Returns {:statistic :pass? :df :critical}."
-  [ranks n-sims]
+  [ranks n-sims alpha]
   (let [bins (mapv #(js/Math.floor (/ (* % N-BINS) (inc L))) ranks)
         counts (reduce (fn [acc b] (update acc b (fnil inc 0))) {} bins)
         expected (/ n-sims N-BINS)
         df (dec N-BINS)
-        critical (get chi-sq-critical df 21.67)
+        critical (chi-sq-critical-at alpha df)
         all-bins (reduce (fn [m b] (if (contains? m b) m (assoc m b 0)))
                          counts (range N-BINS))
         statistic (reduce-kv
@@ -607,7 +660,7 @@
       (mapv (fn [j]
               (let [param (nth param-addrs j)
                     ranks (nth all-ranks j)
-                    chi2 (chi-squared-uniformity ranks (count ranks))
+                    chi2 (chi-squared-uniformity ranks (count ranks) alpha)
                     ecdf (ecdf-ks-uniformity ranks (count ranks) alpha)]
                 {:param param :ranks ranks :chi2 chi2 :ecdf ecdf
                  :histogram (rank-histogram ranks)}))
