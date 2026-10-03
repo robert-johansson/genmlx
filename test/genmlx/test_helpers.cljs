@@ -4,7 +4,10 @@
    Provides numerical comparison, MLX helpers, PRNG management,
    statistical testing, and cljs.test fixtures."
   (:require [genmlx.mlx :as mx]
-            [genmlx.mlx.random :as rng]))
+            [genmlx.mlx.random :as rng]
+            ["fs" :as fs]
+            ["os" :as os]
+            ["path" :as path]))
 
 ;; ---------------------------------------------------------------------------
 ;; Numerical comparison
@@ -143,3 +146,57 @@
    Usage: (t/use-fixtures :each test-helpers/mlx-cleanup-fixture)"
   {:before (fn [] nil)
    :after (fn [] nil)})
+
+;; ---------------------------------------------------------------------------
+;; Model checkpoint resolution (genmlx-5z51)
+;;
+;; Checkpoint-gated tests used to accept a directory on `config.json` alone —
+;; the one file an interrupted `hf download` leaves behind. On Thor the HF hub
+;; entry for the 80B is exactly such a stub, so three heavy guards FAILED in
+;; `load-model` ("Failed to load tokenizer") while the complete checkpoint sat
+;; at the same snapshot hash under ~/code/mlx/models. Each host keeps its
+;; checkpoints in a different layout, so the default is a candidate LIST and
+;; the witness is what the loader actually reads (health-audit rule 3: accept
+;; only what has been affirmatively proven).
+;; ---------------------------------------------------------------------------
+
+(defn complete-checkpoint?
+  "True iff `dir` holds what `llm/load-model` reads: config.json,
+   tokenizer.json and at least one *.safetensors weight file."
+  [dir]
+  (boolean
+   (and (string? dir)
+        (.existsSync fs (path/join dir "config.json"))
+        (.existsSync fs (path/join dir "tokenizer.json"))
+        (some #(.endsWith % ".safetensors") (.readdirSync fs dir)))))
+
+(defn- snapshot-dirs
+  "`<repo-dir>/snapshots/<rev>` when `rev` is pinned, else every snapshot."
+  [repo-dir rev]
+  (let [snaps (path/join repo-dir "snapshots")]
+    (cond
+      (not (.existsSync fs snaps)) []
+      rev [(path/join snaps rev)]
+      :else (map #(path/join snaps %) (sort (.readdirSync fs snaps))))))
+
+(defn checkpoint-candidates
+  "Directories that may hold the checkpoint `org/name`, in priority order:
+   the HF hub cache, ~/code/mlx/models/<name> (HF snapshot layout — Thor),
+   and — only when no revision is pinned — the flat ~/.cache/models symlink
+   farm, whose links a later download can re-point."
+  [{:keys [org name rev]}]
+  (let [home (.homedir os)]
+    (concat
+     (snapshot-dirs (path/join home ".cache" "huggingface" "hub"
+                               (str "models--" org "--" name)) rev)
+     (snapshot-dirs (path/join home "code" "mlx" "models" name) rev)
+     (when-not rev [(path/join home ".cache" "models" name)]))))
+
+(defn resolve-checkpoint
+  "The checkpoint directory for `spec` ({:org :name :rev?}): the env var
+   `env-var` (may be nil) verbatim when set (an explicit override fails loudly rather than
+   being second-guessed), else the first COMPLETE candidate, else nil — so a
+   stub or partial download SKIPs instead of failing inside load-model."
+  [env-var spec]
+  (or (when env-var (not-empty (aget (.-env js/process) env-var)))
+      (first (filter complete-checkpoint? (checkpoint-candidates spec)))))

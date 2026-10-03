@@ -20,6 +20,7 @@
             [genmlx.llm.qwen35-vision-forward :as vis]
             [genmlx.mlx :as mx]
             [promesa.core :as pr]
+            [genmlx.test-helpers :as h]
             ["fs" :as fs]))
 
 (def ^:private pass (atom 0))
@@ -29,10 +30,10 @@
         (do (swap! fail inc) (println (str "  FAIL: " label)))))
 
 (def model-dir
-  (let [base (str (.-HOME js/process.env)
-                  "/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-4bit/snapshots")]
-    (when (.existsSync fs base)
-      (str base "/" (first (js->clj (.readdirSync fs base)))))))
+  ;; First COMPLETE checkpoint (config + tokenizer + weights) across each host's
+  ;; layout — never merely the first HF snapshot dir, which may be a stub or a
+  ;; partial download (genmlx-5z51).
+  (h/resolve-checkpoint nil {:org "mlx-community" :name "Ornith-1.0-35B-4bit"}))
 (def image-path (str (.-HOME js/process.env) "/code/mlx/ornith/image.png"))
 
 (defn- load-vision-weights

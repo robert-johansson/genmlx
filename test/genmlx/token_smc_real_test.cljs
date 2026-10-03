@@ -19,7 +19,7 @@
             [genmlx.llm.smc :as tsmc]
             [promesa.core :as pr]
             [clojure.string :as str]
-            ["fs" :as fs]
+            [genmlx.test-helpers :as h]
             ["os" :as os]
             ["path" :as path]))
 
@@ -37,32 +37,25 @@
 (def dense-dir
   (let [cands [(path/join (os/homedir) ".cache" "models" "qwen3-0.6b-mlx-bf16")
                (path/join (os/homedir) ".cache" "models" "qwen3-0.6b")]]
-    (or (first (filter #(.existsSync fs (path/join % "tokenizer.json")) cands))
+    (or (first (filter h/complete-checkpoint? cands))
         (first cands))))
 ;; V6's 80B MoE. This was env-ONLY with no default, so V6 skipped on every host
 ;; where GENMLX_MOE_MODEL happened not to be exported — including this one, and
 ;; the skip is silent-by-tally: V5 still runs and passes, so the file reports
-;; PASS while V6 never executed (genmlx-pc9o). Now falls back to the HF hub,
-;; resolving `<repo>/snapshots/<hash>` the way the hub actually lays it out.
+;; PASS while V6 never executed (genmlx-pc9o). Now falls back to the first
+;; COMPLETE checkpoint across each host's layout — not merely the first snapshot
+;; with a config.json, which on Thor is a stub HF entry (genmlx-5z51).
 ;; Revision-agnostic on purpose: V6 asserts branch/resample BEHAVIOUR, not
 ;; oracle-exact tokens (contrast qwen3_moe_layout_coherence_test, revision-locked).
-(def moe-dir
-  (or (some-> js/process .-env .-GENMLX_MOE_MODEL)
-      (let [repo (path/join (os/homedir) ".cache" "huggingface" "hub"
-                            "models--mlx-community--Qwen3-Coder-Next-4bit")
-            snaps (path/join repo "snapshots")]
-        (when (.existsSync fs snaps)
-          (->> (.readdirSync fs snaps)
-               (map #(path/join snaps %))
-               (filter #(.existsSync fs (path/join % "config.json")))
-               first)))))
+(def ^:private moe-spec {:org "mlx-community" :name "Qwen3-Coder-Next-4bit"})
+(def moe-dir (h/resolve-checkpoint "GENMLX_MOE_MODEL" moe-spec))
 
 (defn- summary []
   (println (str "\n== token-smc-real: " @pass " passed, " @fail " failed =="))
   (when (pos? @fail) (set! (.-exitCode js/process) 1)))
 
 (defn- v5-dense []
-  (if-not (.existsSync fs (path/join dense-dir "tokenizer.json"))
+  (if-not (h/complete-checkpoint? dense-dir)
     (do (println "  SKIP V5 — no dense model at" dense-dir) (pr/resolved nil))
     (pr/let [mm (llm/load-model dense-dir)
              {:keys [model tokenizer]} mm
@@ -100,8 +93,10 @@
     ;; fine, so the FILE still asserts on Metal — only V6 stands down.
     (do (println "  SKIP V6 — Metal: native MoE refused (see llm_moe_guard_test)")
         (pr/resolved nil))
-    (if-not (and moe-dir (.existsSync fs moe-dir))
-      (do (println "  SKIP V6 — GENMLX_MOE_MODEL not set / missing") (pr/resolved nil))
+    (if-not moe-dir
+      (do (println "  SKIP V6 — no complete 80B checkpoint among:"
+                   (vec (h/checkpoint-candidates moe-spec)))
+          (pr/resolved nil))
     (pr/let [mm (llm/load-model moe-dir)
              {:keys [model tokenizer]} mm
              enc (llm/encode tokenizer "# Returns the ")]

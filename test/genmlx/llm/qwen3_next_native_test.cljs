@@ -22,6 +22,7 @@
             [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [promesa.core :as pr]
+            [genmlx.test-helpers :as h]
             ["fs" :as fs]))
 
 (def ^:private pass (atom 0))
@@ -31,36 +32,34 @@
         (do (swap! fail inc) (println (str "  FAIL: " label)))))
 
 (def ^:private metal? (mx/metal-is-available?))
-(def ^:private home (.-HOME js/process.env))
-(def ^:private repo-root
-  ;; Default is the HF hub REPO dir; `resolve-snapshot` below already understands
-  ;; the `<repo>/snapshots/<hash>/config.json` layout, so no revision is pinned
-  ;; here — this test asserts native-forward WIRING, not oracle-exact tokens
-  ;; (contrast qwen3_moe_layout_coherence_test, which must stay revision-locked).
-  ;;
-  ;; The old default `$HOME/code/mlx/models/...` never existed on this host —
-  ;; there is no `~/code` here — so the file skipped, and since a skip exits 0
-  ;; with no `Ran 0 tests` anchor run.sh scored it PASS. An 80B native-forward
-  ;; smoke test was green without ever loading a model (genmlx-pc9o).
-  (or (.-QWEN3_NEXT_DIR js/process.env)
-      (str home "/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit")))
+(def ^:private model-spec {:org "mlx-community" :name "Qwen3-Coder-Next-4bit"})
 
-(defn- resolve-snapshot
-  "Resolve the directory that actually holds config.json — either `dir` itself or,
-   for a HuggingFace cache layout (dir/snapshots/<hash>/config.json), the snapshot
-   subdir. Returns the model dir or nil if none has a config.json."
-  [dir]
-  (cond
-    (not (.existsSync fs dir)) nil
-    (.existsSync fs (str dir "/config.json")) dir
-    (.existsSync fs (str dir "/snapshots"))
-    (->> (.readdirSync fs (str dir "/snapshots"))
-         (map #(str dir "/snapshots/" %))
-         (filter #(.existsSync fs (str % "/config.json")))
-         first)
-    :else nil))
+(def ^:private env-dir
+  ;; QWEN3_NEXT_DIR may name a model dir OR an HF-layout repo dir
+  ;; (`<repo>/snapshots/<hash>`); an override is honoured even when incomplete,
+  ;; so a wrong one fails loudly instead of skipping.
+  (not-empty (.-QWEN3_NEXT_DIR js/process.env)))
 
-(def ^:private model-dir (resolve-snapshot repo-root))
+(defn- resolve-override [dir]
+  (let [snaps (str dir "/snapshots")]
+    (or (when (h/complete-checkpoint? dir) dir)
+        (when (.existsSync fs snaps)
+          (->> (.readdirSync fs snaps)
+               (map #(str snaps "/" %))
+               (filter h/complete-checkpoint?)
+               first))
+        dir)))
+
+(def ^:private model-dir
+  ;; No revision is pinned — this test asserts native-forward WIRING, not
+  ;; oracle-exact tokens (contrast qwen3_moe_layout_coherence_test, which must
+  ;; stay revision-locked). The default is the first COMPLETE checkpoint across
+  ;; each host's layout: a hardcoded ~/code/mlx/models default skipped on hosts
+  ;; without it and scored PASS (genmlx-pc9o); its HF-hub-only replacement then
+  ;; accepted Thor's config-only stub and FAILED in load-model (genmlx-5z51).
+  (if env-dir
+    (resolve-override env-dir)
+    (first (filter h/complete-checkpoint? (h/checkpoint-candidates model-spec)))))
 
 (defn- finish []
   (println (str "\n== " @pass " passed, " @fail " failed =="))
@@ -88,7 +87,8 @@
       (skip-finish!))
 
   (nil? model-dir)
-  (do (println (str "  SKIP: no qwen3_next checkpoint at " repo-root
+  (do (println (str "  SKIP: no complete qwen3_next checkpoint among "
+                    (vec (h/checkpoint-candidates model-spec))
                     " (set QWEN3_NEXT_DIR to override)"))
       (skip-finish!))
 

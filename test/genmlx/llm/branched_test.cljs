@@ -22,26 +22,23 @@
             [genmlx.protocols :as p]
             [genmlx.mlx.random :as rng]
             [genmlx.llm.backend :as llm]
+            [genmlx.test-helpers :as h]
             [genmlx.llm.core :as core]
             [genmlx.llm.grammar :as gram]
             [genmlx.llm.branched :as br]
-            [promesa.core :as pr]
-            ["fs" :as fs]
-            ["os" :as os]))
+            [promesa.core :as pr]))
+
+(def ^:private model-spec
+  {:org "mlx-community" :name "Qwen3-Coder-Next-4bit"
+   :rev "7b9321eabb85ce79625cac3f61ea691e4ea984b5"})
 
 (def model-dir
-  ;; env override -> the CURRENT user's HF hub cache at the PINNED revision.
-  ;; This default was an absolute path under `/home/robert/code/...` — a
-  ;; DIFFERENT machine's home (username `robert`, not `robertj`) — so on every
-  ;; other host it never resolved, the file skipped, and because the skip exits
-  ;; 0 with no `Ran 0 tests` anchor, run.sh scored it PASS. A native
-  ;; branchable-KV guard the runbook lists as a §4 by-hand suite was therefore
-  ;; green without ever loading a model (genmlx-pc9o; the identical defect in
-  ;; qwen3_moe_layout_coherence_test was measured and fixed the same day).
-  (or (some-> js/process .-env .-GENMLX_MOE_MODEL)
-      (str (.homedir os)
-           "/.cache/huggingface/hub/models--mlx-community--Qwen3-Coder-Next-4bit"
-           "/snapshots/7b9321eabb85ce79625cac3f61ea691e4ea984b5")))
+  ;; env override -> the first COMPLETE checkpoint at the PINNED revision across
+  ;; each host's layout (HF hub cache, ~/code/mlx/models). The default was once a
+  ;; hardcoded /home/robert/code/... path that skipped on every other host and
+  ;; scored PASS (genmlx-pc9o); its HF-hub replacement then resolved Thor's
+  ;; config-only stub and FAILED in load-model (genmlx-5z51).
+  (h/resolve-checkpoint "GENMLX_MOE_MODEL" model-spec))
 
 (def ^:private pass (atom 0))
 (def ^:private fail (atom 0))
@@ -62,12 +59,13 @@
   ;; refusal itself is asserted by llm_moe_guard_test.
   (do (println "SKIP llm_branched_test — Metal: native MoE refused (see llm_moe_guard_test)")
       (println "Ran 0 tests containing 0 assertions."))
-  (if-not (.existsSync fs model-dir)
+  (if-not model-dir
   ;; Emit the anchor pair run.sh needs to score SKIP instead of PASS: a `SKIP`
   ;; line within three lines above a `Ran 0 tests` summary (test/TESTING.md).
   ;; Without it a hand-rolled harness falls through to `else status=PASS`, so an
   ;; unrunnable guard reads as green. Both lines are true — zero tests ran.
-  (do (println "SKIP llm_branched_test — model dir not found:" model-dir)
+  (do (println "SKIP llm_branched_test — no complete checkpoint among:"
+               (vec (h/checkpoint-candidates model-spec)))
       (println "Ran 0 tests containing 0 assertions."))
   (pr/let [{:keys [model tokenizer] :as mm} (llm/load-model model-dir)
            enc (llm/encode tokenizer "# Returns the ")

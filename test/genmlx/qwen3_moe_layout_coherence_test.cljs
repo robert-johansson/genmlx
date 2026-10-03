@@ -51,8 +51,7 @@
             [genmlx.llm.backend :as llm]
             [promesa.core :as pr]
             [clojure.string :as str]
-            ["fs" :as fs]
-            ["os" :as os]))
+            [genmlx.test-helpers :as h]))
 
 (defn- mat [a] (mx/materialize! a) a)
 (defn- greedy [l] (mx/item (mx/argmax l)))
@@ -69,31 +68,28 @@
 ;; battery counted a coherence guard that verified NOTHING. Measured
 ;; 2026-08-08: both cases skipped, exit 0, no `skipped` column in the tier tally.
 ;;
-;; Resolution order is env override -> the current user's HF hub cache at the
-;; PINNED revision. Revision-locked deliberately: the `:oracle` ids below are
-;; only valid for that exact snapshot, so this must never follow a symlink that
-;; a later `hf download` could re-point (which is why it does NOT use the
-;; ~/.cache/models symlink farm, convenient though that would be).
+;; Resolution order is env override -> the first COMPLETE checkpoint at the
+;; PINNED revision across each host's snapshot layout (HF hub cache, then
+;; ~/code/mlx/models — where Thor keeps the 80B, its HF entry being a
+;; config-only stub; genmlx-5z51). Revision-locked deliberately: the `:oracle`
+;; ids below are only valid for that exact snapshot, so this must never follow
+;; a symlink that a later `hf download` could re-point (which is why a pinned
+;; :rev excludes the ~/.cache/models symlink farm, convenient though it would be).
 ;; ---------------------------------------------------------------------------
-
-(defn- hub-snapshot
-  "`~/.cache/huggingface/hub/models--<repo>/snapshots/<rev>` for the CURRENT user."
-  [repo rev]
-  (str (.homedir os) "/.cache/huggingface/hub/models--" repo "/snapshots/" rev))
 
 (def cases
   [{:name "35B qwen3_5_moe (merged in_proj_qkv/z -> fused_qkvz_layout=false)"
-    :dir (or (some-> js/process .-env .-GENMLX_VLM_MODEL)
-             (hub-snapshot "mlx-community--Qwen3.6-35B-A3B-4bit"
-                           "38740b847e4cb78f352aba30aa41c76e08e6eb46"))
+    :spec {:org "mlx-community" :name "Qwen3.6-35B-A3B-4bit"
+           :rev "38740b847e4cb78f352aba30aa41c76e08e6eb46"}
+    :env "GENMLX_VLM_MODEL"
     ;; "What is the capital of France? ..." (chat-templated, <think> mode). mlx_vlm oracle.
     :input-ids [248045 846 198 3710 369 279 6511 314 9338 30 21134 303 799 11316 13
                 248046 198 248045 74455 198 248068 198]
     :oracle    [8160 579 264 7047 1817 25 271 16]}
    {:name "80B qwen3_next coder (native interleaved in_proj_qkvz -> fused_qkvz_layout=true)"
-    :dir (or (some-> js/process .-env .-GENMLX_MOE_MODEL)
-             (hub-snapshot "mlx-community--Qwen3-Coder-Next-4bit"
-                           "7b9321eabb85ce79625cac3f61ea691e4ea984b5"))
+    :spec {:org "mlx-community" :name "Qwen3-Coder-Next-4bit"
+           :rev "7b9321eabb85ce79625cac3f61ea691e4ea984b5"}
+    :env "GENMLX_MOE_MODEL"
     ;; "Write a one-line Python function to add two numbers." (chat-templated). mlx_lm oracle.
     :input-ids [151644 872 198 7985 264 825 8447 13027 729 311 912 1378 5109 13
                 151645 198 151644 77091 198]
@@ -119,13 +115,11 @@
 (defn- skip? [r] (and (vector? r) (= :skip (first r))))
 (defn- skip-reason [r] (second r))
 
-(defn run-case [{:keys [name dir input-ids oracle]}]
+(defn run-case [{:keys [name spec env input-ids oracle]}]
   (if metal?
     (do (println "SKIP" name "— Metal: native MoE is refused here (see llm_moe_guard_test)")
         (pr/resolved [:skip "Metal: native MoE is refused here (see llm_moe_guard_test)"]))
-  (if-not (.existsSync fs (str dir "/config.json"))
-    (do (println "SKIP" name "— model dir not found:" dir)
-        (pr/resolved [:skip (str "model dir not found: " dir)]))
+  (if-let [dir (h/resolve-checkpoint env spec)]
     (pr/let [{:keys [model]} (llm/load-model dir)
              _ (llm/init-cache! model)
              l0 (mat (llm/forward-prefill model (vec input-ids)))
@@ -139,7 +133,11 @@
       (println (if ok "✓ PASS" "✗ FAIL") name)
       (println "   got   " (vec ids))
       (println "   oracle" (vec oracle))
-      (pr/resolved ok)))))
+      (pr/resolved ok))
+    (let [why (str "no complete checkpoint among "
+                   (vec (h/checkpoint-candidates spec)))]
+      (println "SKIP" name "—" why)
+      (pr/resolved [:skip why])))))
 
 (def ^:private case-select
   ;; One process per case bounds peak memory to one model (no unload API).

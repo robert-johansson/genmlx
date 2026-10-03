@@ -6,7 +6,8 @@
             [genmlx.protocols :as p]
             [genmlx.choicemap :as cm]
             [genmlx.mlx :as mx]
-            [promesa.core :as pr]))
+            [promesa.core :as pr]
+            [genmlx.test-helpers :as h]))
 
 (def ^:private pass-count (atom 0))
 (def ^:private fail-count (atom 0))
@@ -20,11 +21,11 @@
 
 ;; Skip cleanly when the checkpoint is not provisioned on this host (the
 ;; llm_cljs_forward_test contract) — an ENOENT here is a host gap, not a bug.
-(when-not (.existsSync (js/require "fs") (str model-path "/config.json"))
+(when-not (h/complete-checkpoint? model-path)
   ;; SKIP + `Ran 0 tests` anchor, kept ADJACENT to the exit: run.sh scores SKIP
   ;; off the anchor, and `check` allows a zero exit only within three lines of a
   ;; SKIP print (genmlx-95v4).
-  (println "SKIP qwen2-coder-test: Qwen2.5-Coder checkpoint absent at" model-path)
+  (println "SKIP qwen2-coder-test: no complete Qwen2.5-Coder checkpoint at" model-path)
   (println "Ran 0 tests containing 0 assertions.")
   (js/process.exit 0))
 

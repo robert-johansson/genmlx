@@ -25,6 +25,7 @@
             [genmlx.llm.grammar :as gram]
             [genmlx.llm.smc :as tsmc]
             [promesa.core :as pr]
+            [genmlx.test-helpers :as h]
             ["fs" :as fs]))
 
 (def ^:private pass (atom 0))
@@ -35,11 +36,10 @@
     (do (swap! fail inc) (println "  FAIL" label))))
 
 (def model-dir
-  (or (some-> js/process .-env .-GENMLX_OWNED_MOE_MODEL)
-      (let [base (str (.-HOME js/process.env)
-                      "/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-4bit/snapshots")]
-        (when (.existsSync fs base)
-          (str base "/" (first (js->clj (.readdirSync fs base))))))))
+  ;; First COMPLETE checkpoint (config + tokenizer + weights) across each host's
+  ;; layout — never merely the first HF snapshot dir, which may be a stub or a
+  ;; partial download (genmlx-5z51).
+  (h/resolve-checkpoint "GENMLX_OWNED_MOE_MODEL" {:org "mlx-community" :name "Ornith-1.0-35B-4bit"}))
 
 (defn- mat [a] (mx/materialize! a) a)
 (defn- lse [logits] (mx/realize (mx/logsumexp logits)))

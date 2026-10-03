@@ -30,6 +30,7 @@
             [genmlx.llm.qwen35-forward :as q35]
             [genmlx.mlx :as mx]
             [promesa.core :as pr]
+            [genmlx.test-helpers :as h]
             ["fs" :as fs]))
 
 (def ^:private pass (atom 0))
@@ -42,11 +43,10 @@
 
 (def quant (or (.-ORNITH_QUANT js/process.env) "8bit"))
 (def model-dir
-  (let [base (str (.-HOME js/process.env)
-                  "/.cache/huggingface/hub/models--mlx-community--Ornith-1.0-35B-"
-                  quant "/snapshots")]
-    (when (.existsSync fs base)
-      (str base "/" (first (js->clj (.readdirSync fs base)))))))
+  ;; First COMPLETE checkpoint (config + tokenizer + weights) across each host's
+  ;; layout — never merely the first HF snapshot dir, which may be a stub or a
+  ;; partial download (genmlx-5z51).
+  (h/resolve-checkpoint nil {:org "mlx-community" :name (str "Ornith-1.0-35B-" quant)}))
 
 (def prompt "The capital of France is")
 

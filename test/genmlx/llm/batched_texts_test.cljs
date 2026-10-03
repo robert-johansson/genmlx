@@ -20,7 +20,7 @@
   (:require [genmlx.llm.backend :as llm]
             [genmlx.llm.core :as llmc]
             [promesa.core :as pr]
-            ["fs" :as fs]))
+            [genmlx.test-helpers :as h]))
 
 (def ^:private pass (atom 0))
 (def ^:private fail (atom 0))
@@ -59,8 +59,8 @@
                                           :seed (+ seed i)})]
         (pr/recur (inc i) (conj texts (:text r)) (+ ms (:gen-ms r)))))))
 
-(if-not (.existsSync fs (str model-path "/config.json"))
-  (println (str "SKIP: no model at " model-path))
+(if-not (h/complete-checkpoint? model-path)
+  (println (str "SKIP: no complete checkpoint at " model-path))
   (-> (pr/let [m  (llm/load-model model-path {:cljs-forward? true})
                r1 (run-batched m 7)
                r2 (run-batched m 7)

@@ -10,7 +10,8 @@
             [genmlx.mlx :as mx]
             [genmlx.protocols :as p]
             [genmlx.dist :as dist]
-            [promesa.core :as pm]))
+            [promesa.core :as pm]
+            [genmlx.test-helpers :as h]))
 
 (def ^:private pass-count (atom 0))
 (def ^:private fail-count (atom 0))
@@ -29,14 +30,14 @@
 
 ;; Skip cleanly when the checkpoint is not provisioned on this host (the
 ;; llm_cljs_forward_test contract) — an ENOENT here is a host gap, not a bug.
-(when-not (.existsSync (js/require "fs") (str model-dir "/config.json"))
+(when-not (h/complete-checkpoint? model-dir)
   ;; SKIP print, then the `Ran 0 tests` anchor run.sh needs to score this SKIP
   ;; rather than PASS. This branch exits BEFORE any summary, so the runner's
   ;; hand-rolled zero/zero detector cannot see it and the anchor must be explicit
   ;; (genmlx-95v4). The three lines below must stay ADJACENT: `check` allows a
   ;; zero exit only within three lines of a SKIP print, and exit 0 stays because
   ;; it is what stops the rest of the file.
-  (println "SKIP llm-gemma4-test: gemma4-e2b checkpoint absent at" model-dir)
+  (println "SKIP llm-gemma4-test: no complete gemma4-e2b checkpoint at" model-dir)
   (println "Ran 0 tests containing 0 assertions.")
   (js/process.exit 0))
 

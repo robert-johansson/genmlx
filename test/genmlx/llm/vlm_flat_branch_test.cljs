@@ -23,6 +23,7 @@
   (:require [genmlx.mlx :as mx]
             [genmlx.llm.backend :as llm]
             [promesa.core :as pr]
+            [genmlx.test-helpers :as h]
             ["fs" :as fs]))
 
 (def ^:private pass (atom 0))
@@ -33,11 +34,10 @@
     (do (swap! fail inc) (println "  FAIL" msg))))
 
 (def model-dir
-  (or (some-> js/process .-env .-GENMLX_VLM_MOE_MODEL)
-      (let [base (str (.-HOME js/process.env)
-                      "/.cache/huggingface/hub/models--mlx-community--Qwen3.6-35B-A3B-4bit/snapshots")]
-        (when (.existsSync fs base)
-          (str base "/" (first (js->clj (.readdirSync fs base))))))))
+  ;; First COMPLETE checkpoint (config + tokenizer + weights) across each host's
+  ;; layout — never merely the first HF snapshot dir, which may be a stub or a
+  ;; partial download (genmlx-5z51).
+  (h/resolve-checkpoint "GENMLX_VLM_MOE_MODEL" {:org "mlx-community" :name "Qwen3.6-35B-A3B-4bit"}))
 
 (def img-path
   (or (some-> js/process .-env .-GENMLX_VLM_IMAGE)
