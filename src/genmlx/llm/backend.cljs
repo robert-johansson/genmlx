@@ -316,6 +316,24 @@
   [tokenizer]
   (.vocabSize tokenizer))
 
+(defn render-chat-template
+  "Render `messages` through the native tokenizer's chat template — the SAME
+   Rust renderer the v1 session uses — with the committed-prefix contract the
+   owned pi path depends on: `preserveThinking` TRUE, so prior assistant turns
+   keep their `<think>…</think>` bodies (an empty one too) and the re-render of
+   a grown history EXTENDS the token stream committed on the branch. With
+   upstream's default (false, the HF-parity one-shot render) every turn after
+   the first fails the prefix check and cold-prefills with cachedTokens 0
+   (genmlx-9fvg sync battery: the pi_* reds). `tools` nil/undefined → omitted;
+   `think?` → enable_thinking. Resolves to a Uint32Array of token ids."
+  [tokenizer messages add-gen? tools think?]
+  (.applyChatTemplate tokenizer messages (boolean add-gen?) (or tools js/undefined)
+                      (boolean think?)
+                      js/undefined   ; contentOrder (textThenMedia)
+                      js/undefined   ; existingImagePlaceholder
+                      js/undefined   ; reasoningEffort
+                      true))         ; preserveThinking — the contract above
+
 (defn eos-token-id
   "Return the EOS token ID (synchronous)."
   [tokenizer]

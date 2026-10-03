@@ -490,8 +490,7 @@
                                         "reasoningEffort none for best-of-K turns.")
                                    {:genmlx/error :best-of-k-thinking-unsupported})))
                tools    (.-tools config)
-               rendered (.applyChatTemplate tokenizer messages true
-                                            (or tools js/undefined) think?)]
+               rendered (llm/render-chat-template tokenizer messages true tools think?)]
         (vreset! (:abort? session) false)
         (swap! state* assoc-in [:sessions sid :busy?] true)
         (let [prompt      (vec (js/Array.from rendered))
