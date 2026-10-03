@@ -121,7 +121,13 @@
      ;; FP8 activation-amax calibration for the nvidia quant recipe (adopted
      ;; wholesale in the d58a upstream sync; driven by `mlx calibrate` at
      ;; convert time — an offline tool, never a graph op)
-     "calibrateActivationAmaxRaw"}
+     "calibrateActivationAmaxRaw"
+     ;; 2026-10-03 (genmlx-9fvg): the native GGUF catalog path (#129/#156) —
+     ;; architecture sniffing, the convertible-type listing the `mlx download`
+     ;; wizard reads, and the Muse Glimmer GGUF prepare/preflight steps. Offline
+     ;; checkpoint plumbing, never a graph op.
+     "convertibleModelTypes" "ggufArchitecture"
+     "prepareMuseGlimmerGguf" "preflightMuseDflashGguf"}
 
    ;; OCR / document-pipeline classes — GenMLX does not use these; its VLM path
    ;; (llm/vision.cljs) routes through the Qwen VL model classes below, not the
@@ -157,7 +163,16 @@
    :llm-orchestration
    #{"Gemma4Model" "HarrierModel" "Lfm2Model" "Qwen3Model" "Qwen35Model" "Qwen35MoeModel"
      "Qwen3Tokenizer"
-     "BatchGenerationResult" "GenerationResult" "ChatStreamHandle"}
+     "BatchGenerationResult" "GenerationResult" "ChatStreamHandle"
+     ;; 2026-10-03 (genmlx-9fvg, upstream f6db56b1): four new chat families —
+     ;; K2-Horizon (#158), Muse Glimmer (#117/#119), Nemotron 3.5 (#120) and the
+     ;; qwen4_exp Qwen3.8-Flash-Next SSD-streaming runtime (#154; macOS-Metal-only
+     ;; paged inference) — plus `ChatSessionCall`, the engine-side call record
+     ;; the shared chat session threads through every family. Same class as the
+     ;; rows above: the LLM orchestration boundary, bound (if at all) from
+     ;; llm/backend.cljs, never the pure compute membrane.
+     "K2HorizonModel" "MuseGlimmerModel" "NemotronHModel" "Qwen4ExpModel"
+     "ChatSessionCall"}
 
    ;; a foreign tensor class distinct from MxArray (the membrane's value type)
    :foreign-tensor-type
@@ -180,6 +195,16 @@
    ;; surface re-pin for the Jetson Thor / CUDA port).
    :benchmark-microbench
    #{"quantizedQmvMicrobench"}
+
+   ;; `mlx eval` (upstream #131, 2026-10-03 genmlx-9fvg sync): teacher-forced
+   ;; output-quality evaluation — capture a bf16 teacher's top-K next-token
+   ;; distribution into a cache, then score a quantized checkpoint against it.
+   ;; Runs on the model thread over whole sequences; a conversion-time QUALITY
+   ;; GATE for quantization recipes, not a per-token graph op. GenMLX's own
+   ;; quality oracle is the forward-parity cross-validation (scripts/
+   ;; llm_forward_xval_mlxlm.py), which reaches the low-level forward instead.
+   :quality-eval-teacher-forced
+   #{"captureTeacherLogits" "scoreAgainstTeacher"}
 
    ;; seeds the CALLING napi thread's MLX default RNG (thread-local in this
    ;; fork). Not a membrane concern: GenMLX's inference PRNG is keyed
@@ -296,9 +321,18 @@
   (testing "the partition tiles the full surface (wrapped ⊎ omitted = exports)"
     (let [wrapped (filter referenced? exported-fns)]
       ;; Coarse canary: catches a surface change even when add+omit happen together.
-      (is (= 245 (count exported-fns))
+      (is (= 256 (count exported-fns))
           (str "@genmlx/core surface size changed: " (count exported-fns)
-               " fns (pinned at 245; 2026-08-08 genmlx-bcyp merged upstream "
+               " fns (pinned at 256; 2026-10-03 genmlx-9fvg merged upstream "
+               "f6db56b1 (v0.0.15+13): +11 / -0 — the four new family classes "
+               "K2HorizonModel/MuseGlimmerModel/NemotronHModel/Qwen4ExpModel + "
+               "ChatSessionCall (see :llm-orchestration), the GGUF catalog four "
+               "convertibleModelTypes/ggufArchitecture/prepareMuseGlimmerGguf/"
+               "preflightMuseDflashGguf (see :model-conversion) and the `mlx eval` "
+               "pair captureTeacherLogits/scoreAgainstTeacher (see "
+               ":quality-eval-teacher-forced), all omitted; every one of the 245 "
+               "previous exports survived, `var` included; "
+               "2026-08-08 genmlx-bcyp merged upstream "
                "2d1fe60e, whose PR #112 added the ASR five — Qwen3AsrModel/"
                "Qwen3AsrStream/Qwen3AsrCapture/qwen3AsrAudioDevices/"
                "qwen3AsrInputDevices, all omitted, see :asr-speech; "
@@ -313,8 +347,8 @@
                "five — coldCacheDrain/coldCacheStats/coldSidecarStats/"
                "coldRestoreFamilies/gdnPrefixCheckpointLimit, all omitted) "
                "— the partition test above pinpoints what moved."))
-      (is (= 60 (count omitted))
-          (str "intentional-omissions size changed: " (count omitted) " (pinned at 60)."))
+      (is (= 71 (count omitted))
+          (str "intentional-omissions size changed: " (count omitted) " (pinned at 71)."))
       (is (= (count exported-fns) (+ (count wrapped) (count omitted)))
           (str "partition must tile exactly: wrapped " (count wrapped)
                " + omitted " (count omitted) " = exports " (count exported-fns))))))

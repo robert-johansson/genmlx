@@ -55,8 +55,8 @@
 (defn- render
   "applyChatTemplate over converted messages; resolves to a token vector."
   [tokenizer msgs add-gen?]
-  (pr/let [r (.applyChatTemplate tokenizer (ps/messages->js msgs)
-                                 add-gen? js/undefined false)]
+  (pr/let [r (llm/render-chat-template tokenizer (ps/messages->js msgs)
+                                       add-gen? nil false)]
     (vec (js/Array.from r))))
 
 (defn- greedy-turn

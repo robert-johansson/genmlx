@@ -61,12 +61,12 @@
   (let [eos (llm/eos-token-id tokenizer)
         tls (or tools js/undefined)
         th? (boolean enable-thinking?)]
-    (pr/let [pre (.applyChatTemplate tokenizer
-                                     (ps/messages->js (subvec messages 0 k))
-                                     true tls th?)
-             ful (.applyChatTemplate tokenizer
-                                     (ps/messages->js (subvec messages 0 (inc k)))
-                                     false tls th?)]
+    (pr/let [pre (llm/render-chat-template tokenizer
+                                           (ps/messages->js (subvec messages 0 k))
+                                           true tls th?)
+             ful (llm/render-chat-template tokenizer
+                                           (ps/messages->js (subvec messages 0 (inc k)))
+                                           false tls th?)]
       (let [p (vec (js/Array.from pre))
             f (vec (js/Array.from ful))
             s (shared-prefix-len p f)

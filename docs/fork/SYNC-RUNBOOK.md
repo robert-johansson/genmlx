@@ -190,6 +190,31 @@ and unversioned; a cross-machine cache multiplies the stale-replay risk.
 
 ---
 
+> **Measured 2026-10-03 (`genmlx-9fvg`), three things §2 did not say:**
+> 1. `mlx-node` is a submodule of genmlx, so its `.git` is a FILE. `[ -f .git/MERGE_HEAD ]` and
+>    `git commit -F .git/MERGE_MSG` silently read the wrong place ("Not a directory") and
+>    reported "no merge in progress" while one WAS in progress. Use
+>    `$(git rev-parse --git-path MERGE_HEAD)` / `git commit --no-edit`.
+> 2. When upstream has SPLIT a file we patched (2026-10: `qwen3_5/model.rs` → `model/*.rs`), the
+>    conflict blocks are not "ours vs theirs" — the 10k-line "ours" side is upstream's own old code
+>    with our lines interleaved. Take theirs, then re-port from `git show main:<file>` (save it
+>    BEFORE resolving; `git diff <merge-base> main -- <file>` is the inventory). Do not try to
+>    salvage the block.
+> 3. Git auto-merges fragments of our old additions into the parts of the split file upstream
+>    KEPT (e.g. our napi methods survived in the new `model.rs`, their command handlers did not).
+>    Grep each of our added lines against the merged file to learn which survived, and let
+>    `cargo check` find the orphans — but expect orphans that compile (dead fields with
+>    initializers) and remove them deliberately.
+>
+> **Compile-driven re-port loop without touching the live submodule:** the auto-mode classifier
+> blocks `git branch -f`/`reset --hard`/`checkout` in the submodule (and every `git push`), so the
+> live mlx checkout may lag the staged gitlink for hours. Build in a scratch worktree instead:
+> `git worktree add --detach <wt> sync/...`, `git -C $MLX worktree add --detach <wt>/crates/mlx-sys/mlx <MLXSHA>`,
+> `rsync -a --delete --exclude mlx/ --exclude target/ crates/ <wt>/crates/`, then `cargo check -p
+> mlx-core -p genmlx-core` with `CARGO_TARGET_DIR=<wt>/target` and the host env from
+> `docs/fork/RTX-PRO-6000-HANDOFF.md`. `yarn typecheck` (tsc -b) is the cheap TS gate and needs no
+> native build at all.
+
 ## 3. Build
 
 One GPU process at a time; route anything 35B/80B-class through `~/genmlx-guarded-run.sh`
@@ -221,7 +246,7 @@ node -e "const m=require('$MN/packages/genmlx-core');
          const k=Object.keys(m);
          console.log('functions:', k.filter(x=>typeof m[x]==='function').length,
                      'objects:',   k.filter(x=>typeof m[x]!=='function').length)"
-# expect: functions: 245  objects: 8   (2026-08-08; re-read the pin from membrane_coverage_test.cljs rather than trusting this line)
+# expect: functions: 256  objects: 8   (2026-10-03; re-read the pin from membrane_coverage_test.cljs rather than trusting this line)
 ```
 
 > The membrane matrix pins **function** exports. `Object.keys(...).length` is **233**, not 227 —
@@ -242,6 +267,13 @@ Do **not** run `git clean` inside the submodule — it deletes the 139 MB untrac
 
 ---
 
+> **Measured 2026-10-03:** the `cmake` crate re-runs configure in the SAME build dir, and
+> `CMakeCache.txt` keeps every `-D` from the previous run. After changing a `cfg.define(...)` in
+> `build.rs` (or pulling an upstream change to one), `rm -rf target/<profile>/build/mlx-sys-*` or the
+> old value (here `CMAKE_PROJECT_INCLUDE=`) silently wins and the "fixed" build fails identically.
+> Also: upstream's CI is macOS-only, so a green upstream says nothing about `mlx/backend/cuda/` or the
+> non-Metal branches of `build.rs` — both broke in this sync and both fixes are upstream-PR candidates.
+
 ## 4. Battery — never skipped
 
 All four of upstream's build/test/lint jobs are `runs-on: macos-26`; the only `ubuntu-latest`
@@ -254,7 +286,7 @@ In gating order — each gate unlocks the next:
 
 ```bash
 cd $GENMLX
-bun run --bun nbb test/genmlx/membrane_coverage_test.cljs      # 245 exports / 60 omissions
+bun run --bun nbb test/genmlx/membrane_coverage_test.cljs      # 256 exports / 71 omissions
 
 # the CLAUDE.md native/membrane contract guard
 for f in exact_test gradient_fd_test score_gradient_test clip_contract_test; do
