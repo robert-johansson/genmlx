@@ -274,6 +274,20 @@ Do **not** run `git clean` inside the submodule — it deletes the 139 MB untrac
 > Also: upstream's CI is macOS-only, so a green upstream says nothing about `mlx/backend/cuda/` or the
 > non-Metal branches of `build.rs` — both broke in this sync and both fixes are upstream-PR candidates.
 
+> **Measured 2026-10-03 (follow-up, `genmlx-9fvg`):** the battery proves `@genmlx/core`
+> only. mlx-node's OWN TypeScript suite (`yarn test --run`, 241 files) loads the sibling
+> `@mlx-node/core` addon, which `build.mjs` never touches — a stale one failed 107 files
+> with `ggufArchitecture is not a function` / `undefined.prototype` before a single real
+> ripple showed. So after the §3 build also run `yarn build:native` (RTX env + the
+> `GLIBC_TUNABLES` export for every test process), then the TS suite. Two traps: (1) its
+> `build.ts` refuses to run while the two committed `index.d.cts` copies differ — sync
+> them FIRST (`cp crates/mlx-core/index.d.cts packages/core/`); (2) declarations
+> regenerated on Linux are LOSSY (`cfg(macos)` napi members vanish), so the committed
+> copies stay macOS-authoritative — the fork's `build.ts` keeps them off macOS after a
+> subset check, and our own additions are hand-synchronized into both copies (ledger §3).
+> Model fixtures for the trainer/e2e tests resolve under `mlx-node/.cache/models/<name>`
+> (gitignored) — a symlink to `~/.cache/models` makes 12 more files runnable.
+
 ## 4. Battery — never skipped
 
 All four of upstream's build/test/lint jobs are `runs-on: macos-26`; the only `ubuntu-latest`
